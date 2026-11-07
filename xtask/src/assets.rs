@@ -202,7 +202,7 @@ pub fn run(args: &[String]) -> Result<()> {
 }
 
 /// Files in the working tree that git tracks or would track (respects .gitignore).
-fn repo_files(root: &Path) -> Result<Vec<String>> {
+pub fn repo_files(root: &Path) -> Result<Vec<String>> {
     let out = Command::new("git")
         .args(["ls-files", "--cached", "--others", "--exclude-standard", "-z"])
         .current_dir(root)
