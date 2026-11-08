@@ -11,7 +11,9 @@ crates/ui-egui/src/canvas/organize.rs	ui.painter().image(tex.id(), pr, Rect::fro
 crates/ui-egui/src/canvas/organize.rs	ui.painter().rect_filled(pr, CornerRadius::ZERO, Color32::WHITE);
 crates/ui-egui/src/canvas/signature_drag.rs	mesh.vertices.push(egui::epaint::Vertex { pos, uv: pos2(u, v), color: egui::Color32::WHITE });
 crates/ui-egui/src/canvas/xform.rs	mesh.vertices.push(egui::epaint::Vertex { pos: self.norm_to_screen(u, v), uv: pos2(tu, tv), color: Color32::WHITE });
+crates/ui-egui/src/canvas/xform.rs	mesh.vertices.push(egui::epaint::Vertex { pos: self.norm_to_screen(u, v), uv: pos2(tu, tv), color: Color32::WHITE });
 crates/ui-egui/src/chrome.rs	press.fill(Color32::TRANSPARENT, t.hover, t.pressed)
+crates/ui-egui/src/dialogs.rs	(egui::Color32::TRANSPARENT, egui::Stroke::new(1.0, t.border), t.text_muted, tl!("Pin"))
 crates/ui-egui/src/dialogs/appearance.rs	painter.rect_filled(page, 1.0, egui::Color32::WHITE);
 crates/ui-egui/src/dialogs/appearance.rs	painter.rect_filled(thumb, 1.0, egui::Color32::WHITE);
 crates/ui-egui/src/dialogs/marks_ui.rs	Color32::GRAY,
@@ -22,10 +24,13 @@ crates/ui-egui/src/dialogs/marks_ui.rs	p.add(egui::epaint::TextShape::new(centre
 crates/ui-egui/src/dialogs/marks_ui.rs	p.rect_stroke(r.shrink(6.0), CornerRadius::ZERO, egui::Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Inside);
 crates/ui-egui/src/dialogs/marks_ui.rs	p.text(centre, egui::Align2::CENTER_CENTER, file_name.clone().unwrap_or_default(), egui::FontId::proportional(10.0), Color32::GRAY);
 crates/ui-egui/src/dialogs/pageboxes.rs	ui.painter().rect_filled(page, CornerRadius::ZERO, Color32::WHITE);
+crates/ui-egui/src/dialogs/preferences.rs	color: Color32::BLACK,
+crates/ui-egui/src/dialogs/preferences.rs	let fill = press.fill(Color32::TRANSPARENT, t.hover, t.pressed);
 crates/ui-egui/src/panels/comments_panel.rs	let fill = if selected { t.hover.gamma_multiply(0.7) } else { Color32::TRANSPARENT };
+crates/ui-egui/src/panels/format_text_ui.rs	w.inactive.weak_bg_fill = Color32::TRANSPARENT;
 crates/ui-egui/src/panels/pages.rs	ui.painter().image(tex.id(), pr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
 crates/ui-egui/src/panels/pages.rs	ui.painter().rect_filled(pr, CornerRadius::ZERO, Color32::WHITE);
-crates/ui-egui/src/panels/tools.rs	(Some(b), _) => ui.fonts_mut(|f| f.layout_no_wrap(tl!(b).to_owned(), theme::semibold(9.5), Color32::WHITE).size().x) + 26.0,
+crates/ui-egui/src/panels/tools.rs	(Some(b), _) => ui.fonts_mut(|f| f.layout_no_wrap(tl!(b).to_owned(), theme::semibold(9.5), Color32::WHITE).size().x) + 18.0,
 crates/ui-egui/src/panels/tools.rs	let w = ui.fonts_mut(|f| f.layout_no_wrap(badge.to_string(), font.clone(), Color32::WHITE).size().x);
 crates/ui-egui/src/tools/calc_order_ui.rs	const STEP: Color32 = Color32::BLACK;
 crates/ui-egui/src/tools/calc_order_ui.rs	let curve = egui::epaint::CubicBezierShape::from_points_stroke([start, c1, c2, base], false, Color32::TRANSPARENT, stroke);
@@ -40,8 +45,13 @@ crates/ui-egui/src/tools/edit_text_ui.rs	if luminance(text_color) < 0.5 { Color3
 crates/ui-egui/src/tools/edit_text_ui.rs	let fill = if background_ready { Color32::TRANSPARENT } else { editor_fill(text_color) };
 crates/ui-egui/src/tools/edit_text_ui/background.rs	mesh.vertices.push(egui::epaint::Vertex { pos: xf.norm_to_screen(u, v), uv: Pos2::new(u, v), color: Color32::WHITE });
 crates/ui-egui/src/tools/edit_text_ui/image.rs	clipped.rect_filled(*r, CornerRadius::ZERO, Color32::WHITE);
-crates/ui-egui/src/tools/edit_text_ui/image.rs	let w = painter.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x + 20.0;
-crates/ui-egui/src/tools/edit_text_ui/image.rs	mesh.vertices.push(egui::epaint::Vertex { pos: b, uv: Pos2::new(u, v), color: Color32::WHITE });
+crates/ui-egui/src/tools/edit_text_ui/image.rs	if has_crop { Some(painter.layout_no_wrap(tl!("Remove Crop").to_string(), font.clone(), Color32::WHITE).size().x + 22.0) } else { None };
+crates/ui-egui/src/tools/edit_text_ui/image.rs	let cancel_w = painter.layout_no_wrap(tl!("Cancel").to_string(), font.clone(), Color32::WHITE).size().x + 22.0;
+crates/ui-egui/src/tools/edit_text_ui/image.rs	let done_w = painter.layout_no_wrap(tl!("Done").to_string(), font.clone(), Color32::WHITE).size().x + 22.0;
+crates/ui-egui/src/tools/edit_text_ui/image.rs	mesh.vertices.push(egui::epaint::Vertex { pos: to, uv: Pos2::new(u, v), color: Color32::WHITE });
+crates/ui-egui/src/tools/edit_text_ui/image.rs	picture_frame(painter, &obb, *b, Color32::TRANSPARENT, Stroke::new(0.75, ACCENT.gamma_multiply(0.35)));
+crates/ui-egui/src/tools/edit_text_ui/image.rs	picture_frame(painter, &obb, b, Color32::TRANSPARENT, Stroke::new(1.5, ACCENT));
+crates/ui-egui/src/tools/edit_text_ui/image.rs	picture_frame(painter, &obb, b, Color32::TRANSPARENT, Stroke::new(1.5, ACCENT.gamma_multiply(0.7)));
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	if contrast(text, Color32::WHITE) >= contrast(text, DARK_EDITOR_FILL) { Color32::WHITE } else { DARK_EDITOR_FILL }
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	if luma > 127_500 { Color32::BLACK } else { Color32::WHITE }
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	let native_width = ui.fonts_mut(|f| f.layout_no_wrap(line.text.clone(), font.clone(), Color32::BLACK).size().x);
@@ -49,7 +59,9 @@ crates/ui-egui/src/tools/edit_text_ui/layout.rs	vertex.color = Color32::TRANSPAR
 crates/ui-egui/src/tools/fill_sign.rs	Color32::WHITE,
 crates/ui-egui/src/tools/fill_sign.rs	Color32::WHITE,
 crates/ui-egui/src/tools/fill_sign.rs	img[(px, y)] = Color32::BLACK;
+crates/ui-egui/src/tools/fill_sign.rs	let color = t.border.color.map_or(Color32::BLACK, crate::comments::color32);
 crates/ui-egui/src/tools/fill_sign.rs	let mut img = egui::ColorImage::filled([w, h], Color32::TRANSPARENT);
+crates/ui-egui/src/tools/fill_sign.rs	let natural = ui.fonts_mut(|f| f.layout_no_wrap(t.text.clone(), font.clone(), Color32::BLACK).size().x);
 crates/ui-egui/src/tools/fill_sign.rs	painter.add(egui::Shape::line(pts, Stroke::new(1.5, Color32::BLACK)));
 crates/ui-egui/src/tools/fill_sign.rs	painter.add(egui::Shape::line(pts, Stroke::new(2.0, Color32::BLACK)));
 crates/ui-egui/src/tools/fill_sign.rs	painter.image(tex.id(), rect.shrink(4.0), egui::Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -96,6 +108,9 @@ crates/ui-egui/src/workflows/combine_grid/card.rs	painter.image(tex, paper.rect,
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.rect_filled(paper, CornerRadius::ZERO, Color32::WHITE);
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.rect_filled(paper, CornerRadius::ZERO, Color32::WHITE);
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.rect_filled(sheet, CornerRadius::ZERO, Color32::WHITE);
+crates/ui-egui/src/workflows/ocr_verify.rs	painter.add(egui::Shape::convex_polygon(quad.to_vec(), egui::Color32::TRANSPARENT, outline));
+crates/ui-egui/src/workflows/ocr_verify.rs	painter.image(tex.id(), img_rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+crates/ui-egui/src/workflows/ocr_verify.rs	ui.painter().image(tex.id(), rect, uv, egui::Color32::WHITE);
 crates/ui-egui/src/workflows/print_ui/body.rs	Stroke::new(0.6, Color32::BLACK),
 crates/ui-egui/src/workflows/print_ui/body.rs	color: if d.grayscale { Color32::from_gray(235) } else { Color32::WHITE },
 crates/ui-egui/src/workflows/print_ui/body.rs	painter.line_segment([to_screen(l[0], l[1]), to_screen(l[2], l[3])], Stroke::new(0.6, Color32::BLACK));
