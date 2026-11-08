@@ -1,0 +1,51 @@
+# PlutarchPages' ar rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	مرحبًا بك في PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	الملفات التي تفتحها في PlutarchPages تظهر هنا. أفلت ملف PDF في أي مكان لفتحه.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	يعمل PlutarchPages دون اتصال. لا قياس عن بُعد ولا حساب ولا معالجة سحابية إلا إذا أضفت مزوّدًا.
+	PlutarchPages on GitHub	PlutarchPages على GitHub
+	About PlutarchPages	حول PlutarchPages
+	Checking for a newer version…	جارٍ التحقق من وجود إصدار أحدث…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} محدَّث.
+	Couldn't check for updates: {e}	تعذّر التحقق من التحديثات: {e}
+	You have version {c}. All releases are listed at {page}.	لديك الإصدار {c}. كل الإصدارات مدرجة في {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	المفتاح موجود في سلسلة مفاتيح macOS، وقد تطلب الإذن لـ PlutarchPages باستخدامه.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	المفتاح موجود في مخزن شهادات Windows، وقد يطلب الإذن لـ PlutarchPages باستخدامه.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	التعرف على النص غير مثبت: ملفات نماذجه مفقودة. أعد تثبيت PlutarchPages، أو اضبط PDFCRAFT_MODELS على المجلد الذي يحتويها.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	لم يُغلق PlutarchPages بشكل طبيعي. هذه المستندات فيها تغييرات حُفظت تلقائيًا:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	النموذج يطلب إرساله إلى {u}؛ PlutarchPages لا يرسل بيانات النماذج. احفظ المستند للاحتفاظ بما أدخلته.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} يرسل النموذج إلى {url}؛ PlutarchPages لا يرسل بيانات النماذج. احفظ المستند للاحتفاظ بما أدخلته.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	هذا نموذج XFA ديناميكي، لا يستطيع PlutarchPages عرضه بعد. ما تراه هو الصفحة البديلة للملف.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	نماذج التعرف على النص غير مثبتة (أعد تثبيت PlutarchPages، أو اضبط PDFCRAFT_MODELS على المجلد الذي يحتويها)
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	يرسم PlutarchPages دون معالج رسوميات، لذا قد يكون بطيئًا. تحديث تعريف بطاقة الرسوميات قد يفيد.
+	Reopen the files that were open when PlutarchPages last closed	إعادة فتح الملفات التي كانت مفتوحة عند آخر إغلاق لـ PlutarchPages
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} في هذا المستند حاول فتح عنوان لن يفتحه PlutarchPages: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} في هذا المستند حاول فتح عنوان لن يفتحه PlutarchPages: {e}. روابط الويب (http, https) والبريد (mailto) وحدها تُفتح من المستندات.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	خط هذا الحقل لا يستطيع رسم «{c}» ({code})، لذا يعرض PlutarchPages علامة ? مكانه. القيمة محفوظة، وتعيد برامج عرض PDF الأخرى رسم الحقل منها.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	الخطوط التي يكتب بها PlutarchPages لا تستطيع رسم «{c}» ({code})، لذا يظهر بشكل ? في كل برامج عرض PDF. النص محفوظ.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	وقّع على ورقة بيضاء والتقط لها صورة في إضاءة ساطعة ومتساوية (استخدم الفلاش). اختر الصورة أو أفلتها هنا: يعثر PlutarchPages على التوقيع ويزيل الورق.
+	PlutarchPages can't check this signature yet: {}.	لا يستطيع PlutarchPages التحقق من هذا التوقيع بعد: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	لشهادة الموقّع امتدادات حرجة لا يتعرّف عليها PlutarchPages ({}).
+	Remove this leaf tag from reading order and mark its direct content as an artifact	أزل هذه العلامة من ترتيب القراءة وضع علامة على محتواها المباشر كعنصر زخرفي
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	الصفحات التي تستخدم خطوط Type 3 تُطبع كصور، لأن Windows قد يغلق PlutarchPages أثناء طباعتها. تُطبع الصفحات الأخرى كالمعتاد.
+	Create PDF from web page…	إنشاء PDF من صفحة ويب…
+	Read this page aloud	قراءة هذه الصفحة بصوت عالٍ
+	Convert colours to grayscale	تحويل الألوان إلى تدرّج رمادي
+	Report a problem	الإبلاغ عن مشكلة
+	Upstream PdfCraft	PdfCraft الأصلي
+	Web page	صفحة ويب
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	نسخة متفرّعة من PdfCraft من فريق ArtCraft. ‏PlutarchPages ليس منتجًا من ArtCraft.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	مبني على PdfCraft من فريق ArtCraft. أبلغ عن مشكلات PlutarchPages على GitHub.
+	Convert Office files, HTML files and web pages with installed programs	تحويل ملفات Office وملفات HTML وصفحات الويب باستخدام البرامج المثبّتة
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	تم التحويل إلى تدرّج رمادي: {ops} لونًا، {images} صورة، {forms} نموذجًا؛ وبقي {left} كما هو
+	Create PDF from web page	إنشاء PDF من صفحة ويب
+	Discard external cross-references	تجاهل الإسنادات الترافقية الخارجية
+	Discard form submission, import and reset actions	تجاهل إجراءات إرسال النماذج واستيرادها وإعادة تعيينها
+	External converters	المحوّلات الخارجية
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	المحوّلات الخارجية متوقفة. شغّلها من التفضيلات لاستخدام Chrome أو Edge المثبّت لديك.
+	PlutarchPages is a fork of PdfCraft	‏PlutarchPages نسخة متفرّعة من PdfCraft
+	Remove PDF/A and PDF/X identification	إزالة تعريف PDF/A وPDF/X
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	يستخدم LibreOffice (الإصدار 26.2.5 أو أحدث) لملفات Office وChrome أو Edge لملفات HTML وصفحات الويب، كل مرة بملف تعريف خاص جديد. يُفتح HTML المحلي دون نصوص برمجية ودون شبكة. لا يعزل PlutarchPages هذه البرامج: لا تحوّل إلا الملفات التي تثق بها.
+	Web address (http or https)	عنوان الويب (http أو https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	تُفتح الصفحة في نافذة خاصة جديدة من Chrome أو Edge المثبّت وتُطبع بصيغة PDF. افتح الصفحات التي تثق بها فقط: لا يزال بإمكان الصفحة العامة إعادة التوجيه إلى عناوين على شبكتك الخاصة أو تحميلها.

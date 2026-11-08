@@ -1,0 +1,27 @@
+# PlutarchPages' id rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	About PlutarchPages	Tentang PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	File yang Anda buka di PlutarchPages akan muncul di sini. Jatuhkan PDF di mana saja untuk membukanya.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages tidak berhenti secara normal. Dokumen-dokumen ini memiliki perubahan yang disimpan otomatis:
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages bekerja secara luring. Tidak ada telemetri, tidak ada akun, dan tidak ada pemrosesan awan kecuali Anda menambahkan penyedia.
+	PlutarchPages {c} is up to date.	PlutarchPages {c} sudah terbaru.
+	Reopen the files that were open when PlutarchPages last closed	Buka kembali file yang terbuka saat PlutarchPages terakhir ditutup
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Pengenalan teks belum terpasang: file modelnya hilang. Pasang ulang PlutarchPages, atau atur PDFCRAFT_MODELS ke folder yang memuatnya.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Font yang dipakai PlutarchPages tidak dapat menggambar “{c}” ({code}), sehingga teks itu tampil sebagai ? di setiap penampil PDF. Teks tetap tersimpan.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Kunci berada di penyimpanan sertifikat Windows, yang mungkin meminta izin untuk memakai PlutarchPages.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Kunci berada di Keychain macOS, yang mungkin meminta izin untuk memakai PlutarchPages.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Ini adalah formulir XFA dinamis, yang belum dapat ditampilkan oleh PlutarchPages. Yang Anda lihat adalah halaman placeholder milik file tersebut.
+	Welcome to PlutarchPages	Selamat datang di PlutarchPages
+	PlutarchPages on GitHub	PlutarchPages di GitHub
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages belum dapat memeriksa tanda tangan ini: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	Sertifikat penanda tangan memiliki ekstensi kritis yang tidak dikenali PlutarchPages ({}).
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages sedang menggambar tanpa akselerator grafis, jadi mungkin lambat. Memperbarui driver grafis mungkin membantu.
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Formulir diminta untuk dikirim ke {u}; PlutarchPages tidak mengirim data formulir. Simpan dokumen untuk mempertahankan isi Anda.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	model pengenalan teks belum terpasang (pasang ulang PlutarchPages, atau atur PDFCRAFT_MODELS ke folder yang memuatnya)
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} mengirim formulir ke {url}; PlutarchPages tidak mengirim data formulir. Simpan dokumen untuk mempertahankan isi Anda.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} dalam dokumen ini mencoba membuka alamat yang tidak akan dibuka PlutarchPages: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} dalam dokumen ini mencoba membuka alamat yang tidak akan dibuka PlutarchPages: {e}. Hanya tautan web (http, https) dan email (mailto) yang terbuka dari dokumen.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Tandatangani selembar kertas putih dan ambil fotonya dengan cahaya terang dan merata (gunakan blitz). Pilih foto atau jatuhkan di sini: PlutarchPages menemukan tanda tangan dan menghapus kertasnya.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Font kolom ini tidak dapat menggambar “{c}” ({code}), jadi PlutarchPages menampilkan ? sebagai gantinya. Nilainya disimpan, dan penampil PDF lain menggambar ulang kolom dari nilai itu.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Halaman yang memakai font Type 3 dicetak sebagai gambar, karena Windows dapat menutup PlutarchPages saat mencetaknya. Halaman lain dicetak seperti biasa.

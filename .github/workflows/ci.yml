@@ -120,6 +120,10 @@ jobs:
           ref: *craft-fonts-ref
           path: craft-fonts
           persist-credentials: false
+      # The gate builds with the translations at craft-i18n.rev (and requires them); without them
+      # the tests that read a translated label have only English.
+      - name: Check out craft-i18n
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
       # The instrumented workspace build overflows the free space on a stock runner.
       - name: Free disk space
         run: |
@@ -144,11 +148,13 @@ jobs:
           # Pull requests read main's cache and never write their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The tests `cargo xtask test` runs under nextest. vendor/ is left out, as in
-      # sonar-project.properties.
+      # sonar-project.properties. The sign test left out asserts a 20 s bound that instrumentation
+      # breaks (73 s here, 8 s uninstrumented); the gate runs it.
       - name: Run the tests with line coverage
         run: >
           cargo llvm-cov nextest --locked --workspace --lib --bins --tests --no-fail-fast
           --lcov --output-path coverage-rust.lcov --ignore-filename-regex '(^|/)vendor/'
+          -E 'not (package(pdfcraft-sign) & test(=pdf::revision_classification_tests::shared_annotation_arrays_are_judged_in_bounded_time))'
       - name: Keep the coverage report for the Codecov upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

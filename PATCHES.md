@@ -4,14 +4,16 @@ PlutarchPages is upstream [PdfCraft](https://github.com/storytold/pdfcraft) plus
 [Fork changes](README.md#fork-changes) describes them for users; this file is for whoever merges
 upstream next.
 
-Last upstream merge: `f137a289` (31 October 2026).
+Last upstream merge: `5bb8bbf2` (8 November 2026).
 
 ## Stricter than upstream on purpose
 
 Upstream's tests for these were changed to assert the fork's behaviour. Keep them that way.
 
 - **Redaction** refuses when content under the marks is also used where the marks don't reach.
-  Upstream goes ahead. Tests in `crates/redact` and `crates/automation`.
+  Upstream goes ahead. Tests in `crates/redact` and `crates/automation`. This check runs before
+  upstream's pattern guard, so 2 upstream tests in `crates/redact/tests/pattern_redaction.rs`
+  expect its `StillUsed` refusal where both would refuse.
 - **Copy-restricted documents** refuse text extraction through the tools, including `text_find`.
 - **An empty password** never skips the Document Open prompt or lifts restrictions. `pdfcraft-cli
   check-one` checks before it renders.
@@ -35,23 +37,39 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Mermaid colour scheme: `crates/ui-egui/src/theme.rs` holds every interface colour, and
   `chrome_literals_stay_in_the_theme` fails when a merge brings a colour literal back. The catalogue
   hues in `crates/engine/src/catalog.rs`, the app icon and `UPDATE_APP`'s accent follow it. The test
-  only sees hexadecimal literals. `cargo xtask fork-check` flags a line with a named colour, such as
-  `Color32::WHITE`, that `xtask/baselines/named-colours.txt` doesn't list; a line it lists can still
-  move onto chrome, so look at the controls upstream moves.
+  only sees hexadecimal literals: decimal ones such as `from_rgb(230, 126, 34)` on chrome need
+  searching by hand when upstream moves or adds a control. `cargo xtask fork-check` flags a line with
+  a named colour, such as `Color32::WHITE`, that `xtask/baselines/named-colours.txt` doesn't list; a
+  line it lists can still move onto chrome, so look at the controls upstream moves.
 - Brand: no ArtCraft name or logos (`AGENTS.md` section 1.2). Upstream merges add them back, in new
   files too. `cargo xtask fork-check` finds the name in paths, app code, packaging, `.github/` and
   the xtask; trademark-licensed assets still need a search.
+  `LICENSES.toml` has no `docs/brand/LICENSE-brand.txt` document, and its `NOTICE` hash is the
+  fork's `NOTICE`.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
   and binaries the updater installs.
 - Update results: `crates/ui-egui/src/platform/updates.rs` keeps the fork's themed, translated dialog
   over `craft_update`'s `CheckResultDialog`, which is English only with its own colours. Upstream
-  merges delete its catalogue rows and change `crates/ui-egui/tests/it/updates.rs`, so restore both.
+  merges change `crates/ui-egui/tests/it/updates.rs`, so keep the fork's tests there. Its strings
+  are overlay rows (Translations).
+- Translations: the interface catalogues are craft-i18n's, at `craft-i18n.rev`, as upstream's are.
+  The fork's rows that craft-i18n doesn't have are in `crates/ui-egui/i18n-fork/<locale>.tsv`, and
+  `crates/ui-egui/build_i18n_fork.rs` embeds each before craft-i18n's `pdfcraft.tsv`; 2 calls in
+  `build.rs` reach it, so keep them when a merge changes `craft_i18n` or `locales`.
+  `the_fork_overlay_is_embedded_and_served` fails when an overlay row stops being served or
+  craft-i18n gains one: delete that row from the overlay then, and update the file's `sha256` in
+  `ATTRIBUTION.toml`, where each overlay is an `[[asset]]`. A build with `CRAFT_I18N_REQUIRED=1`
+  fails when an overlay listed there is missing. Every release build job checks out craft-i18n at
+  that commit.
 - Flatpak manifests don't carry upstream's `--filesystem=xdg-data/ArtCraft/versions:ro` grant, which
   lets an upstream launcher's version choices reach the app.
 - Shared CI: workflows from `storytold/craft-common-actions` are pinned to a commit, and SonarCloud
   receives only `SONAR_TOKEN`. Upstream merges restore `@main` and `secrets: inherit`, so reapply both.
+  `.github/workflows/house-rules.yml` isn't carried: it runs craft-common-actions at `@main` and
+  checks `AGENTS.md` against craft-contrib's, which this fork's departs from on purpose. Delete it
+  when a merge brings it back.
 - Releases: `.github/workflows/release.yml` is this fork's own and uses nothing from
   `craft-common-actions`. It builds unsigned packages, tests an installed MSI and an upgrade from the
   latest published release with `packaging/windows/test-install.ps1`, and only drafts the release. Keep it over
@@ -81,14 +99,11 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   presentation forms, Persian yeh and kaf and Arabic-Indic digits. Redaction word search stays on
   `PageText::find_for_redaction`, which adds back the literal matches: if an upstream merge moves a
   redaction caller to `find_opts`, it can mark less.
-- Comments panel: cards and page headers more than a screen out of view aren't laid out
-  (`crates/ui-egui/src/panels/comments_panel.rs`). Each stands in at the height it had when last
-  drawn for the same width, document edit, interface scale and language, with its click targets,
-  accessible name and place in the focus order; screen-reader mode draws everything. Upstream lays
-  out every card each frame, which left the 500-comment frame budget in
-  `crates/ui-egui/tests/perf.rs` at the edge on CI. A stand-in skips the automatic ids its drawn
-  version takes (a card 2, a header row 1). If a merge changes how a card allocates, recount them:
-  `far_comment_cards_and_headers_skip_layout_but_stay_reachable` fails when the count is wrong.
+- Comments panel: upstream lays out only the cards in view once a list has more than
+  `LAY_OUT_WHOLE` (#5488, `crates/ui-egui/src/panels/comments_panel.rs`), which replaced this
+  fork's own stand-ins. In screen-reader mode every card is laid out, so a screen reader reaches
+  the cards out of view too: keep that condition on `virtual_list`
+  (`screen_reader_mode_lays_out_every_comment_card`).
 - Hidden text in the text tools: `text_extract`, `text_find`, `text_lines` and `text_paragraphs`
   add `hidden_text` (`{reason, text, text_truncated, rect}`, at most 50, text cut to 200
   characters) and `hidden_text_count` to each page, match, line or paragraph, and each description
@@ -107,6 +122,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Right-edge binding: `/Direction /R2L` sets `DocView::right_to_left`, whatever the default view, and
   `DocView::layout` mirrors each two-page row. Upstream's open PR #4239 adds a command for the same
   layout: if it lands, keep the file's `/Direction` deciding how a document opens.
+- `text_edit` doesn't offer `aligns`: upstream lists it and then refuses every use, as existing
+  paragraphs can't keep a row's alignment yet. Its test expects the unknown-argument refusal.
 - `publish = false` in every crate and app: `pdfcraft`, `pdfcraft-cos`, `craft-ui` and other names
   this workspace uses belong to unrelated crates on crates.io. Give any crate upstream adds the
   same line.

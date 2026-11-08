@@ -1,0 +1,29 @@
+# PlutarchPages' kk rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	PlutarchPages-ге қош келдіңіз
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	PlutarchPages-те ашқан файлдарыңыз осында көрсетіледі. PDF файлын ашу үшін оны кез келген жерге апарып тастаңыз.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages офлайн жұмыс істейді. Провайдер қоспағаныңызша телеметрия да, тіркелгі де, бұлтта өңдеу де жоқ.
+	PlutarchPages on GitHub	GitHub-тағы PlutarchPages
+	About PlutarchPages	PlutarchPages туралы
+	Checking for a newer version…	Жаңа нұсқа бар ма екені тексерілуде…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} нұсқасы ең соңғы.
+	Couldn't check for updates: {e}	Жаңартуларды тексеру мүмкін болмады: {e}
+	You have version {c}. All releases are listed at {page}.	Сізде {c} нұсқасы бар. Барлық шығарылымдар {page} бетінде көрсетілген.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Кілт macOS Keychain ішінде; ол PlutarchPages-ге оны пайдалануға рұқсат сұрауы мүмкін.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Кілт Windows сертификаттар қоймасында; ол PlutarchPages-ге оны пайдалануға рұқсат сұрауы мүмкін.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages қалыпты жабылмады. Осы құжаттардың өзгерістері автосақталды:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Форма {u} адресіне жіберілуді сұрайды; PlutarchPages форма деректерін жібермейді. Енгізген деректеріңізді сақтап қалу үшін құжатты сақтаңыз.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} форманы {url} адресіне жібереді; PlutarchPages форма деректерін жібермейді. Енгізген деректеріңізді сақтап қалу үшін құжатты сақтаңыз.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Бұл динамикалық XFA формасы, оны PlutarchPages әлі көрсете алмайды. Көріп тұрғаныңыз — файлдың орынбасар беті.
+	Reopen the files that were open when PlutarchPages last closed	PlutarchPages соңғы рет жабылғанда ашық болған файлдарды қайта ашу
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	Осы құжаттағы {who} PlutarchPages ашпайтын адресті ашпақ болды: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	Осы құжаттағы {who} PlutarchPages ашпайтын адресті ашпақ болды: {e}. Құжаттардан тек веб (http, https) және email (mailto) сілтемелері ашылады.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages графикалық процессорсыз сурет салуда, сондықтан баяу жұмыс істеуі мүмкін. Графикалық драйверді жаңарту көмектесуі мүмкін.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Мәтінді тану орнатылмаған: модель файлдары жоқ. PlutarchPages қайта орнатыңыз немесе PDFCRAFT_MODELS айнымалысына олар жатқан қалтаны көрсетіңіз.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	мәтінді тану модельдері орнатылмаған (PlutarchPages қайта орнатыңыз немесе PDFCRAFT_MODELS айнымалысына олар жатқан қалтаны көрсетіңіз)
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Бұл өрістің қаріпі «{c}» ({code}) таңбасын сала алмайды, сондықтан PlutarchPages оның орнына ? көрсетеді. Мән сақталады, ал басқа PDF қарау құралдары өрісті соған қарап қайта салады.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	PlutarchPages жазатын қаріптер «{c}» ({code}) таңбасын сала алмайды, сондықтан ол барлық PDF қарау құралдарында ? болып көрінеді. Мәтін сақталады.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Ақ қағаз парағына қол қойып, оны жарық әрі біркелкі жарықта суретке түсіріңіз (жарқылды қосыңыз). Суретті таңдаңыз немесе осында тастаңыз: PlutarchPages қолтаңбаны тауып, қағазды алып тастайды.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Осы жапырақ тегін оқу ретінен алып тастап, оның тікелей мазмұнын артефакт ретінде белгілеңіз
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Type 3 қаріптерін пайдаланатын беттер сурет ретінде басып шығарылады, себебі оларды басып шығару кезінде Windows PlutarchPages бағдарламасын жауып тастауы мүмкін. Басқа беттер әдеттегідей басып шығарылады.

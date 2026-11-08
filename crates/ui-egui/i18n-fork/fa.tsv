@@ -1,0 +1,31 @@
+# PlutarchPages' fa rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	به PlutarchPages خوش آمدید
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	فایل‌هایی که در PlutarchPages باز می‌کنید اینجا نمایش داده می‌شوند. برای باز کردن، یک PDF را هرجایی رها کنید.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages آفلاین کار می‌کند. بدون تله سنجی، بدون حساب کاربری و بدون پردازش ابری، مگر اینکه ارائه دهند‌ه ای اضافه کنید.
+	PlutarchPages on GitHub	PlutarchPages در GitHub
+	About PlutarchPages	درباره PlutarchPages
+	Checking for a newer version…	بررسی برای نگارش تازه‌تر…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} به‌روز است.
+	Couldn't check for updates: {e}	بررسی به‌روز‌رسانی‌ها انجام نشد: {e}
+	You have version {c}. All releases are listed at {page}.	شما نگارش {c} را دارید. همه انتشار‌ها در {page} فهرست شدهاند.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	کلید در Keychain macOS است، که ممکن است برای اجازه دادن به PlutarchPages برای استفاده از آن درخواست کند.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	کلید در مخزن گواهی Windows است، که ممکن است برای اجازه دادن به PlutarchPages برای استفاده از آن درخواست کند.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	تشخیص متن نصب نیست: فایل‌های مدل آن وجود ندارند. PlutarchPages را دوباره نصب کنید، یا PDFCRAFT_MODELS را به پوشه ای که آن‌ها را دارد تنظیم کنید.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages به درستی بسته نشد. این سند‌ها تغییراتی داشتند که ذخیره خودکار شدهاند:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	فرم درخواست ارسال به {u} را دارد؛ PlutarchPages داده‌های فرم را ارسال نمی‌کند. سند را ذخیره کنید تا ورودی‌هایتان حفظ شوند.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} فرم را به {url} ارسال می‌کند؛ PlutarchPages داده‌های فرم را ارسال نمی‌کند. سند را ذخیره کنید تا ورودی‌هایتان حفظ شوند.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages بدون پردازنده گرافیکی رسم می‌کند، بنابراین ممکن است کند باشد. به‌روز‌رسانی درایور گرافیکی می‌تواند کمک کند.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	این یک فرم XFA پویاست که PlutarchPages هنوز نمی‌تواند نمایش دهد. آنچه می‌بینید صفحه جانگهدار فایل است.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	مدل‌های تشخیص متن نصب نشدهاند (PlutarchPages را دوباره نصب کنید، یا PDFCRAFT_MODELS را روی پوش‌های که آن‌ها را نگه می‌دارد تنظیم کنید)
+	Reopen the files that were open when PlutarchPages last closed	باز‌گشایی فایل‌هایی که هنگام آخرین بسته شدن PlutarchPages باز بودند
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} در این سند تلاش کرد نشانیای را باز کند که PlutarchPages باز نمی‌کند: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} در این سند تلاش کرد نشانیای را باز کند که PlutarchPages باز نمی‌کند: {e}. از میان سند‌ها فقط پیوند‌های وب (http، https) و ایمیل (mailto) باز می‌شوند.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	قلم این فیلد نمی‌تواند «{c}» را بکشد ({code})، بنابراین PlutarchPages به‌جای آن ? نشان می‌دهد. مقدار ذخیره می‌شود و سایر نمایشگر‌های PDF فیلد را از آن باز‌ترسیم می‌کنند.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	قلم‌هایی که PlutarchPages با آن‌ها می‌نویسد نمی‌توانند «{c}» را بکشند ({code})، بنابراین در همهٔ نمایشگر‌های PDF به‌صورت ? نمایش داده می‌شود. متن ذخیره می‌شود.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages هنوز نمی‌تواند این امضا را بررسی کند: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	گواهی امضا‌کننده افزونه‌های حیاتی دارد که PlutarchPages آن‌ها را نمی‌شناسد ({}).
+	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.	گواهی {} افزونه‌های حیاتی دارد که PlutarchPages آن‌ها را نمی‌شناسد، بنابراین برای تأیید {} استفاده نمی‌شود.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	روی یک برگ کاغذ سفید امضا کنید و از آن در نور روشن و یکنواخت عکس بگیرید (از فلاش استفاده کنید). عکس را انتخاب کنید یا آن را اینجا رها کنید: PlutarchPages امضا را پیدا می‌کند و کاغذ را حذف می‌کند.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	صفحه‌هایی که از قلم‌های Type 3 استفاده می‌کنند به‌صورت تصویر چاپ می‌شوند، زیرا Windows ممکن است هنگام چاپ آن‌ها PlutarchPages را ببندد. صفحه‌های دیگر طبق معمول چاپ می‌شوند.

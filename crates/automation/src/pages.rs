@@ -22,6 +22,10 @@ pub(crate) const FIND_MAX_WARNINGS: usize = 100;
 
 pub(crate) const FIND_MAX_WARNING_BYTES: usize = 1024;
 
+/// HTML that one `text_extract` with `format: "html"` returns across all its pages; a page past
+/// it gets none. `html_truncated` covers this and any page whose own copy hit its caps.
+const MAX_EXTRACT_HTML_BYTES: usize = 32 << 20;
+
 impl Automation {
     // ---- pages and text ----------------------------------------------------------------------
 
@@ -215,6 +219,16 @@ impl Automation {
     }
 
     pub(crate) fn text_extract(&mut self, a: &Args) -> Result<Value> {
+        self.text_extract_within(a, MAX_EXTRACT_HTML_BYTES)
+    }
+
+    /// [`Self::text_extract`] with at most `html_budget` bytes of HTML across all pages.
+    pub(crate) fn text_extract_within(&mut self, a: &Args, html_budget: usize) -> Result<Value> {
+        let html = match a.opt_str("format")?.unwrap_or("text") {
+            "text" => false,
+            "html" => true,
+            other => return Err(ToolError::InvalidArgs(format!("format must be \"text\" or \"html\", not {other:?}"))),
+        };
         let doc = self.doc_to_copy(a)?;
         let id = doc.id;
         let pages = match a.opt_ints("pages")? {
@@ -224,23 +238,44 @@ impl Automation {
         // Column select (#740): only the text inside the rectangle, row by row.
         let rect = a.nums::<4>("rect")?.map(|r| r.map(|v| v as f32));
         let texts = self.classed_page_texts(id, &pages)?;
-        let out: Vec<Value> = pages
-            .iter()
-            .zip(texts)
-            .map(|(p, (t, hidden))| {
-                let (text, hidden) = match rect {
-                    Some(r) => {
-                        let ids = t.glyphs_in(r);
-                        (t.column_text(&ids), glyph_entries(&t, &hidden, ids.iter().copied()))
+        let doc = self.doc(a)?;
+        let mut out = Vec::with_capacity(pages.len());
+        // `spent`: the budget ran out, so later pages get no HTML. `cut`: some page's HTML is
+        // missing part of its text, by the budget or by the copy's own caps.
+        let (mut html_left, mut spent, mut cut) = (html_budget, false, false);
+        for (&p, (t, hidden)) in pages.iter().zip(texts) {
+            let glyphs: Vec<usize> = match rect {
+                Some(r) => t.glyphs_in(r),
+                None => (0..t.glyphs.len()).collect(),
+            };
+            let text = if rect.is_some() { t.column_text(&glyphs) } else { t.plain_text() };
+            let mut page = json!({ "page": p + 1, "text": text });
+            attach(&mut page, glyph_entries(&t, &hidden, glyphs.iter().copied()));
+            if html {
+                // Copy with formatting: the same glyphs as an HTML fragment, within one budget for
+                // the whole call; a page past it gets none and the call says so.
+                let mut copy = pdfcraft_engine::RichCopy::default();
+                if !spent {
+                    copy = doc.rich_copy(p, &t, &glyphs).map_err(failed)?;
+                    match html_left.checked_sub(copy.html.len()) {
+                        Some(left) => html_left = left,
+                        None => {
+                            spent = true;
+                            copy = pdfcraft_engine::RichCopy::default();
+                        }
                     }
-                    None => (t.plain_text(), glyph_entries(&t, &hidden, 0..t.glyphs.len())),
-                };
-                let mut page = json!({ "page": p + 1, "text": text });
-                attach(&mut page, hidden);
-                page
-            })
-            .collect();
-        Ok(json!({ "pages": out }))
+                }
+                cut |= spent || copy.truncated;
+                page["html"] = json!(copy.html);
+                page["styles_incomplete"] = json!(copy.styles_incomplete || spent);
+            }
+            out.push(page);
+        }
+        let mut result = json!({ "pages": out });
+        if html {
+            result["html_truncated"] = json!(cut);
+        }
+        Ok(result)
     }
 
     /// Matches in document order, extracting page text in growing batches and stopping as soon as
