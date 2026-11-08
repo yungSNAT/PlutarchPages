@@ -24,6 +24,9 @@ const COLOUR_BASELINE: &str = "xtask/baselines/named-colours.txt";
 const RELEASE: &str = ".github/workflows/release.yml";
 const WEAK_HASH_FILES: [&str; 2] = ["crates/crypt/src/lib.rs", "crates/sign/src/keys.rs"];
 const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
+const FORK_REPO: &str = "repo: \"yungSNAT/PlutarchPages\",";
+/// `links::UPSTREAM`, which credits upstream: the one line in app code that may link to it.
+const UPSTREAM_CREDIT: (&str, &str) = ("crates/engine/src/links.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";");
 /// Its own rules name ArtCraft and upstream to look for them.
 const THIS_FILE: &str = "xtask/src/fork_check.rs";
 
@@ -74,7 +77,12 @@ fn read_by_a_rule(path: &str) -> bool {
     !path.starts_with("vendor/")
         && (["crates/", "apps/", "packaging/", ".github/", "xtask/src/"].iter().any(|d| path.starts_with(d))
             || path.ends_with("Cargo.toml")
+            || is_build_script(path)
             || path == COLOUR_BASELINE)
+}
+
+fn is_build_script(path: &str) -> bool {
+    path == "build.rs" || path.ends_with("/build.rs")
 }
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -106,10 +114,6 @@ fn is_test(path: &str) -> bool {
     path.split('/').any(|c| c == "tests" || c == "tests.rs" || c.ends_with("_tests.rs"))
 }
 
-fn is_rust_comment(line: &str) -> bool {
-    line.trim_start().starts_with("//")
-}
-
 /// A line for a message: trimmed, and cut short when it is long.
 fn excerpt(line: &str) -> String {
     let line = line.trim();
@@ -135,16 +139,9 @@ fn artcraft_names(tree: &Tree) -> Vec<String> {
         code || p.starts_with("packaging/") || p.starts_with(".github/")
     });
     for (path, text) in scanned {
-        let rust = path.ends_with(".rs");
-        let lines = if rust { lines_outside_test_mods(text) } else { text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect() };
+        let lines = if path.ends_with(".rs") { rust_lines(text) } else { text.lines().enumerate().map(|(i, l)| (i + 1, l.to_string())).collect() };
         for (n, line) in lines {
-            let line = if path.ends_with(".tsv") {
-                catalogue_source(line)
-            } else if rust && is_rust_comment(line) {
-                continue;
-            } else {
-                line
-            };
+            let line = if path.ends_with(".tsv") { catalogue_source(&line) } else { &line };
             if names_artcraft(line) {
                 out.push(format!("{path}:{n}: {}", excerpt(line)));
             }
@@ -153,16 +150,22 @@ fn artcraft_names(tree: &Tree) -> Vec<String> {
     out
 }
 
-/// Each line of Rust source with its number from 1, leaving out `#[cfg(test)]` modules.
-fn lines_outside_test_mods(text: &str) -> Vec<(usize, &str)> {
-    let lines: Vec<&str> = text.lines().collect();
+/// Each line of Rust source with its number from 1 and its comments blanked, leaving out
+/// `#[cfg(test)]` modules. Source that doesn't lex, or whose braces don't balance, is read whole
+/// and as it is, comments and test modules too: a false failure rather than a miss.
+fn rust_lines(source: &str) -> Vec<(usize, String)> {
+    let Some(lexed) = lex(source).filter(|l| balanced(&l.code)) else {
+        return source.lines().enumerate().map(|(i, l)| (i + 1, l.to_string())).collect();
+    };
+    let code: Vec<&str> = lexed.code.lines().collect();
+    let text: Vec<&str> = lexed.text.lines().collect();
     let mut out = Vec::new();
     let mut i = 0;
-    while i < lines.len() {
-        match test_mod_end(&lines, i) {
+    while i < text.len() {
+        match test_mod_end(&code, i) {
             Some(end) => i = end + 1,
             None => {
-                out.push((i + 1, lines[i]));
+                out.push((i + 1, text[i].to_string()));
                 i += 1;
             }
         }
@@ -170,10 +173,17 @@ fn lines_outside_test_mods(text: &str) -> Vec<(usize, &str)> {
     out
 }
 
-/// The last line of the `#[cfg(test)]` module whose attribute is line `i`, if it is one.
-// shortcut: braces are counted without reading strings, characters or comments. A stray brace in
-// a test module ends it early or makes it unbalanced, and then its lines are read like any other,
-// which shows up as a false failure rather than a miss. Parse with `syn` if that happens.
+/// Whether every `{` closes and no `}` closes nothing.
+fn balanced(code: &str) -> bool {
+    code.bytes().try_fold(0usize, |depth, b| match b {
+        b'{' => Some(depth + 1),
+        b'}' => depth.checked_sub(1),
+        _ => Some(depth),
+    }) == Some(0)
+}
+
+/// The last line of the `#[cfg(test)]` module whose attribute is line `i` of `lines`, Rust source
+/// with literals and comments blanked by [`lex`], if it is one.
 fn test_mod_end(lines: &[&str], i: usize) -> Option<usize> {
     if lines[i].trim() != "#[cfg(test)]" {
         return None;
@@ -202,23 +212,162 @@ fn test_mod_end(lines: &[&str], i: usize) -> Option<usize> {
     None
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Lexeme {
+    Code,
+    Comment,
+    Literal,
+}
+
+/// Rust source with its comments blanked (`text`), and with the insides of its literals blanked
+/// too (`code`). Each blanked byte becomes a space and line breaks stay, so a line or byte offset
+/// in either is the same line or offset in the source.
+struct Lexed {
+    text: String,
+    code: String,
+}
+
+/// `None` when a comment or literal doesn't close, or a `'` starts neither a character nor a
+/// lifetime: callers then read the source as it is.
+fn lex(source: &str) -> Option<Lexed> {
+    let s = source.as_bytes();
+    let (mut text, mut code) = (Vec::with_capacity(s.len()), Vec::with_capacity(s.len()));
+    let mut i = 0;
+    while i < s.len() {
+        let (lexeme, end) = lexeme_at(source, i)?;
+        for &b in &s[i..end] {
+            let blank = if b == b'\n' { b'\n' } else { b' ' };
+            text.push(if lexeme == Lexeme::Comment { blank } else { b });
+            code.push(if lexeme == Lexeme::Code { b } else { blank });
+        }
+        i = end;
+    }
+    Some(Lexed { text: String::from_utf8(text).ok()?, code: String::from_utf8(code).ok()? })
+}
+
+/// What starts at byte `i`, and the byte after it.
+fn lexeme_at(source: &str, i: usize) -> Option<(Lexeme, usize)> {
+    let s = source.as_bytes();
+    match (s[i], s.get(i + 1)) {
+        (b'/', Some(b'/')) => Some((Lexeme::Comment, s[i..].iter().position(|&b| b == b'\n').map_or(s.len(), |n| i + n))),
+        (b'/', Some(b'*')) => Some((Lexeme::Comment, block_comment_end(s, i + 2)?)),
+        (b'"', _) => Some((Lexeme::Literal, string_end(s, i + 1)?)),
+        (b'\'', _) => quote(source, i),
+        (b'r', _) if starts_word(s, i) || (i > 0 && matches!(s[i - 1], b'b' | b'c') && starts_word(s, i - 1)) => raw_string(s, i),
+        _ => Some((Lexeme::Code, i + 1)),
+    }
+}
+
+/// Whether byte `i` starts an identifier or keyword rather than continuing one.
+fn starts_word(s: &[u8], i: usize) -> bool {
+    i == 0 || !(s[i - 1].is_ascii_alphanumeric() || s[i - 1] == b'_' || !s[i - 1].is_ascii())
+}
+
+/// The end of a block comment, which nests, whose text starts at `j`.
+fn block_comment_end(s: &[u8], mut j: usize) -> Option<usize> {
+    let mut depth = 1;
+    while depth > 0 {
+        match (*s.get(j)?, s.get(j + 1)) {
+            (b'/', Some(b'*')) => (depth, j) = (depth + 1, j + 2),
+            (b'*', Some(b'/')) => (depth, j) = (depth - 1, j + 2),
+            _ => j += 1,
+        }
+    }
+    Some(j)
+}
+
+/// The end of a string or byte string whose contents start at `j`.
+fn string_end(s: &[u8], mut j: usize) -> Option<usize> {
+    loop {
+        match *s.get(j)? {
+            b'\\' => j += 2,
+            b'"' => return Some(j + 1),
+            _ => j += 1,
+        }
+    }
+}
+
+/// `r"…"` or `r#"…"#` with any number of `#`s; an `r` that starts anything else is code.
+fn raw_string(s: &[u8], i: usize) -> Option<(Lexeme, usize)> {
+    let hashes = s[i + 1..].iter().take_while(|&&b| b == b'#').count();
+    if s.get(i + 1 + hashes) != Some(&b'"') {
+        return Some((Lexeme::Code, i + 1));
+    }
+    let close: Vec<u8> = std::iter::once(b'"').chain(std::iter::repeat_n(b'#', hashes)).collect();
+    let start = i + 2 + hashes;
+    let n = s[start..].windows(close.len()).position(|w| w == close)?;
+    Some((Lexeme::Literal, start + n + close.len()))
+}
+
+/// A character literal (`'x'`, `'\''`, `'\u{7f}'`) or the `'` of a lifetime or label (`'a`).
+fn quote(source: &str, i: usize) -> Option<(Lexeme, usize)> {
+    let s = source.as_bytes();
+    let c = source[i + 1..].chars().next()?;
+    if c == '\\' {
+        let rest = s.get(i + 3..)?;
+        let n = rest.iter().position(|&b| b == b'\'' || b == b'\n')?;
+        return (rest[n] == b'\'').then_some((Lexeme::Literal, i + 4 + n));
+    }
+    let after = i + 1 + c.len_utf8();
+    if s.get(after) == Some(&b'\'') {
+        return Some((Lexeme::Literal, after + 1));
+    }
+    (c.is_alphabetic() || c == '_').then_some((Lexeme::Code, i + 1))
+}
+
+/// The text between the braces of each `const` called `name`, with comments blanked; `None` for
+/// one whose initialiser isn't in braces.
+fn initialisers<'a>(lexed: &'a Lexed, name: &str) -> Vec<Option<&'a str>> {
+    let code = lexed.code.as_bytes();
+    let item = format!("const {name}");
+    let whole = |i: usize| starts_word(code, i) && code.get(i + item.len()).is_none_or(|&b| !(b.is_ascii_alphanumeric() || b == b'_'));
+    let body = |i: usize| {
+        let rest = &lexed.code[i..];
+        let open = i + rest.find(['{', ';']).filter(|&n| rest.as_bytes()[n] == b'{')?;
+        let mut depth = 0usize;
+        let len = lexed.code[open..].bytes().position(|b| {
+            match b {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            depth == 0
+        })?;
+        Some(&lexed.text[open + 1..open + len])
+    };
+    lexed.code.match_indices(&item).map(|(i, _)| i).filter(|&i| whole(i)).map(body).collect()
+}
+
 /// A catalogue row's context and English source: a translation of an allowed source is allowed.
 fn catalogue_source(line: &str) -> &str {
     line.match_indices('\t').nth(1).map_or(line, |(i, _)| &line[..i])
 }
 
-/// The fork names ArtCraft only to credit upstream's authors and say it isn't their product.
+/// The fork names ArtCraft only to credit upstream's authors and say it isn't their product, in
+/// the whole phrases 'the ArtCraft team' and 'an ArtCraft product'.
 fn names_artcraft(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    lower.match_indices("artcraft").any(|(i, _)| !["artcraft team", "artcraft product"].iter().any(|a| lower[i..].starts_with(a)))
+    let s = lower.as_bytes();
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let credited = |i: usize| {
+        let name_end = i + "artcraft".len();
+        [("the ", " team"), ("an ", " product")].iter().any(|&(before, after)| {
+            let Some(start) = i.checked_sub(before.len()) else { return false };
+            s[start..i] == *before.as_bytes()
+                && s[name_end..].starts_with(after.as_bytes())
+                && !word(lower[..start].chars().next_back())
+                && !word(lower[name_end + after.len()..].chars().next())
+        })
+    };
+    lower.match_indices("artcraft").any(|(i, _)| !credited(i))
 }
 
 fn upstream_links(tree: &Tree) -> Vec<String> {
     let mut out = Vec::new();
     for (path, text) in app_code(tree).chain(tree.under("packaging/")) {
-        for (n, line) in text.lines().enumerate() {
-            let credit = line.trim_start().starts_with("pub const UPSTREAM");
-            if !credit && !is_rust_comment(line) && line.to_ascii_lowercase().contains("storytold/pdfcraft") {
+        let lexed = if path.ends_with(".rs") { lex(text) } else { None };
+        for (n, line) in lexed.as_ref().map_or(text, |l| l.text.as_str()).lines().enumerate() {
+            if (path, line.trim()) != UPSTREAM_CREDIT && line.to_ascii_lowercase().contains("storytold/pdfcraft") {
                 out.push(format!("{path}:{}: {} (point it at this fork)", n + 1, excerpt(line)));
             }
         }
@@ -227,27 +376,32 @@ fn upstream_links(tree: &Tree) -> Vec<String> {
 }
 
 /// Upstream's `UPDATE_APP` takes its repository from `craft_update::suite::PDFCRAFT`, so a merge
-/// that drops the fork's `repo` line reads and downloads upstream's releases.
+/// that drops the fork's `repo` line reads and downloads upstream's releases. Each `UPDATE_APP`
+/// initialiser needs the line itself.
 fn update_source(tree: &Tree) -> Vec<String> {
-    match tree.get(UPDATE_APP_FILE) {
-        Some(text) if text.lines().any(|l| l.trim() == "repo: \"yungSNAT/PlutarchPages\",") => Vec::new(),
-        Some(_) => vec![format!("{UPDATE_APP_FILE}: `UPDATE_APP` lacks `repo: \"yungSNAT/PlutarchPages\"`, so updates would come from upstream")],
-        None => vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")],
+    let Some(text) = tree.get(UPDATE_APP_FILE) else {
+        return vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")];
+    };
+    let lexed = lex(text);
+    let bodies = lexed.as_ref().map(|l| initialisers(l, "UPDATE_APP")).unwrap_or_default();
+    if !bodies.is_empty() && bodies.iter().all(|b| b.is_some_and(|b| b.lines().any(|l| l.trim() == FORK_REPO))) {
+        return Vec::new();
     }
+    vec![format!("{UPDATE_APP_FILE}: `UPDATE_APP` lacks `{FORK_REPO}`, so updates would come from upstream")]
 }
 
 /// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant.
-fn colour_lines(tree: &Tree) -> Vec<(&str, usize, &str)> {
+fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
     let mut out = Vec::new();
     for (path, text) in tree.under("crates/ui-egui/src/") {
         // The same files `chrome_literals_stay_in_the_theme` reads.
         if !path.ends_with(".rs") || path == "crates/ui-egui/src/theme.rs" || path.contains("tests") {
             continue;
         }
-        for (n, line) in lines_outside_test_mods(text) {
+        for (n, line) in rust_lines(text) {
             let named = line.match_indices("Color32::").any(|(i, m)| line[i + m.len()..].starts_with(|c: char| c.is_ascii_uppercase()));
             if named {
-                out.push((path, n, line.trim()));
+                out.push((path, n, line.trim().to_string()));
             }
         }
     }
@@ -271,13 +425,14 @@ fn named_colours(tree: &Tree) -> Vec<String> {
     let Some(baseline) = tree.get(COLOUR_BASELINE) else {
         return vec![format!("{COLOUR_BASELINE} is missing: run `cargo xtask fork-check --write`")];
     };
+    let lines = colour_lines(tree);
     let mut listed: BTreeMap<(&str, &str), usize> = BTreeMap::new();
     for row in baseline.lines().filter(|l| !l.starts_with('#') && !l.is_empty()) {
         *listed.entry(row.split_once('\t').unwrap_or((row, ""))).or_default() += 1;
     }
     let mut out = Vec::new();
-    for (path, n, line) in colour_lines(tree) {
-        match listed.get_mut(&(path, line)) {
+    for (path, n, line) in &lines {
+        match listed.get_mut(&(*path, line.as_str())) {
             Some(left) if *left > 0 => *left -= 1,
             _ => out.push(format!("{path}:{n}: {} isn't in {COLOUR_BASELINE}", excerpt(line))),
         }
@@ -383,7 +538,7 @@ fn upstream_flatpak_manifests(tree: &Tree) -> Vec<String> {
 }
 
 fn i18n_is_a_build_input(tree: &Tree) -> bool {
-    tree.text.iter().any(|(p, t)| (p == "build.rs" || p.ends_with("/build.rs")) && t.contains("CRAFT_I18N_DIR"))
+    tree.text.iter().any(|(p, t)| is_build_script(p) && t.contains("CRAFT_I18N_DIR"))
 }
 
 /// Upstream's catalogues come from craft-i18n through `CRAFT_I18N_DIR`, and a build without it
@@ -432,8 +587,12 @@ fn block_around<'a>(lines: &[&'a str], i: usize) -> Vec<&'a str> {
 mod tests {
     use super::*;
 
+    /// A tree that, like `Tree::read`, holds the text only of the files a rule reads.
     fn tree(files: &[(&str, &str)]) -> Tree {
-        Tree { paths: files.iter().map(|(p, _)| p.to_string()).collect(), text: files.iter().map(|(p, t)| (p.to_string(), t.to_string())).collect() }
+        Tree {
+            paths: files.iter().map(|(p, _)| p.to_string()).collect(),
+            text: files.iter().filter(|(p, _)| read_by_a_rule(p)).map(|(p, t)| (p.to_string(), t.to_string())).collect(),
+        }
     }
 
     fn passes(rule: Rule, files: &[(&str, &str)]) {
@@ -642,5 +801,94 @@ mod tests {
         ]));
         assert!(problems.iter().any(|p| p.starts_with("Flatpak manifest: ")), "{problems:#?}");
         assert!(problems.iter().any(|p| p.starts_with("NOSONAR: ")), "{problems:#?}");
+    }
+
+    #[test]
+    fn a_test_module_ends_at_its_own_closing_brace() {
+        let home = "crates/ui-egui/src/home.rs";
+        // Braces in comments and literals neither end a test module nor keep it open.
+        let tests = r##"fn f() {}
+#[cfg(test)]
+mod tests {
+    // }
+    /* } /* } */ } */
+    const A: &str = "{\"}";
+    const B: &str = r#"}"#;
+    const C: &[u8] = br"}";
+    const D: &[u8] = b"}";
+    const E: char = '}';
+    const F: char = '\'';
+    const G: char = '\u{7d}';
+    fn g<'a>(s: &'a str) -> &'a str { 'outer: loop { break 'outer s; } }
+    const MARK: &str = "docs/brand/artcraft-mark.svg";
+}
+"##;
+        passes(artcraft_names, &[(home, tests)]);
+        // A `{` in a test module and a `}` in the function after it don't hide the function.
+        let hidden = "#[cfg(test)]\nmod tests {\n    const OPEN: &str = \"{\";\n}\nfn f() {\n    let close = \"}\";\n    widgets::artcraft_mark(ui, 28.0);\n}\n";
+        fails(artcraft_names, &[(home, hidden)], "home.rs:7");
+        // Source that doesn't lex or balance is read whole, test modules too.
+        let module = "#[cfg(test)]\nmod tests {\n    const MARK: &str = \"artcraft-mark.svg\";\n}\n";
+        for unread in ["const S: &str = \"unclosed;\n", "/* unclosed\n", "const R: &str = r#\"unclosed\"\n", "const Q: u8 = '{x;\n", "}\n"] {
+            fails(artcraft_names, &[(home, format!("{module}{unread}").as_str())], "home.rs:3");
+        }
+    }
+
+    #[test]
+    fn rust_comments_are_left_alone_wherever_they_are() {
+        let home = "crates/ui-egui/src/home.rs";
+        passes(artcraft_names, &[(home, "fn f() { g(); /* ArtCraft */ }\n/*\n * ArtCraft Launcher\n */\nfn h() {} // ArtCraft\n")]);
+        fails(artcraft_names, &[(home, "fn f() { g(\"/* ArtCraft */\"); }\n")], "home.rs:1");
+        let raster = "crates/render/src/raster.rs";
+        passes(upstream_links, &[(raster, "fn f() {} /* storytold/pdfcraft#623 */\n")]);
+        fails(upstream_links, &[(raster, "const URL: &str = r\"\n// https://github.com/storytold/pdfcraft\n\";\n")], "raster.rs:2");
+    }
+
+    #[test]
+    fn only_update_app_sets_the_update_repo() {
+        let other = "pub const UPDATE_APP: App = App {\n    name: \"PlutarchPages\",\n    ..suite::PDFCRAFT\n};\npub const OTHER_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n    ..suite::PDFCRAFT\n};\n";
+        fails(update_source, &[(UPDATE_APP_FILE, other)], "lacks `repo");
+        let similar = "pub const UPDATE_APP_V2: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\npub const UPDATE_APP: App = App { ..suite::PDFCRAFT };\n";
+        fails(update_source, &[(UPDATE_APP_FILE, similar)], "lacks `repo");
+        let commented = "pub const UPDATE_APP: App = App {\n    /*\n    repo: \"yungSNAT/PlutarchPages\",\n    */\n    ..suite::PDFCRAFT\n};\n";
+        fails(update_source, &[(UPDATE_APP_FILE, commented)], "lacks `repo");
+        let second = "pub const OTHER_APP: App = App {\n    name: \"x\",\n};\n#[cfg(not(target_arch = \"wasm32\"))]\npub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n    ..suite::PDFCRAFT\n};\n";
+        passes(update_source, &[(UPDATE_APP_FILE, second)]);
+    }
+
+    #[test]
+    fn only_links_upstream_credits_upstream() {
+        let links = "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";\npub const UPSTREAM_RELEASES: &str = \"https://github.com/storytold/pdfcraft/releases\";\n";
+        fails(upstream_links, &[("crates/engine/src/links.rs", links)], "links.rs:2");
+        fails(
+            upstream_links,
+            &[("crates/ui-egui/src/about.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";")],
+            "about.rs:1",
+        );
+    }
+
+    #[test]
+    fn artcraft_credits_are_whole_phrases() {
+        let home = "crates/ui-egui/src/home.rs";
+        passes(
+            artcraft_names,
+            &[(
+                home,
+                "line(format_args!(\"Upstream: {}  (PdfCraft by the ArtCraft team)\", UPSTREAM));\nlabel(tl!(\"A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.\"));\n",
+            )],
+        );
+        for slogan in
+            ["Buy ArtCraft products", "Meet the ArtCraft teams", "Breathe ArtCraft team spirit", "Join an ArtCraft production", "Ask ArtCraft team"]
+        {
+            fails(artcraft_names, &[(home, format!("label(tl!(\"{slogan}\"));").as_str())], "home.rs:1");
+        }
+    }
+
+    #[test]
+    fn a_build_script_anywhere_makes_translations_a_release_input() {
+        let release = (RELEASE, "jobs:\n  linux:\n    env:\n      CRAFT_FONTS_DIR: fonts\n");
+        for build in ["build.rs", "xtask/build.rs"] {
+            fails(release_i18n, &[(build, "println!(\"cargo::rerun-if-env-changed=CRAFT_I18N_DIR\");"), release], "release.yml:4");
+        }
     }
 }
