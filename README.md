@@ -13,6 +13,9 @@
 [![OpenSSF Scorecard](https://raw.githubusercontent.com/ryanduguid/.github/badges/EquityBot/PlutarchPages.svg)](https://scorecard.dev/viewer/?uri=github.com/yungSNAT/PlutarchPages) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/16133/badge)](https://www.bestpractices.dev/projects/16133)<br>
 [![release](https://badgen.net/github/release/yungSNAT/PlutarchPages/stable?label=release&color=66023C&labelColor=000000)](https://github.com/yungSNAT/PlutarchPages/releases/latest) [![rust: 1.95+](.github/assets/badges/rust.svg)](https://www.rust-lang.org/) [![licence: MIT OR Apache-2.0](.github/assets/badges/licence.svg)](#licence) [![fork of: PdfCraft](.github/assets/badges/fork-of.svg)](https://github.com/storytold/pdfcraft)
 
+[Install and use](#install-and-use) · [Downloads](#downloads) · [Fork changes](#fork-changes) · [Alternatives](#when-to-choose-something-else) · [Community](#community) · [Development](#development) · [Credits](#credits) · [Licence](#licence)<br>
+[Inherited from PdfCraft](#inherited-from-pdfcraft): [Highlights](#highlights) · [Read](#read-anything-beautifully) · [Find](#find-it-select-it-copy-it) · [Organize](#organize-pages-like-cards-on-a-table) · [Combine &amp; split](#combine-and-split-without-losing-a-thing) · [Protect](#open-protected-documents-and-respect-their-rules) · [Forms &amp; layers](#comments-forms-layers-and-attachments) · [Scan &amp; OCR](#scan-pages-then-read-the-words-back-before-trusting-them) · [Everywhere](#runs-everywhere-stays-yours) · [Agents](#built-for-agents-too) · [How it's built](#how-its-built) · [What's next](#whats-next)
+
 </div>
 
 <p align="center">
@@ -25,8 +28,8 @@
 > **PlutarchPages is a fork of [PdfCraft](https://github.com/storytold/pdfcraft) by the ArtCraft team.** It adds
 > the fixes and converters listed under [Fork changes](#fork-changes). It is not an ArtCraft product, and the
 > ArtCraft name and logos have been removed as the upstream brand licence requires for modified versions.
-> Report problems at [yungSNAT/PlutarchPages](https://github.com/yungSNAT/PlutarchPages/issues). Most of this
-> README describes the upstream app; the program, crates and binaries keep their `pdfcraft` names.
+> Report problems at [yungSNAT/PlutarchPages](https://github.com/yungSNAT/PlutarchPages/issues). [Inherited from
+> PdfCraft](#inherited-from-pdfcraft) describes the upstream app; the program, crates and binaries keep their `pdfcraft` names.
 
 <br>
 
@@ -36,341 +39,7 @@
   <sub>The PlutarchPages Showcase, a 13-page specimen PDF, open with the All tools panel and threaded comments.</sub>
 </p>
 
-<p align="center">
-  <a href="#highlights">Highlights</a> ·
-  <a href="#read-anything-beautifully">Read</a> ·
-  <a href="#find-it-select-it-copy-it">Find</a> ·
-  <a href="#organize-pages-like-cards-on-a-table">Organize</a> ·
-  <a href="#combine-and-split-without-losing-a-thing">Combine &amp; split</a> ·
-  <a href="#open-protected-documents-and-respect-their-rules">Protect</a> ·
-  <a href="#comments-forms-layers-and-attachments">Forms &amp; layers</a> ·
-  <a href="#runs-everywhere-stays-yours">Everywhere</a> ·
-  <a href="#built-for-agents-too">Agents</a> ·
-  <a href="#how-its-built">How it's built</a> ·
-  <a href="#install-and-use">Install and use</a> ·
-  <a href="#whats-next">What's next</a> ·
-  <a href="#when-to-choose-something-else">Alternatives</a> ·
-  <a href="#downloads">Downloads</a> ·
-  <a href="#development">Development</a> ·
-  <a href="#credits">Credits</a>
-</p>
-
 ---
-
-## Community
-
-This fork has no Discord or web page of its own:
-
-- **PlutarchPages source and issues:** [github.com/yungSNAT/PlutarchPages](https://github.com/yungSNAT/PlutarchPages)
-- **Upstream PdfCraft:** [github.com/storytold/pdfcraft](https://github.com/storytold/pdfcraft)
-
-## Highlights
-
-<table>
-<tr>
-<td width="33%" valign="top">
-
-### Faithful
-Real-world typography: world scripts, vertical Japanese, colour emoji, gradients, soft masks and transparency. All of it renders the way the author intended.
-
-</td>
-<td width="33%" valign="top">
-
-### Fearless
-Ordinary saves append your changes and leave the original bytes untouched. Edits to damaged objects whose xref and header generations disagree use a full rewrite, keeping both accepted references connected to the same repaired object. Writes are atomic, undo runs deep, and nothing is lost if you close by mistake.
-
-</td>
-<td width="33%" valign="top">
-
-### Yours
-No account, no telemetry, no cloud. It works offline and opens instantly. The engine, CLI and app are all open source.
-
-</td>
-</tr>
-</table>
-
----
-
-## Read anything, beautifully
-
-PdfCraft renders PDFs with care for the details that make a page feel right: kerning and ligatures, right-to-left and complex scripts, vertical CJK, colour emoji, shadings, blend modes, soft masks and optional content.
-
-<p align="center">
-  <img src="docs/images/pdfcraft-scripts.png" alt="The Scripts of the World page: Arabic, Hebrew, Devanagari, Thai, Greek, Cyrillic, Chinese, Korean, IPA, Armenian, Georgian and Tamil samples, with vertical Japanese in the right margin" width="100%">
-  <br>
-  <sub>Twelve writing systems on one page, plus vertical Japanese, at 125%.</sub>
-</p>
-
-- **Deep zoom stays sharp.** Large pages render in tiles, so text stays crisp at any magnification.
-- **Built to survive bad files.** Every page renders in isolation and damaged documents are repaired. Across the 983-file pdf.js test corpus the result is 0 crashes.
-- **Layouts for every task:** continuous, single page, two-up, view rotation, full screen and a distraction-free Read mode.
-- **Light and dark themes** in one colour scheme: ivory chrome or true black for OLED screens, crimson and Tyrian purple accents, gold frames and links. Pages stay white.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/pdfcraft-twoup.png" alt="Two facing pages in Read mode with the dark theme: the Foreword and the Setting Text chapter with its drop cap and pull quote"></td>
-<td width="50%"><img src="docs/images/pdfcraft-dark.png" alt="The dark theme showing the Code and Images chapter, a syntax-coloured listing and a fractal image, with the comments panel open"></td>
-</tr>
-<tr>
-<td align="center"><sub>Two-up Read mode, ready for long reading</sub></td>
-<td align="center"><sub>The dark theme, with the comments panel open</sub></td>
-</tr>
-</table>
-
-## Find it, select it, copy it
-
-Search the whole document as you type, step through matches with <kbd>⌘G</kbd>, and select text that comes out in the right reading order. That holds for columns, right-to-left runs and CJK too.
-
-## Navigate long documents
-
-Launch with `pdfcraft --two-paged file.pdf` (or `pdfcraft file.pdf --two-paged`) to open each command-line PDF in noncontinuous two-page view. This optional launch override does not change saved default-layout preferences or PDFs restored from the previous session. An explicit `--layout` option takes precedence on the active document regardless of argument order; `--default-layout` retains its existing behavior for subsequently opened documents.
-
-Right-click a PDF tab to close it, reopen the last closed file-backed tab, or reveal its file. Closing still asks about unsaved changes. Reopening reads the saved file from disk; it does not restore discarded edits. Reveal selects the file in Explorer or Finder. On Linux and FreeBSD it requests `org.freedesktop.FileManager1.ShowItems`, falling back to opening the containing directory with `xdg-open` when that service is unavailable. Reopen and Reveal are unavailable on the web; Reveal is also unavailable for pathless documents.
-
-Bookmarks, page thumbnails and the document's own page labels (i, ii, 1, 2…) keep you oriented in long documents. Search bookmark titles in the Bookmarks panel to find nested entries even when their parents are collapsed. Matches keep their ancestors for context; Clear restores the unfiltered tree without changing its expansion state.
-
-In **Inspector > Pages**, use **Thumbnail size** and the smaller/larger buttons to show more pages or inspect larger previews (50–150%). This changes only the thumbnails, keeping multi-page selection and the current page in view. The size belongs to the open document view and survives reloading its file; it is not remembered after restarting. Agents can set it with `ui.set {"key":"thumbnail-zoom","value":"75"}` and read `active.thumbnail_zoom` from `ui.state`.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/pdfcraft-find.png" alt="The find bar showing match 10 of 16 for the word 'type', highlighted in the Expressive Type chapter heading"></td>
-<td width="50%"><img src="docs/images/pdfcraft-bookmarks.png" alt="The Bookmarks panel showing the nested outline of the showcase, with page labels such as Cover, i and ii, next to the Scripts of the World page"></td>
-</tr>
-<tr>
-<td align="center"><sub>Find as you type: match 10 of 16</sub></td>
-<td align="center"><sub>Nested bookmarks with the document's own page labels</sub></td>
-</tr>
-</table>
-
----
-
-## Organize pages like cards on a table
-
-Open **Organize pages** to see every page at once:
-- **Select pages:** click, <kbd>⌘</kbd>-click or <kbd>⇧</kbd>-click.
-- **Change them:** rotate, delete, insert blank pages, insert pages from another file, and move them earlier or later.
-- **Undo anything:** <kbd>⌘Z</kbd>, then save.
-
-<p align="center">
-  <img src="docs/images/pdfcraft-organize.png" alt="The Organize pages grid with the showcase's pages as thumbnails, three of them selected, and the page toolbar above" width="100%">
-  <br>
-  <sub>Organize pages with three pages selected and the page tools in the toolbar above.</sub>
-</p>
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-**Undo that goes the distance.** Each change is one step in a history you can walk backwards and forwards. The Edit menu names the step ("Undo Rotate pages"), and undo still works after you save.
-
-**Saves you can trust:**
-- *Incremental:* the original bytes stay byte-for-byte intact.
-- *Atomic:* the file is written to a temporary copy, then swapped in.
-- *Verified:* independently checked with qpdf, on every CI run.
-
-When open documents exceed the window width, scroll over the tab strip with the mouse wheel or trackpad, or use its horizontal scrollbar. Opening or switching to a document brings its tab into view.
-
-Unsaved documents carry a dot on their tab, and closing or quitting asks before anything is lost. Changes are autosaved every minute. If PdfCraft ever quits unexpectedly, it offers to recover your work the next time it opens. Encrypted documents stay encrypted on disk.
-
-</td>
-<td width="50%" valign="top"><img src="docs/images/pdfcraft-split.png" alt="The Split document dialog over the organize view, set to one page per file and reporting that it creates 13 files from 13 pages"><br><sub>Split document: one page per file makes 13 files.</sub></td>
-</tr>
-</table>
-
-## Combine and split without losing a thing
-
-**Combine files** merges any number of PDFs into one. Each file gets a bookmark, with its own bookmarks nested underneath.
-
-**Extract** copies the pages you select into a new document. **Split** divides a document every *n* pages, or before the pages you choose.
-
-Nothing quietly disappears along the way:
-- links and named destinations are rewired to the copied pages;
-- form fields stay interactive;
-- layers keep their on/off defaults;
-- attachments come along.
-
-Every page of a combined document renders pixel-identical to its source.
-
-```sh
-pdfcraft-cli combine report.pdf appendix.pdf --out combined.pdf
-pdfcraft-cli extract report.pdf --pages 1,3,5-8 --out highlights.pdf
-pdfcraft-cli split   report.pdf --every 10 --out-dir parts/
-```
-
----
-
-## Open protected documents and respect their rules
-
-PdfCraft implements the PDF standard security handler completely:
-- every revision, from 40-bit RC4 to AES-256;
-- user and owner passwords, including Unicode passwords normalised with SASLprep;
-- crypt filters and attachment-only encryption.
-
-Documents restricted by their author show a clear notice, and PdfCraft honours their permissions. Enter the owner password and the restrictions lift. Edits to encrypted documents are saved encrypted, under the same keys.
-
-<table>
-<tr>
-<td width="50%" valign="top"><img src="docs/images/pdfcraft-properties.png" alt="The Document Properties dialog on its Description tab, with editable title, author, subject and keywords, and tabs for Security, Fonts and Advanced"><br><sub>Document Properties, Description tab</sub></td>
-<td width="50%" valign="top">
-
-**Document Properties** shows:
-- the document's title, author, subject and keywords, which you can edit;
-- the fonts it uses and whether each is embedded;
-- PDF version, page size, tags, fields, layers and attachments;
-- the full security picture: encryption method, which password opened it, and each permission.
-
-</td>
-</tr>
-</table>
-
-## Comments, forms, layers and attachments
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/pdfcraft-forms.png" alt="The Interactive Form page with highlighted text fields, checkboxes, radio buttons, a list and a signature field, and the Fields panel listing all 13 fields and their values"></td>
-<td width="50%"><img src="docs/images/pdfcraft-layers.png" alt="The Review and Markup page with highlights, shapes, ink and an APPROVED stamp under a DRAFT watermark, and the Layers panel with Draft watermark and Print-only notes"></td>
-</tr>
-<tr>
-<td valign="top"><b>Forms</b>: every field with its current value, field highlighting, and checkboxes, radio buttons, lists and signatures drawn the way their author designed them.</td>
-<td valign="top"><b>Layers</b>: switch optional content on and off and the page re-renders instantly. <b>Comments</b> appear as threaded conversations, and <b>attachments</b> can be opened or saved.</td>
-</tr>
-</table>
-
-## Scan pages, then read the words back before trusting them
-
-**Scan & OCR ▸ Recognize text** turns a scan into searchable text — the current page, a range, or a folder of files written as searchable copies — with optional cleanup before reading (auto-rotate, deskew, denoise, binarize; word boxes map back to the original scan) and a second engine: an installed Tesseract joins the built-in one, merged per your strategy. A searchable result applies as one undoable step; the **Editable text** output opens the **OCR Verify screen** instead, where each word carries the engine's confidence as a colour, suspects are one keypress away, and corrections, a user dictionary and Re-OCR of a region or a page happen before Accept writes the new document. **Scan & OCR ▸ Correct recognized text** reviews any recognition there before it is applied.
-
-<p align="center">
-  <img src="docs/images/pdfcraft-ocr-verify.png" alt="The OCR Verify screen: a scanned note with each recognized word boxed in its confidence colour, the info strip reporting a 95% average confidence and one low-confidence word, and the confidence legend with its thresholds below" width="100%">
-  <br>
-  <sub>The OCR Verify screen: words coloured by confidence — the legend spells the thresholds out — reviewed and corrected before anything is applied.</sub>
-</p>
-
----
-
-## Every tool, one keystroke away
-
-Press <kbd>⌘K</kbd> to search every tool and command, or browse the **All tools** catalogue. Tools that are still in development are marked with the milestone that will ship them.
-
-<p align="center">
-  <img src="docs/images/pdfcraft-palette.png" alt="The command palette searching for 'page', listing Page grid, Page labels, Rotate pages, Insert pages, Delete pages, Extract pages and more, each with the tool it belongs to" width="60%">
-  <br>
-  <sub>The <kbd>⌘K</kbd> command palette</sub>
-</p>
-
-The Tools panel sits on the left, or on the right with Preferences ▸ Tools panel side. The rail stays at the right edge and opens one side panel beside it. Drag a panel's inner edge to resize it; widths are remembered. F4 shows or hides the side panel and Shift+F4 the Tools panel (also in the View menu); View ▸ Reset side panels restores the default arrangement.
-
----
-
-## Runs everywhere, stays yours
-
-- **Native on macOS, Windows, Linux and FreeBSD**, and **in the browser** through WebAssembly, from the same Rust codebase. Windows builds come for x64, x86 and ARM64 (Windows on ARM, no emulation); every ARM64 change is tested on ARM64 hardware in CI.
-- **Private by design.** Documents never leave your machine. There's no account, no telemetry and no cloud processing.
-- **Engine first.** Parsing, rendering and editing live in reusable library crates. The interface is one swappable layer on top.
-- **Scriptable.** The `pdfcraft-cli` tool (see [Built for agents, too](#built-for-agents-too)) covers inspecting, rendering, extracting text, editing, combining, extracting pages and splitting. Robustness sweeps run on the same engine as the app.
-
-```sh
-pdfcraft-cli info  form.pdf                                  # structure as JSON
-pdfcraft-cli text  paper.pdf --page 3                        # reading-order text
-pdfcraft-cli edit  in.pdf --rotate 1,2:90 --delete 5 --title "Q3" --out out.pdf
-```
-
----
-
-## Built for agents, too
-
-Every engine feature is reachable without the GUI, through one table of JSON-Schema-described tools: open, inspect, render pages to PNG, extract and find text, rotate, delete, move and insert pages, edit bookmarks and page labels, add, reply to, restyle and delete comments (highlight a phrase just by naming it), list and fill in form fields, protect with passwords, set metadata, undo and redo, save, combine, extract and split. Three front doors share it:
-
-- **`pdfcraft-cli run`**, for one-off calls and JSON scripts:
-
-  ```sh
-  pdfcraft-cli tools                                        # every tool and its JSON Schema
-  pdfcraft-cli run doc_open path=invoice.pdf                # key=value; values parse as JSON
-  pdfcraft-cli run --script review.json                     # e.g. comment_add {"type": "highlight", "find": "total due"}
-  pdfcraft-cli run --script steps.json --root ./work        # several steps in one session
-  pdfcraft-cli run --script steps.json --report             # one JSON document: per step its number, tool, status, result or error
-  ```
-
-  Each `run` is its own session, so a document opened by one call is gone before the next: a tool that takes `doc` needs a script whose earlier step opens it. With `--root`, every file the script's steps read or write stays in that directory, including the PNG a step saves with `"out"` (the script itself is read from wherever you name it).
-
-- **An MCP server**, for AI agents such as Claude. **It is opt-in:** PdfCraft never starts it on its own, and it opens no network port. It runs only while an agent launches `pdfcraft-cli mcp`, talks over stdin/stdout, and stops when the agent disconnects. To enable it, add it to your agent's MCP configuration:
-
-  ```json
-  { "mcpServers": { "pdfcraft": { "command": "pdfcraft-cli", "args": ["mcp", "--root", "/path/to/your/pdfs"] } } }
-  ```
-
-  `--compact` shrinks the tool list the agent has to read: `tools/list` returns 15 core tools plus `tool_search` and `tool_call`, which find and run every other tool, so the list costs far fewer tokens. Every tool still works.
-
-  `--root` confines every file the agent can read or write to one directory. Builds that should not include the server at all can use `cargo build -p pdfcraft-cli --no-default-features`.
-
-- **The Rust API** (`pdfcraft_automation::Automation::call`), for embedding.
-
-Edits stay in memory, undoable, until `doc_save`. Saving to the same file appends an incremental update, so the original bytes are preserved, and the write is atomic. Unsaved changes are never discarded silently.
-
-### Driving the app itself
-
-Start the desktop app with `pdfcraft --control ~/.pdfcraft-control.json` and an agent can see and operate the real interface: the widget tree with labels and positions (from the accessibility tree), clicks, typing, keys, commands, view options and screenshots. This is also off by default. It listens only on loopback, and every connection must present the random token written to that file, which only you can read.
-
-Keep the control file in a folder only you can write, not a shared one such as `/tmp`: another user could create the file there first and receive your commands. `pdfcraft-cli ui` refuses a control file that is a symbolic link, and on macOS, Linux and FreeBSD one that another user owns or can read or write. The app doesn't start if it can't write the file.
-
-```sh
-pdfcraft-cli ui --control ~/.pdfcraft-control.json inspect query=rotate      # find widgets
-pdfcraft-cli ui --control ~/.pdfcraft-control.json click label="Organize pages"
-pdfcraft-cli ui --control ~/.pdfcraft-control.json key key=K modifiers='["command"]'
-pdfcraft-cli ui --control ~/.pdfcraft-control.json command id=comment.square   # pick a tool, then draw:
-pdfcraft-cli ui --control ~/.pdfcraft-control.json drag from='[400,300]' to='[600,420]'
-pdfcraft-cli ui --control ~/.pdfcraft-control.json screenshot --out window.png
-pdfcraft-cli ui --control ~/.pdfcraft-control.json resize width=1200 height=800
-pdfcraft-cli ui --control ~/.pdfcraft-control.json focus label="Read"
-pdfcraft-cli ui --control ~/.pdfcraft-control.json inspect focused=true
-pdfcraft-cli ui --control ~/.pdfcraft-control.json quit
-```
-
-`ui.panel` opens, closes or sizes a side panel: `{"panel":"tools"|"side","open":true|false,"width":320}`.
-`tools` is the Tools panel and `side` the panel the rail opens (reopening it shows the one open last).
-`width` is clamped to the panel's limits (Tools 240–520, side panel 260–520 points). `ui.dock.reset`
-resets the side panels: Tools open on the left, default widths. The control channel accepts these
-methods directly; `ui.command` also accepts `{"id":"ui.panel","params":{...}}`. Saved preferences keep
-the Tools side, the open panels and their widths. Invalid requests return an error without changing
-the document or the panels.
-
-
-`resize` requests a native inner-window size in logical points (each dimension must be between 320 and 8192); the window manager may constrain it. `state` reports the observed `window.width`, `window.height` and `window.pixels_per_point`. `focus` accepts exactly one widget `id` or unique enabled, focusable `label`; subsequent `key` requests traverse or activate the actual widgets. `inspect` includes focusability and accepts a `focused` filter. `quit` takes no parameters: clean documents exit normally, while unsaved edits or typing open the existing Save/Don't save/Cancel prompt and return `quitting: false, needs_confirmation: true`. It never silently discards work. Window resizing and application quit are native-only.
-
----
-
-## How it's built
-
-PdfCraft is a Cargo workspace of focused crates, layered so the core never depends on the UI:
-
-| Crate | What it does |
-|---|---|
-| `pdfcraft-filters` | Every PDF stream filter (Flate, LZW, ASCII85, RunLength, predictors), encode and decode, property-tested |
-| `pdfcraft-crypt` | The standard security handler: RC4, AES-128/256, revisions 2–6, permissions |
-| `pdfcraft-cos` | The PDF object layer: tolerant parsing, repair, copy-on-write edits, incremental and full writing |
-| `pdfcraft-organize` | Page operations, combine / extract / split, bookmarks, page labels, document information |
-| `pdfcraft-fonts` | Font metrics and encodings for generated appearances |
-| `pdfcraft-annot` | Comments: builders and appearance streams for notes, text markup, shapes, ink and text boxes; replies, status, edits |
-| `pdfcraft-forms` | Interactive forms: the field model, filling with regenerated appearances, Clear form |
-| `pdfcraft-render` | Rendering, inspection and text extraction with reading order |
-| `pdfcraft-engine` | The façade every frontend uses: sessions, edits, undo, saving, the tool catalogue |
-| `pdfcraft-automation` | Agent control: the headless tool table, `pdfcraft-cli run`, and the opt-in MCP server |
-| `pdfcraft-ui-egui` | The desktop and web interface |
-
-**Quality gates.** Every change passes the same automated checks:
-- formatting, and Clippy with warnings as errors;
-- 200+ unit, property and UI tests;
-- crate-layering rules and a WebAssembly build check;
-- an asset-licence audit.
-
-On top of those, two corpus sweeps run over real-world files:
-- **Opening and rendering:** of the 983 pdf.js test files, 963 open and render cleanly, with 0 crashes.
-- **Open, edit and save round trips:** 958 succeed.
-
-The output is verified against independent implementations: hayro and qpdf on every CI run, and
-poppler over the corpus on demand (`cargo xtask text-oracle`).
-
-PdfCraft is a clean-room implementation. Its behaviour comes from the ISO 32000 specification and black-box observation, never from anyone else's code. Every icon, font and image is openly licensed and listed in [ATTRIBUTION.md](ATTRIBUTION.md).
 
 ## Install and use
 
@@ -398,36 +67,11 @@ edited PDFs):
 
 ```sh
 git clone https://github.com/storytold/craft-fonts ../craft-fonts
-CRAFT_FONTS_DIR=../craft-fonts cargo run --release -p pdfcraft -- some.pdf
+CRAFT_FONTS_DIR="$PWD/../craft-fonts" cargo run --release -p pdfcraft -- some.pdf
 ```
 
-
-## What's next
-
-PdfCraft is young and moving fast. The aim is a workbench where you can view, organize, annotate, fill, sign and edit PDFs, for professional and everyday workflows.
-
-**Where it stands (October 2026), honestly:** PdfCraft is **alpha**. Most essential offline PDF features exist in some form (57% of the features tracked in [docs/target-app-parity.md](docs/target-app-parity.md), 94% of core essentials). For everyday work (viewing, commenting, filling and signing forms, organizing pages) readiness is about 55%; across all professional workflows, about 49%; for someone who only needs the essentials, about 66%. Every everyday workflow can be completed, but converting and sharing is weak: no office-document-to-PDF, and .docx export that loses layout.
-
-- **Good today:** viewing and search; organizing, combining and splitting; most kinds of comment; filling and authoring forms (with sandboxed JavaScript); passwords, redaction and sanitizing; basic digital signatures; printing; the Accessibility Checker; agent control through the CLI and MCP.
-- **Still borrowed:** pages are drawn by the `hayro` crate while our own renderer is built.
-- **Thin or missing:** reliable editing of existing text (especially CJK and right-to-left), OCR beyond Latin script, office document import/export, signature tokens and online long-term validation, Preflight and PDF/X/UA, printing from the web build, physical printer fidelity, and full XFA forms.
-- **Hardening:** fuzzing still turns up crashes and hangs on hostile files; each one is fixed with a regression test. Quality has not yet been benchmarked side by side.
-
-**Next, in order:** office-document-to-PDF and a .docx export that keeps layout, the reported bugs and the Chinese interface font, a fidelity harness against a reference renderer, editing existing content, then professional workflows (OCR, office formats, Preflight, signatures, accessibility tagging) and 1.0 polish.
-
-The summary is in **[ROADMAP.md](ROADMAP.md)**; the full assessment by dimension and area is in [docs/target-app-parity.md](docs/target-app-parity.md), the ranked gaps in [docs/gaps.md](docs/gaps.md), and the milestones in [docs/roadmap.md](docs/roadmap.md).
-
----
-
-## When to choose something else
-
-PlutarchPages is alpha, like PdfCraft (see [What's next](#whats-next)). Another tool fits better when:
-
-- **You need OCR, office document conversion or content editing today:** [Stirling-PDF](https://github.com/Stirling-Tools/Stirling-PDF) does all 3, with more than 50 tools, as a desktop app, in the browser or on your own server. Its core is MIT; some of its directories are under a proprietary licence.
-- **You only merge, split, rotate or extract pages:** [PDFsam Basic](https://github.com/torakiki/pdfsam) is a mature desktop app for exactly that (AGPL-3.0).
-- **You want one viewer for PDF, EPUB, DjVu and comic books:** [Okular](https://okular.kde.org/), KDE's document viewer, reads them all and annotates PDFs (GPL).
-- **You transform PDFs in scripts:** [qpdf](https://github.com/qpdf/qpdf) is a mature command line tool that encrypts, linearises, selects pages and repairs files without changing their content (Apache-2.0). `pdfcraft-cli` covers PlutarchPages's own engine.
-- **You want the upstream app:** [PdfCraft](https://github.com/storytold/pdfcraft), without this fork's [changes](#fork-changes). Both are MIT or Apache-2.0.
+Give `CRAFT_FONTS_DIR` an absolute path: the build script reads it from `crates/fonts`, and a folder it
+can't read only gives a warning ('building without craft-fonts').
 
 ---
 
@@ -510,6 +154,356 @@ virtual printer driver, legacy browser plug-ins, the Office add-in, the licence 
 checking (no cross-platform checker chosen yet, and Windows' own checker needs unsafe code), and,
 for now, viewing 3D content (the automation tools add U3D and PRC models and draw PRC models as
 pictures), enhanced OCR clean-up, an AI assistant and an Explorer 'Combine' menu.
+
+---
+
+## When to choose something else
+
+PlutarchPages is alpha, like PdfCraft (see [What's next](#whats-next)). Another tool fits better when:
+
+- **You need OCR, office document conversion or content editing today:** [Stirling-PDF](https://github.com/Stirling-Tools/Stirling-PDF) does all 3, with more than 50 tools, as a desktop app, in the browser or on your own server. Its core is MIT; some of its directories are under a proprietary licence.
+- **You only merge, split, rotate or extract pages:** [PDFsam Basic](https://github.com/torakiki/pdfsam) is a mature desktop app for exactly that (AGPL-3.0).
+- **You want one viewer for PDF, EPUB, DjVu and comic books:** [Okular](https://okular.kde.org/), KDE's document viewer, reads them all and annotates PDFs (GPL).
+- **You transform PDFs in scripts:** [qpdf](https://github.com/qpdf/qpdf) is a mature command line tool that encrypts, linearises, selects pages and repairs files without changing their content (Apache-2.0). `pdfcraft-cli` covers PlutarchPages's own engine.
+- **You want the upstream app:** [PdfCraft](https://github.com/storytold/pdfcraft), without this fork's [changes](#fork-changes). Both are MIT or Apache-2.0.
+
+---
+
+## Community
+
+This fork has no Discord or web page of its own:
+
+- **PlutarchPages source and issues:** [github.com/yungSNAT/PlutarchPages](https://github.com/yungSNAT/PlutarchPages)
+- **Upstream PdfCraft:** [github.com/storytold/pdfcraft](https://github.com/storytold/pdfcraft)
+
+---
+
+## Inherited from PdfCraft
+
+This part describes PdfCraft as PlutarchPages inherits it; [Fork changes](#fork-changes) lists what the fork changes.
+
+### Highlights
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+#### Faithful
+Real-world typography: world scripts, vertical Japanese, colour emoji, gradients, soft masks and transparency. All of it renders the way the author intended.
+
+</td>
+<td width="33%" valign="top">
+
+#### Fearless
+Ordinary saves append your changes and leave the original bytes untouched. Edits to damaged objects whose xref and header generations disagree use a full rewrite, keeping both accepted references connected to the same repaired object. Writes are atomic, undo runs deep, and nothing is lost if you close by mistake.
+
+</td>
+<td width="33%" valign="top">
+
+#### Yours
+No account, no telemetry, no cloud. It works offline and opens instantly. The engine, CLI and app are all open source.
+
+</td>
+</tr>
+</table>
+
+---
+
+### Read anything, beautifully
+
+PdfCraft renders PDFs with care for the details that make a page feel right: kerning and ligatures, right-to-left and complex scripts, vertical CJK, colour emoji, shadings, blend modes, soft masks and optional content.
+
+<p align="center">
+  <img src="docs/images/pdfcraft-scripts.png" alt="The Scripts of the World page: Arabic, Hebrew, Devanagari, Thai, Greek, Cyrillic, Chinese, Korean, IPA, Armenian, Georgian and Tamil samples, with vertical Japanese in the right margin" width="100%">
+  <br>
+  <sub>Twelve writing systems on one page, plus vertical Japanese, at 125%.</sub>
+</p>
+
+- **Deep zoom stays sharp.** Large pages render in tiles, so text stays crisp at any magnification.
+- **Built to survive bad files.** Every page renders in isolation and damaged documents are repaired. Across the 983-file pdf.js test corpus the result is 0 crashes.
+- **Layouts for every task:** continuous, single page, two-up, view rotation, full screen and a distraction-free Read mode.
+- **Light and dark themes** in one colour scheme: ivory chrome or true black for OLED screens, crimson and Tyrian purple accents, gold frames and links. Pages stay white.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/pdfcraft-twoup.png" alt="Two facing pages in Read mode with the dark theme: the Foreword and the Setting Text chapter with its drop cap and pull quote"></td>
+<td width="50%"><img src="docs/images/pdfcraft-dark.png" alt="The dark theme showing the Code and Images chapter, a syntax-coloured listing and a fractal image, with the comments panel open"></td>
+</tr>
+<tr>
+<td align="center"><sub>Two-up Read mode, ready for long reading</sub></td>
+<td align="center"><sub>The dark theme, with the comments panel open</sub></td>
+</tr>
+</table>
+
+### Find it, select it, copy it
+
+Search the whole document as you type, step through matches with <kbd>⌘G</kbd>, and select text that comes out in the right reading order. That holds for columns, right-to-left runs and CJK too.
+
+### Navigate long documents
+
+Launch with `pdfcraft --two-paged file.pdf` (or `pdfcraft file.pdf --two-paged`) to open each command-line PDF in noncontinuous two-page view. This optional launch override does not change saved default-layout preferences or PDFs restored from the previous session. An explicit `--layout` option takes precedence on the active document regardless of argument order; `--default-layout` retains its existing behavior for subsequently opened documents.
+
+Right-click a PDF tab to close it, reopen the last closed file-backed tab, or reveal its file. Closing still asks about unsaved changes. Reopening reads the saved file from disk; it does not restore discarded edits. Reveal selects the file in Explorer or Finder. On Linux and FreeBSD it requests `org.freedesktop.FileManager1.ShowItems`, falling back to opening the containing directory with `xdg-open` when that service is unavailable. Reopen and Reveal are unavailable on the web; Reveal is also unavailable for pathless documents.
+
+Bookmarks, page thumbnails and the document's own page labels (i, ii, 1, 2…) keep you oriented in long documents. Search bookmark titles in the Bookmarks panel to find nested entries even when their parents are collapsed. Matches keep their ancestors for context; Clear restores the unfiltered tree without changing its expansion state.
+
+In **Inspector > Pages**, use **Thumbnail size** and the smaller/larger buttons to show more pages or inspect larger previews (50–150%). This changes only the thumbnails, keeping multi-page selection and the current page in view. The size belongs to the open document view and survives reloading its file; it is not remembered after restarting. Agents can set it with `ui.set {"key":"thumbnail-zoom","value":"75"}` and read `active.thumbnail_zoom` from `ui.state`.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/pdfcraft-find.png" alt="The find bar showing match 10 of 16 for the word 'type', highlighted in the Expressive Type chapter heading"></td>
+<td width="50%"><img src="docs/images/pdfcraft-bookmarks.png" alt="The Bookmarks panel showing the nested outline of the showcase, with page labels such as Cover, i and ii, next to the Scripts of the World page"></td>
+</tr>
+<tr>
+<td align="center"><sub>Find as you type: match 10 of 16</sub></td>
+<td align="center"><sub>Nested bookmarks with the document's own page labels</sub></td>
+</tr>
+</table>
+
+---
+
+### Organize pages like cards on a table
+
+Open **Organize pages** to see every page at once:
+- **Select pages:** click, <kbd>⌘</kbd>-click or <kbd>⇧</kbd>-click.
+- **Change them:** rotate, delete, insert blank pages, insert pages from another file, and move them earlier or later.
+- **Undo anything:** <kbd>⌘Z</kbd>, then save.
+
+<p align="center">
+  <img src="docs/images/pdfcraft-organize.png" alt="The Organize pages grid with the showcase's pages as thumbnails, three of them selected, and the page toolbar above" width="100%">
+  <br>
+  <sub>Organize pages with three pages selected and the page tools in the toolbar above.</sub>
+</p>
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Undo that goes the distance.** Each change is one step in a history you can walk backwards and forwards. The Edit menu names the step ("Undo Rotate pages"), and undo still works after you save.
+
+**Saves you can trust:**
+- *Incremental:* the original bytes stay byte-for-byte intact.
+- *Atomic:* the file is written to a temporary copy, then swapped in.
+- *Verified:* independently checked with qpdf, on every CI run.
+
+When open documents exceed the window width, scroll over the tab strip with the mouse wheel or trackpad, or use its horizontal scrollbar. Opening or switching to a document brings its tab into view.
+
+Unsaved documents carry a dot on their tab, and closing or quitting asks before anything is lost. Changes are autosaved every minute. If PdfCraft ever quits unexpectedly, it offers to recover your work the next time it opens. Encrypted documents stay encrypted on disk.
+
+</td>
+<td width="50%" valign="top"><img src="docs/images/pdfcraft-split.png" alt="The Split document dialog over the organize view, set to one page per file and reporting that it creates 13 files from 13 pages"><br><sub>Split document: one page per file makes 13 files.</sub></td>
+</tr>
+</table>
+
+### Combine and split without losing a thing
+
+**Combine files** merges any number of PDFs into one. Each file gets a bookmark, with its own bookmarks nested underneath.
+
+**Extract** copies the pages you select into a new document. **Split** divides a document every *n* pages, or before the pages you choose.
+
+Nothing quietly disappears along the way:
+- links and named destinations are rewired to the copied pages;
+- form fields stay interactive;
+- layers keep their on/off defaults;
+- attachments come along.
+
+Every page of a combined document renders pixel-identical to its source.
+
+```sh
+pdfcraft-cli combine report.pdf appendix.pdf --out combined.pdf
+pdfcraft-cli extract report.pdf --pages 1,3,5-8 --out highlights.pdf
+pdfcraft-cli split   report.pdf --every 10 --out-dir parts/
+```
+
+---
+
+### Open protected documents and respect their rules
+
+PdfCraft implements the PDF standard security handler completely:
+- every revision, from 40-bit RC4 to AES-256;
+- user and owner passwords, including Unicode passwords normalised with SASLprep;
+- crypt filters and attachment-only encryption.
+
+Documents restricted by their author show a clear notice, and PdfCraft honours their permissions. Enter the owner password and the restrictions lift. Edits to encrypted documents are saved encrypted, under the same keys.
+
+<table>
+<tr>
+<td width="50%" valign="top"><img src="docs/images/pdfcraft-properties.png" alt="The Document Properties dialog on its Description tab, with editable title, author, subject and keywords, and tabs for Security, Fonts and Advanced"><br><sub>Document Properties, Description tab</sub></td>
+<td width="50%" valign="top">
+
+**Document Properties** shows:
+- the document's title, author, subject and keywords, which you can edit;
+- the fonts it uses and whether each is embedded;
+- PDF version, page size, tags, fields, layers and attachments;
+- the full security picture: encryption method, which password opened it, and each permission.
+
+</td>
+</tr>
+</table>
+
+### Comments, forms, layers and attachments
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/pdfcraft-forms.png" alt="The Interactive Form page with highlighted text fields, checkboxes, radio buttons, a list and a signature field, and the Fields panel listing all 13 fields and their values"></td>
+<td width="50%"><img src="docs/images/pdfcraft-layers.png" alt="The Review and Markup page with highlights, shapes, ink and an APPROVED stamp under a DRAFT watermark, and the Layers panel with Draft watermark and Print-only notes"></td>
+</tr>
+<tr>
+<td valign="top"><b>Forms</b>: every field with its current value, field highlighting, and checkboxes, radio buttons, lists and signatures drawn the way their author designed them.</td>
+<td valign="top"><b>Layers</b>: switch optional content on and off and the page re-renders instantly. <b>Comments</b> appear as threaded conversations, and <b>attachments</b> can be opened or saved.</td>
+</tr>
+</table>
+
+### Scan pages, then read the words back before trusting them
+
+**Scan & OCR ▸ Recognize text** turns a scan into searchable text — the current page, a range, or a folder of files written as searchable copies — with optional cleanup before reading (auto-rotate, deskew, denoise, binarize; word boxes map back to the original scan) and a second engine: an installed Tesseract joins the built-in one, merged per your strategy. A searchable result applies as one undoable step; the **Editable text** output opens the **OCR Verify screen** instead, where each word carries the engine's confidence as a colour, suspects are one keypress away, and corrections, a user dictionary and Re-OCR of a region or a page happen before Accept writes the new document. **Scan & OCR ▸ Correct recognized text** reviews any recognition there before it is applied.
+
+<p align="center">
+  <img src="docs/images/pdfcraft-ocr-verify.png" alt="The OCR Verify screen: a scanned note with each recognized word boxed in its confidence colour, the info strip reporting a 95% average confidence and one low-confidence word, and the confidence legend with its thresholds below" width="100%">
+  <br>
+  <sub>The OCR Verify screen: words coloured by confidence — the legend spells the thresholds out — reviewed and corrected before anything is applied.</sub>
+</p>
+
+---
+
+### Every tool, one keystroke away
+
+Press <kbd>⌘K</kbd> to search every tool and command, or browse the **All tools** catalogue. Tools that are still in development are marked with the milestone that will ship them.
+
+<p align="center">
+  <img src="docs/images/pdfcraft-palette.png" alt="The command palette searching for 'page', listing Page grid, Page labels, Rotate pages, Insert pages, Delete pages, Extract pages and more, each with the tool it belongs to" width="60%">
+  <br>
+  <sub>The <kbd>⌘K</kbd> command palette</sub>
+</p>
+
+The Tools panel sits on the left, or on the right with Preferences ▸ Tools panel side. The rail stays at the right edge and opens one side panel beside it. Drag a panel's inner edge to resize it; widths are remembered. F4 shows or hides the side panel and Shift+F4 the Tools panel (also in the View menu); View ▸ Reset side panels restores the default arrangement.
+
+---
+
+### Runs everywhere, stays yours
+
+- **Native on macOS, Windows, Linux and FreeBSD**, and **in the browser** through WebAssembly, from the same Rust codebase. Windows builds come for x64, x86 and ARM64 (Windows on ARM, no emulation); every ARM64 change is tested on ARM64 hardware in CI.
+- **Private by design.** Documents never leave your machine. There's no account, no telemetry and no cloud processing.
+- **Engine first.** Parsing, rendering and editing live in reusable library crates. The interface is one swappable layer on top.
+- **Scriptable.** The `pdfcraft-cli` tool (see [Built for agents, too](#built-for-agents-too)) covers inspecting, rendering, extracting text, editing, combining, extracting pages and splitting. Robustness sweeps run on the same engine as the app.
+
+```sh
+pdfcraft-cli info  form.pdf                                  # structure as JSON
+pdfcraft-cli text  paper.pdf --page 3                        # reading-order text
+pdfcraft-cli edit  in.pdf --rotate 1,2:90 --delete 5 --title "Q3" --out out.pdf
+```
+
+---
+
+### Built for agents, too
+
+Every engine feature is reachable without the GUI, through one table of JSON-Schema-described tools: open, inspect, render pages to PNG, extract and find text, rotate, delete, move and insert pages, edit bookmarks and page labels, add, reply to, restyle and delete comments (highlight a phrase just by naming it), list and fill in form fields, protect with passwords, set metadata, undo and redo, save, combine, extract and split. Three front doors share it:
+
+- **`pdfcraft-cli run`**, for one-off calls and JSON scripts:
+
+  ```sh
+  pdfcraft-cli tools                                        # every tool and its JSON Schema
+  pdfcraft-cli run doc_open path=invoice.pdf                # key=value; values parse as JSON
+  pdfcraft-cli run --script review.json                     # e.g. doc_open, then comment_add {"doc": 1, "page": 1, "type": "highlight", "find": "total due"}
+  pdfcraft-cli run --script steps.json --root ./work        # several steps in one session
+  pdfcraft-cli run --script steps.json --report             # one JSON document: per step its number, tool, status, result or error
+  ```
+
+  Each `run` is its own session, so a document opened by one call is gone before the next: a tool that takes `doc` needs a script whose earlier step opens it. With `--root`, every file the script's steps read or write stays in that directory, including the PNG a step saves with `"out"` (the script itself is read from wherever you name it).
+
+- **An MCP server**, for AI agents such as Claude. **It is opt-in:** PdfCraft never starts it on its own, and it opens no network port. It runs only while an agent launches `pdfcraft-cli mcp`, talks over stdin/stdout, and stops when the agent disconnects. To enable it, add it to your agent's MCP configuration:
+
+  ```json
+  { "mcpServers": { "pdfcraft": { "command": "pdfcraft-cli", "args": ["mcp", "--root", "/path/to/your/pdfs"] } } }
+  ```
+
+  `--compact` shrinks the tool list the agent has to read: `tools/list` returns 15 core tools plus `tool_search` and `tool_call`, which find and run every other tool, so the list costs far fewer tokens. Every tool still works.
+
+  `--root` confines every file the agent can read or write to one directory. Builds that should not include the server at all can use `cargo build -p pdfcraft-cli --no-default-features`.
+
+- **The Rust API** (`pdfcraft_automation::Automation::call`), for embedding.
+
+Edits stay in memory, undoable, until `doc_save`. Saving to the same file appends an incremental update, so the original bytes are preserved, and the write is atomic. Unsaved changes are never discarded silently.
+
+#### Driving the app itself
+
+Start the desktop app with `pdfcraft --control ~/.pdfcraft-control.json` and an agent can see and operate the real interface: the widget tree with labels and positions (from the accessibility tree), clicks, typing, keys, commands, view options and screenshots. This is also off by default. It listens only on loopback, and every connection must present the random token written to that file, which only you can read.
+
+Keep the control file in a folder only you can write, not a shared one such as `/tmp`: another user could create the file there first and receive your commands. `pdfcraft-cli ui` refuses a control file that is a symbolic link, and on macOS, Linux and FreeBSD one that another user owns or can read or write. The app doesn't start if it can't write the file.
+
+```sh
+pdfcraft-cli ui --control ~/.pdfcraft-control.json inspect query=rotate      # find widgets
+pdfcraft-cli ui --control ~/.pdfcraft-control.json click label="Organize pages"
+pdfcraft-cli ui --control ~/.pdfcraft-control.json key key=K modifiers='["command"]'
+pdfcraft-cli ui --control ~/.pdfcraft-control.json command id=comment.square   # pick a tool, then draw:
+pdfcraft-cli ui --control ~/.pdfcraft-control.json drag from='[400,300]' to='[600,420]'
+pdfcraft-cli ui --control ~/.pdfcraft-control.json screenshot --out window.png
+pdfcraft-cli ui --control ~/.pdfcraft-control.json resize width=1200 height=800
+pdfcraft-cli ui --control ~/.pdfcraft-control.json focus label="Read"
+pdfcraft-cli ui --control ~/.pdfcraft-control.json inspect focused=true
+pdfcraft-cli ui --control ~/.pdfcraft-control.json quit
+```
+
+`ui.panel` opens, closes or sizes a side panel: `{"panel":"tools"|"side","open":true|false,"width":320}`.
+`tools` is the Tools panel and `side` the panel the rail opens (reopening it shows the one open last).
+`width` is clamped to the panel's limits (Tools 240–520, side panel 260–520 points). `ui.dock.reset`
+resets the side panels: Tools open on the left, default widths. The control channel accepts these
+methods directly; `ui.command` also accepts `{"id":"ui.panel","params":{...}}`. Saved preferences keep
+the Tools side, the open panels and their widths. Invalid requests return an error without changing
+the document or the panels.
+
+
+`resize` requests a native inner-window size in logical points (each dimension must be between 320 and 8192); the window manager may constrain it. `state` reports the observed `window.width`, `window.height` and `window.pixels_per_point`. `focus` accepts exactly one widget `id` or unique enabled, focusable `label`; subsequent `key` requests traverse or activate the actual widgets. `inspect` includes focusability and accepts a `focused` filter. `quit` takes no parameters: clean documents exit normally, while unsaved edits or typing open the existing Save/Don't save/Cancel prompt and return `quitting: false, needs_confirmation: true`. It never silently discards work. Window resizing and application quit are native-only.
+
+---
+
+### How it's built
+
+PdfCraft is a Cargo workspace of focused crates, layered so the core never depends on the UI:
+
+| Crate | What it does |
+|---|---|
+| `pdfcraft-filters` | Every PDF stream filter (Flate, LZW, ASCII85, RunLength, predictors), encode and decode, property-tested |
+| `pdfcraft-crypt` | The standard security handler: RC4, AES-128/256, revisions 2–6, permissions |
+| `pdfcraft-cos` | The PDF object layer: tolerant parsing, repair, copy-on-write edits, incremental and full writing |
+| `pdfcraft-organize` | Page operations, combine / extract / split, bookmarks, page labels, document information |
+| `pdfcraft-fonts` | Font metrics and encodings for generated appearances |
+| `pdfcraft-annot` | Comments: builders and appearance streams for notes, text markup, shapes, ink and text boxes; replies, status, edits |
+| `pdfcraft-forms` | Interactive forms: the field model, filling with regenerated appearances, Clear form |
+| `pdfcraft-render` | Rendering, inspection and text extraction with reading order |
+| `pdfcraft-engine` | The façade every frontend uses: sessions, edits, undo, saving, the tool catalogue |
+| `pdfcraft-automation` | Agent control: the headless tool table, `pdfcraft-cli run`, and the opt-in MCP server |
+| `pdfcraft-ui-egui` | The desktop and web interface |
+
+**Quality gates.** Every change passes the same automated checks:
+- formatting, and Clippy with warnings as errors;
+- 200+ unit, property and UI tests;
+- crate-layering rules and a WebAssembly build check;
+- an asset-licence audit.
+
+On top of those, two corpus sweeps run over real-world files:
+- **Opening and rendering:** of the 983 pdf.js test files, 963 open and render cleanly, with 0 crashes.
+- **Open, edit and save round trips:** 958 succeed.
+
+The output is verified against independent implementations: hayro and qpdf on every CI run, and
+poppler over the corpus on demand (`cargo xtask text-oracle`).
+
+PdfCraft is a clean-room implementation. Its behaviour comes from the ISO 32000 specification and black-box observation, never from anyone else's code. Every icon, font and image is openly licensed and listed in [ATTRIBUTION.md](ATTRIBUTION.md).
+
+### What's next
+
+PdfCraft is young and moving fast. The aim is a workbench where you can view, organize, annotate, fill, sign and edit PDFs, for professional and everyday workflows.
+
+**Where it stands (October 2026), honestly:** PdfCraft is **alpha**. Most essential offline PDF features exist in some form (57% of the features tracked in [docs/target-app-parity.md](docs/target-app-parity.md), 94% of core essentials). For everyday work (viewing, commenting, filling and signing forms, organizing pages) readiness is about 55%; across all professional workflows, about 49%; for someone who only needs the essentials, about 66%. Every everyday workflow can be completed, but converting and sharing is weak: no office-document-to-PDF, and .docx export that loses layout.
+
+- **Good today:** viewing and search; organizing, combining and splitting; most kinds of comment; filling and authoring forms (with sandboxed JavaScript); passwords, redaction and sanitizing; basic digital signatures; printing; the Accessibility Checker; agent control through the CLI and MCP.
+- **Still borrowed:** pages are drawn by the `hayro` crate while our own renderer is built.
+- **Thin or missing:** reliable editing of existing text (especially CJK and right-to-left), OCR beyond Latin script, office document import/export, signature tokens and online long-term validation, Preflight and PDF/X/UA, printing from the web build, physical printer fidelity, and full XFA forms.
+- **Hardening:** fuzzing still turns up crashes and hangs on hostile files; each one is fixed with a regression test. Quality has not yet been benchmarked side by side.
+
+**Next, in order:** office-document-to-PDF and a .docx export that keeps layout, the reported bugs and the Chinese interface font, a fidelity harness against a reference renderer, editing existing content, then professional workflows (OCR, office formats, Preflight, signatures, accessibility tagging) and 1.0 polish.
+
+The summary is in **[ROADMAP.md](ROADMAP.md)**; the full assessment by dimension and area is in [docs/target-app-parity.md](docs/target-app-parity.md), the ranked gaps in [docs/gaps.md](docs/gaps.md), and the milestones in [docs/roadmap.md](docs/roadmap.md).
 
 ---
 
