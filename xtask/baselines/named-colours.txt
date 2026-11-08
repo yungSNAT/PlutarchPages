@@ -4,6 +4,9 @@
 # Check that a new one colours a page or document rather than the chrome, then run
 # `cargo xtask fork-check --write`.
 crates/ui-egui/src/app.rs	egui::CentralPanel::default().frame(egui::Frame::NONE.fill(egui::Color32::BLACK)).show(ui, |ui| {
+crates/ui-egui/src/canvas.rs	let msg = ui.fonts_mut(|f| f.layout(message, theme::regular(12.5), Color32::BLACK, (r.width() - 40.0).max(80.0)));
+crates/ui-egui/src/canvas.rs	let paper = app.session.reading_colors(app.views[index].id).and_then(|c| c.params).map_or(Color32::WHITE, |p| {
+crates/ui-egui/src/canvas.rs	painter.galley(pos2(r.center().x - msg.size().x / 2.0, r.center().y), msg, Color32::BLACK);
 crates/ui-egui/src/canvas/organize.rs	ui.painter().image(tex.id(), pr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
 crates/ui-egui/src/canvas/organize.rs	ui.painter().rect_filled(pr, CornerRadius::ZERO, Color32::WHITE);
 crates/ui-egui/src/canvas/signature_drag.rs	mesh.vertices.push(egui::epaint::Vertex { pos, uv: pos2(u, v), color: egui::Color32::WHITE });
@@ -33,7 +36,12 @@ crates/ui-egui/src/tools/content_ui.rs	let natural = ctx.fonts_mut(|f| f.layout_
 crates/ui-egui/src/tools/content_ui.rs	mesh.vertices.push(egui::epaint::Vertex { pos: b, uv: Pos2::new(u, v), color: Color32::WHITE });
 crates/ui-egui/src/tools/content_ui.rs	ui.painter().rect_filled(source_rect.union(r).expand(1.0), CornerRadius::ZERO, Color32::WHITE);
 crates/ui-egui/src/tools/content_ui.rs	ui.visuals_mut().text_cursor.stroke.color = crate::edit_text_ui::caret_color_on(Color32::WHITE);
+crates/ui-egui/src/tools/edit_text_ui.rs	if luminance(text_color) < 0.5 { Color32::BLACK } else { Color32::WHITE }
+crates/ui-egui/src/tools/edit_text_ui.rs	let fill = if background_ready { Color32::TRANSPARENT } else { editor_fill(text_color) };
 crates/ui-egui/src/tools/edit_text_ui/background.rs	mesh.vertices.push(egui::epaint::Vertex { pos: xf.norm_to_screen(u, v), uv: Pos2::new(u, v), color: Color32::WHITE });
+crates/ui-egui/src/tools/edit_text_ui/image.rs	clipped.rect_filled(*r, CornerRadius::ZERO, Color32::WHITE);
+crates/ui-egui/src/tools/edit_text_ui/image.rs	let w = painter.layout_no_wrap(label.to_string(), font.clone(), Color32::WHITE).size().x + 20.0;
+crates/ui-egui/src/tools/edit_text_ui/image.rs	mesh.vertices.push(egui::epaint::Vertex { pos: b, uv: Pos2::new(u, v), color: Color32::WHITE });
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	if contrast(text, Color32::WHITE) >= contrast(text, DARK_EDITOR_FILL) { Color32::WHITE } else { DARK_EDITOR_FILL }
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	if luma > 127_500 { Color32::BLACK } else { Color32::WHITE }
 crates/ui-egui/src/tools/edit_text_ui/layout.rs	let native_width = ui.fonts_mut(|f| f.layout_no_wrap(line.text.clone(), font.clone(), Color32::BLACK).size().x);
@@ -80,6 +88,7 @@ crates/ui-egui/src/widgets.rs	let measure = |f: &mut egui::epaint::text::FontsVi
 crates/ui-egui/src/widgets.rs	ui.fonts_mut(|f| f.layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE).size().x)
 crates/ui-egui/src/widgets/icons.rs	let clear = |icon| ButtonVisuals { fill: Color32::TRANSPARENT, stroke: Stroke::NONE, icon };
 crates/ui-egui/src/workflows/a11y_ui.rs	ui.painter().image(tex.id(), fit, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
+crates/ui-egui/src/workflows/combine_grid.rs	const ON_PAPER: Color32 = Color32::BLACK;
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.image(tex, paper, uv, Color32::WHITE);
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.image(tex, paper, uv, Color32::WHITE);
 crates/ui-egui/src/workflows/combine_grid/card.rs	painter.image(tex, paper.rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
