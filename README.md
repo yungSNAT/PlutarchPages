@@ -77,7 +77,7 @@ Real-world typography: world scripts, vertical Japanese, colour emoji, gradients
 <td width="33%" valign="top">
 
 ### Fearless
-Every save appends your changes and leaves the original bytes untouched. Writes are atomic, undo runs deep, and nothing is lost if you close by mistake.
+Ordinary saves append your changes and leave the original bytes untouched. Edits to damaged objects whose xref and header generations disagree use a full rewrite, keeping both accepted references connected to the same repaired object. Writes are atomic, undo runs deep, and nothing is lost if you close by mistake.
 
 </td>
 <td width="33%" valign="top">
@@ -122,6 +122,8 @@ PdfCraft renders PDFs with care for the details that make a page feel right: ker
 Search the whole document as you type, step through matches with <kbd>⌘G</kbd>, and select text that comes out in the right reading order. That holds for columns, right-to-left runs and CJK too.
 
 ## Navigate long documents
+
+Launch with `pdfcraft --two-paged file.pdf` (or `pdfcraft file.pdf --two-paged`) to open each command-line PDF in noncontinuous two-page view. This optional launch override does not change saved default-layout preferences or PDFs restored from the previous session. An explicit `--layout` option takes precedence on the active document regardless of argument order; `--default-layout` retains its existing behavior for subsequently opened documents.
 
 Right-click a PDF tab to close it, reopen the last closed file-backed tab, or reveal its file. Closing still asks about unsaved changes. Reopening reads the saved file from disk; it does not restore discarded edits. Reveal selects the file in Explorer or Finder. On Linux and FreeBSD it requests `org.freedesktop.FileManager1.ShowItems`, falling back to opening the containing directory with `xdg-open` when that service is unavailable. Reopen and Reveal are unavailable on the web; Reveal is also unavailable for pathless documents.
 
@@ -233,6 +235,18 @@ Documents restricted by their author show a clear notice, and PdfCraft honours t
 <td valign="top"><b>Layers</b>: switch optional content on and off and the page re-renders instantly. <b>Comments</b> appear as threaded conversations, and <b>attachments</b> can be opened or saved.</td>
 </tr>
 </table>
+
+## Scan pages, then read the words back before trusting them
+
+**Scan & OCR ▸ Recognize text** turns a scan into searchable text — the current page, a range, or a folder of files written as searchable copies — with optional cleanup before reading (auto-rotate, deskew, denoise, binarize; word boxes map back to the original scan) and a second engine: an installed Tesseract joins the built-in one, merged per your strategy. A searchable result applies as one undoable step; the **Editable text** output opens the **OCR Verify screen** instead, where each word carries the engine's confidence as a colour, suspects are one keypress away, and corrections, a user dictionary and Re-OCR of a region or a page happen before Accept writes the new document. **Scan & OCR ▸ Correct recognized text** reviews any recognition there before it is applied.
+
+<p align="center">
+  <img src="docs/images/pdfcraft-ocr-verify.png" alt="The OCR Verify screen: a scanned note with each recognized word boxed in its confidence colour, the info strip reporting a 95% average confidence and one low-confidence word, and the confidence legend with its thresholds below" width="100%">
+  <br>
+  <sub>The OCR Verify screen: words coloured by confidence — the legend spells the thresholds out — reviewed and corrected before anything is applied.</sub>
+</p>
+
+---
 
 ## Every tool, one keystroke away
 
@@ -494,8 +508,8 @@ Not implemented, and why: cloud storage connectors (Box, Dropbox, Google Drive, 
 SharePoint need registered OAuth apps), FileOpen and Azure RMS DRM (proprietary vendor SDKs), the
 virtual printer driver, legacy browser plug-ins, the Office add-in, the licence key installer, spell
 checking (no cross-platform checker chosen yet, and Windows' own checker needs unsafe code), and,
-for now, 3D content, export to PowerPoint, enhanced OCR clean-up, an AI assistant and an Explorer
-'Combine' menu.
+for now, viewing 3D content (the automation tools add U3D and PRC models and draw PRC models as
+pictures), enhanced OCR clean-up, an AI assistant and an Explorer 'Combine' menu.
 
 ---
 

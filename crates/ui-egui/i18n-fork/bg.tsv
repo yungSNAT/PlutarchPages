@@ -1,0 +1,47 @@
+# PlutarchPages' bg rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Checking for a newer version…	Проверка за по-нова версия…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} е актуална.
+	Couldn't check for updates: {e}	Неуспешна проверка за актуализации: {e}
+	You have version {c}. All releases are listed at {page}.	Имате версия {c}. Всички издания са изброени на {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Ключът е в macOS Keychain, който може да поиска разрешение PlutarchPages да го използва.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Ключът е в хранилището за сертификати на Windows, което може да поиска разрешение PlutarchPages да го използва.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Разпознаването на текст не е инсталирано: файловете на моделите му липсват. Инсталирайте PlutarchPages отново или задайте в PDFCRAFT_MODELS папката, която ги съдържа.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages не беше затворен нормално. Тези документи имат автоматично записани промени:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Формулярът изисква да бъде изпратен до {u}; PlutarchPages не изпраща данни от формуляри. Запишете документа, за да запазите въведеното.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} изпраща формуляра до {url}; PlutarchPages не изпраща данни от формуляри. Запишете документа, за да запазите въведеното.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages рисува без графичен процесор, затова може да е бавен. Обновяването на графичния драйвер може да помогне.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Това е динамичен XFA формуляр, който PlutarchPages все още не може да показва. Виждате заместващата страница на файла.
+	Welcome to PlutarchPages	Добре дошли в PlutarchPages
+	PlutarchPages on GitHub	PlutarchPages в GitHub
+	About PlutarchPages	За PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Файловете, които отваряте в PlutarchPages, се показват тук. Пуснете PDF файл където и да е, за да го отворите.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages работи офлайн. Без телеметрия, без акаунт и без обработка в облака, освен ако не добавите доставчик.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	моделите за разпознаване на текст не са инсталирани (инсталирайте PlutarchPages отново или задайте в PDFCRAFT_MODELS папката, която ги съдържа)
+	Reopen the files that were open when PlutarchPages last closed	Отваряй отново файловете, които бяха отворени при последното затваряне на PlutarchPages
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Шрифтът на това поле не може да покаже „{c}“ ({code}), затова PlutarchPages показва ? на негово място. Стойността е запазена и другите програми за PDF преначертават полето по нея.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Шрифтовете, с които PlutarchPages пише, не могат да покажат „{c}“ ({code}), затова във всяка програма за PDF то се показва като ?. Текстът е запазен.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Подпишете се на лист бяла хартия и го снимайте на ярка, равномерна светлина (със светкавица). Изберете снимката или я пуснете тук: PlutarchPages открива подписа и премахва хартията.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Премахнете този листов етикет от реда на четене и маркирайте прякото му съдържание като артефакт
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Страниците, които използват шрифтове Type 3, се отпечатват като изображения, защото Windows може да затвори PlutarchPages, докато ги отпечатва. Останалите страници се отпечатват както обикновено.
+	Create PDF from web page…	Създаване на PDF от уеб страница…
+	Read this page aloud	Прочитане на тази страница на глас
+	Convert colours to grayscale	Преобразуване на цветовете в нюанси на сивото
+	Report a problem	Съобщаване за проблем
+	Upstream PdfCraft	Оригиналният PdfCraft
+	Web page	Уеб страница
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	Форк на PdfCraft от екипа на ArtCraft. PlutarchPages не е продукт на ArtCraft.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	Основан на PdfCraft от екипа на ArtCraft. Съобщавайте за проблеми с PlutarchPages в GitHub.
+	Convert Office files, HTML files and web pages with installed programs	Преобразуване на файлове на Office, HTML файлове и уеб страници с инсталирани програми
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	Преобразувано в нюанси на сивото: цветове – {ops}, изображения – {images}, формуляри – {forms}; непроменени – {left}
+	Create PDF from web page	Създаване на PDF от уеб страница
+	Discard external cross-references	Премахване на външните кръстосани препратки
+	Discard form submission, import and reset actions	Премахване на действията за изпращане, импортиране и нулиране на формуляри
+	External converters	Външни конвертори
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	Външните конвертори са изключени. Включете ги в Предпочитания, за да използвате инсталирания Chrome или Edge.
+	PlutarchPages is a fork of PdfCraft	PlutarchPages е форк на PdfCraft
+	Remove PDF/A and PDF/X identification	Премахване на идентификацията PDF/A и PDF/X
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Използва LibreOffice (26.2.5 или по-нова версия) за файлове на Office и Chrome или Edge за HTML и уеб страници, всеки път с нов личен профил. Локалният HTML се отваря без скриптове и мрежа. PlutarchPages не изолира тези програми: преобразувайте само файлове, на които имате доверие.
+	Web address (http or https)	Уеб адрес (http или https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	Страницата се отваря в нов личен прозорец на инсталирания Chrome или Edge и се отпечатва като PDF. Отваряйте само страници, на които имате доверие: публична страница все пак може да пренасочи към адреси във вашата собствена мрежа или да ги зареди.

@@ -1,0 +1,52 @@
+# PlutarchPages' cs rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	PlutarchPages on GitHub	PlutarchPages na GitHubu
+	About PlutarchPages	O aplikaci PlutarchPages
+	Reopen the files that were open when PlutarchPages last closed	Znovu otevřít soubory, které byly otevřené při posledním zavření aplikace PlutarchPages
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages vykresluje bez grafického procesoru, takže může být pomalý. Pomoci může aktualizace grafického ovladače.
+	Welcome to PlutarchPages	Vítá vás PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Zde se zobrazí soubory, které otevřete v PlutarchPagesu. Soubor PDF otevřete přetažením kamkoli do okna.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages funguje offline. Žádná telemetrie, žádný účet a žádné zpracování v cloudu, pokud nepřidáte poskytovatele.
+	Checking for a newer version…	Hledání novější verze…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} je aktuální.
+	Couldn't check for updates: {e}	Aktualizace nelze zkontrolovat: {e}
+	You have version {c}. All releases are listed at {page}.	Máte verzi {c}. Všechna vydání najdete na {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Klíč je v Klíčence systému macOS, která se může zeptat, zda PlutarchPagesu povolit jeho použití.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Klíč je v úložišti certifikátů Windows, které se může zeptat, zda PlutarchPagesu povolit jeho použití.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Rozpoznávání textu není nainstalováno: chybí soubory jeho modelů. Přeinstalujte PlutarchPages nebo nastavte PDFCRAFT_MODELS na složku, ve které jsou.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages nebyl řádně ukončen. V těchto dokumentech byly změny, které se automaticky uložily:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Formulář žádá o odeslání na {u}; PlutarchPages data formulářů neodesílá. Své údaje zachováte uložením dokumentu.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} odesílá formulář na {url}; PlutarchPages data formulářů neodesílá. Své údaje zachováte uložením dokumentu.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Toto je dynamický formulář XFA, který PlutarchPages zatím neumí zobrazit. Vidíte zástupnou stránku souboru.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	modely pro rozpoznávání textu nejsou nainstalované (přeinstalujte PlutarchPages nebo nastavte PDFCRAFT_MODELS na složku, ve které jsou)
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	Pokus o otevření adresy, kterou PlutarchPages neotevře ({who} v tomto dokumentu): {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	Pokus o otevření adresy, kterou PlutarchPages neotevře ({who} v tomto dokumentu): {e}. Z dokumentů se otevírají jen webové (http, https) a e-mailové (mailto) odkazy.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Písmo tohoto pole neumí zobrazit „{c}“ ({code}), proto PlutarchPages místo něj ukazuje ?. Hodnota se uloží a jiné prohlížeče PDF pole podle ní překreslí.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Písma, kterými PlutarchPages píše, neumí zobrazit „{c}“ ({code}), proto se ve všech prohlížečích PDF zobrazí jako ?. Text se uloží.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Podepište se na bílý list papíru a vyfoťte ho při jasném, rovnoměrném světle (použijte blesk). Vyberte fotografii nebo ji sem přetáhněte: PlutarchPages najde podpis a odstraní papír.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Odebrat tento koncový tag z pořadí čtení a jeho přímý obsah označit jako artefakt
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Stránky, které používají písma Type 3, se tisknou jako obrázky, protože Windows může při jejich tisku PlutarchPages zavřít. Ostatní stránky se tisknou jako obvykle.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages zatím nedokáže tento podpis ověřit: {}.
+	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.	Certifikát {} má kritická rozšíření, která PlutarchPages nezná, proto se nepoužije k ručení za {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	Certifikát podepisující osoby má kritická rozšíření, která PlutarchPages nezná ({}).
+	Create PDF from web page…	Vytvořit PDF z webové stránky…
+	Read this page aloud	Přečíst tuto stránku nahlas
+	Convert colours to grayscale	Převést barvy na odstíny šedi
+	Report a problem	Nahlásit problém
+	Upstream PdfCraft	Původní PdfCraft
+	Web page	Webová stránka
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	Fork aplikace PdfCraft od týmu ArtCraft. PlutarchPages není produkt ArtCraft.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	Založeno na PdfCraft od týmu ArtCraft. Problémy s PlutarchPages hlaste na GitHubu.
+	Convert Office files, HTML files and web pages with installed programs	Převádět soubory Office, soubory HTML a webové stránky nainstalovanými programy
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	Převedeno na odstíny šedi: barvy {ops}, obrázky {images}, formuláře {forms}; ponecháno beze změny {left}
+	Create PDF from web page	Vytvořit PDF z webové stránky
+	Discard external cross-references	Odstranit externí křížové odkazy
+	Discard form submission, import and reset actions	Odstranit akce odeslání, importu a vynulování formulářů
+	External converters	Externí převaděče
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	Externí převaděče jsou vypnuté. Zapněte je v Předvolbách, chcete-li použít nainstalovaný Chrome nebo Edge.
+	PlutarchPages is a fork of PdfCraft	PlutarchPages je fork aplikace PdfCraft
+	Remove PDF/A and PDF/X identification	Odebrat identifikaci PDF/A a PDF/X
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Používá LibreOffice (26.2.5 nebo novější) pro soubory Office a Chrome nebo Edge pro HTML a webové stránky, pokaždé s novým soukromým profilem. Místní HTML se otevírá bez skriptů a bez sítě. PlutarchPages tyto programy neizoluje: převádějte jen soubory, kterým důvěřujete.
+	Web address (http or https)	Webová adresa (http nebo https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	Stránka se otevře v novém soukromém okně nainstalovaného prohlížeče Chrome nebo Edge a vytiskne se do PDF. Otevírejte jen stránky, kterým důvěřujete: veřejná stránka může přesto přesměrovat na adresy ve vaší vlastní síti nebo je načíst.

@@ -35,6 +35,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       date: ${{ steps.resolve.outputs.date }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
+      i18n: ${{ steps.resolve.outputs.i18n }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,10 +54,17 @@ jobs:
             exit 1
           fi
           case "$v" in *-*) pre=true ;; *) pre=false ;; esac
+          # The translations every build embeds (crates/ui-egui/build.rs): craft-i18n at this commit.
+          i18n=$(tr -d '[:space:]' < craft-i18n.rev)
+          if [[ ! "$i18n" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error file=craft-i18n.rev::expected one 40-character craft-i18n commit SHA, found '$i18n'"
+            exit 1
+          fi
           {
             echo "version=$v"
             echo "date=$(date -u +%Y-%m-%d)"
             echo "prerelease=$pre"
+            echo "i18n=$i18n"
           } >>"$GITHUB_OUTPUT"
 
   windows:
@@ -79,6 +87,8 @@ jobs:
       PDFCRAFT_BUILD_SHA: ${{ github.sha }}
       CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
       CRAFT_FONTS_REQUIRED: "1"
+      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+      CRAFT_I18N_REQUIRED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -88,6 +98,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -171,6 +187,8 @@ jobs:
       PDFCRAFT_BUILD_SHA: ${{ github.sha }}
       CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
       CRAFT_FONTS_REQUIRED: "1"
+      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+      CRAFT_I18N_REQUIRED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -180,6 +198,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - name: Install build and packaging tools
         env:
@@ -229,6 +253,8 @@ jobs:
       PDFCRAFT_BUILD_SHA: ${{ github.sha }}
       CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
       CRAFT_FONTS_REQUIRED: "1"
+      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+      CRAFT_I18N_REQUIRED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -238,6 +264,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -349,6 +381,8 @@ jobs:
       PDFCRAFT_BUILD_SHA: ${{ github.sha }}
       CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
       CRAFT_FONTS_REQUIRED: "1"
+      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+      CRAFT_I18N_REQUIRED: "1"
       # Built on 24.04, the binaries need glibc 2.39, and libc defines that symbol version.
       GLIBC_FLOOR: "2.39"
       RPM_GLIBC_FLOOR: libc.so.6(GLIBC_2.39)(64bit)
@@ -361,6 +395,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
@@ -452,6 +492,12 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - name: Start the FreeBSD VM
         uses: vmactions/freebsd-vm@c46abacb49f09938ca4e1702d15d836285d694cc # v1.5.9
@@ -552,6 +598,7 @@ jobs:
           # Written by "Set up the aarch64 cross toolchain": cargo then builds for aarch64.
           [ ! -f /var/tmp/craft-cross/env ] || . /var/tmp/craft-cross/env
           export CRAFT_FONTS_DIR="$PWD/craft-fonts" CRAFT_FONTS_REQUIRED=1
+          export CRAFT_I18N_DIR="$PWD/craft-i18n" CRAFT_I18N_REQUIRED=1
           bash packaging/freebsd/package.sh
           archive="dist/release/pdfcraft-$VERSION-freebsd-${{ matrix.arch }}.tar.gz"
           tar -tzf "$archive" | grep -F /bin/pdfcraft-cli
@@ -578,9 +625,17 @@ jobs:
       PDFCRAFT_VERSION: ${{ needs.version.outputs.version }}
       PDFCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
       PDFCRAFT_BUILD_SHA: ${{ github.sha }}
+      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n
+      CRAFT_I18N_REQUIRED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: storytold/craft-i18n
+          ref: ${{ needs.version.outputs.i18n }}
+          path: craft-i18n
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:

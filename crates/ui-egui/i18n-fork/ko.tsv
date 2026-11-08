@@ -1,0 +1,27 @@
+# PlutarchPages' ko rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	PlutarchPages에 오신 것을 환영합니다
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	PlutarchPages에서 연 파일이 여기에 표시됩니다. PDF를 아무 곳에나 끌어다 놓으면 열립니다.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages는 오프라인으로 작동합니다. 직접 공급자를 추가하지 않는 한 텔레메트리, 계정, 클라우드 처리가 없습니다.
+	PlutarchPages on GitHub	GitHub의 PlutarchPages
+	About PlutarchPages	PlutarchPages 정보
+	PlutarchPages {c} is up to date.	PlutarchPages {c}은(는) 최신 버전입니다.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	키가 macOS 키체인에 있으며, 이 키를 PlutarchPages에서 사용할 수 있도록 허용할지 묻는 메시지가 표시될 수 있습니다.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	키가 Windows 인증서 저장소에 있으며, 이 키를 PlutarchPages에서 사용할 수 있도록 허용할지 묻는 메시지가 표시될 수 있습니다.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	텍스트 인식이 설치되어 있지 않습니다: 모델 파일이 없습니다. PlutarchPages를 다시 설치하거나 PDFCRAFT_MODELS를 모델 파일이 있는 폴더로 설정하세요.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages가 정상적으로 종료되지 않았습니다. 다음 문서의 변경 내용이 자동 저장되었습니다:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	이 양식은 {u}(으)로 제출을 요청합니다. PlutarchPages는 양식 데이터를 보내지 않습니다. 입력한 내용을 유지하려면 문서를 저장하세요.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name}이(가) 양식을 {url}로 제출합니다. PlutarchPages는 양식 데이터를 보내지 않습니다. 입력한 내용을 유지하려면 문서를 저장하세요.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	동적 XFA 양식으로, PlutarchPages가 아직 표시할 수 없습니다. 지금 보이는 것은 파일의 자리 표시 페이지입니다.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	텍스트 인식 모델이 설치되어 있지 않음(PlutarchPages를 다시 설치하거나 PDFCRAFT_MODELS를 모델이 있는 폴더로 설정하세요)
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages가 그래픽 프로세서 없이 그리고 있어 느릴 수 있습니다. 그래픽 드라이버를 업데이트하면 도움이 될 수 있습니다.
+	Reopen the files that were open when PlutarchPages last closed	PlutarchPages를 마지막으로 닫을 때 열려 있던 파일 다시 열기
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	이 문서의 {who}이(가) PlutarchPages가 열지 않는 주소를 열려고 했습니다: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	이 문서의 {who}이(가) PlutarchPages가 열지 않는 주소를 열려고 했습니다: {e}. 문서에서는 웹(http, https) 및 이메일(mailto) 링크만 열립니다.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	이 필드의 글꼴은 “{c}”({code})를 그릴 수 없어 PlutarchPages가 그 자리에 ?를 표시합니다. 값은 저장되며 다른 PDF 뷰어에서 이를 기준으로 필드를 다시 그립니다.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	PlutarchPages가 사용하는 글꼴은 “{c}”({code})를 그릴 수 없어 모든 PDF 뷰어에서 ?로 표시됩니다. 텍스트는 저장됩니다.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	흰 종이에 서명한 뒤 밝고 고른 조명에서 사진을 찍으세요(플래시 사용). 사진을 선택하거나 여기로 끌어다 놓으세요. PlutarchPages가 서명을 찾아 종이를 제거합니다.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages에서 아직 이 서명을 확인할 수 없습니다: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	서명자의 인증서에 PlutarchPages가 인식하지 못하는 중요 확장이 있습니다({}).
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Type 3 글꼴을 사용하는 페이지는 이미지로 인쇄됩니다. 해당 페이지를 인쇄하는 동안 Windows가 PlutarchPages를 닫을 수 있기 때문입니다. 다른 페이지는 평소대로 인쇄됩니다.

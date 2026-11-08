@@ -6,14 +6,15 @@
 //! spaces become DeviceGray by luminance (RGB: 0.30 R, 0.59 G and 0.11 B summed; CMYK: one minus
 //! the same weighted sum plus K, at most one), in page content and the forms it draws. RGB images
 //! PdfCraft decodes (8 bits, Flate or JPEG, default decode, no colour-key mask) become 8-bit gray
-//! images. Separation, DeviceN, Indexed, Lab, patterns, shadings and inline images are left as
-//! they are and counted. Shared forms and images are converted once into new objects; the
-//! originals stay for anything else that uses them (a full save drops them when nothing does).
+//! images. Separation, DeviceN, Indexed, Lab, patterns, shadings and inline images are left as they
+//! are and counted, as are images past the run's decoding allowance ([`ImageBudget`]). Shared forms
+//! and images are converted once into new objects; the originals stay for anything else that uses
+//! them (a full save drops them when nothing does).
 
 use std::collections::HashMap;
 
 use pdfcraft_content::{Op, num, parse, serialize_ops};
-use pdfcraft_cos::{Dict, Document, ObjRef, Object, Stream};
+use pdfcraft_cos::{Dict, Document, ImageBudget, ObjRef, Object, Stream};
 
 use crate::OptimizeError;
 use crate::images::{components, is_identity_decode, pixels};
@@ -99,11 +100,12 @@ fn numbers(op: &Op) -> Option<Vec<f64>> {
 /// the depth of a walk that `MAX_DEPTH` cut short. A form without its own /Resources draws from
 /// its caller's, so it is keyed by those resources too: their own object when indirect (shared
 /// by every page using them), otherwise the page or form holding them.
-#[derive(Default)]
 struct Converted {
     xobjects: HashMap<(ObjRef, Option<ObjRef>), (ObjRef, Option<usize>)>,
     /// Whether the walk in progress reached a form past `MAX_DEPTH`.
     cut: bool,
+    /// What decoding the images may still spend.
+    images: ImageBudget,
 }
 
 /// Rewrite the colour operators of one content stream. Returns the new bytes, whether anything
@@ -206,7 +208,7 @@ fn convert_ops(doc: &Document, data: &[u8], resources: &Dict, report: &mut Color
 }
 
 /// A converted copy of image `r`, or `None` when it is gray already or can't be converted here.
-fn convert_image(doc: &Document, s: &Stream) -> Option<Stream> {
+fn convert_image(doc: &Document, s: &Stream, budget: &mut ImageBudget) -> Option<Stream> {
     let d = &s.dict;
     if matches!(d.get(b"ImageMask"), Some(Object::Bool(true))) || d.int(b"BitsPerComponent") != Some(8) {
         return None;
@@ -222,7 +224,7 @@ fn convert_image(doc: &Document, s: &Stream) -> Option<Stream> {
     if w == 0 || h == 0 || w.saturating_mul(h) > MAX_PIXELS {
         return None;
     }
-    let px = pixels(doc, s, 3)?;
+    let px = pixels(doc, s, 3, budget)?;
     let gray: Vec<u8> = px
         .as_chunks::<3>()
         .0
@@ -299,7 +301,7 @@ fn convert_xobject(
     };
     match s.dict.name(b"Subtype") {
         Some(b"Image") => {
-            let n = match convert_image(doc, &s) {
+            let n = match convert_image(doc, &s, &mut done.images) {
                 Some(new) => {
                     report.images += 1;
                     doc.add(Object::Stream(new))
@@ -406,7 +408,7 @@ pub fn convert_to_gray(doc: &mut Document, pages: Option<&[usize]>) -> Result<Co
         return Err(OptimizeError::NoPages);
     }
     let mut report = ColorReport::default();
-    let mut done = Converted::default();
+    let mut done = Converted { xobjects: HashMap::new(), cut: false, images: ImageBudget::new(doc) };
     for (i, page) in all.iter().enumerate() {
         if pages.is_some_and(|p| !p.contains(&i)) {
             continue;
@@ -466,13 +468,17 @@ mod tests {
         d.set(b"ColorSpace".to_vec(), Object::name("DeviceRGB"));
         d.set(b"BitsPerComponent".to_vec(), Object::Int(8));
         let img = Stream::flate(d, &[255, 0, 0, 0, 0, 255]);
-        let gray = convert_image(&doc, &img).unwrap();
+        let gray = convert_image(&doc, &img, &mut ImageBudget::with_work(u64::MAX)).unwrap();
         assert_eq!(gray.dict.name(b"ColorSpace"), Some(&b"DeviceGray"[..]));
         assert_eq!(gray.decoded().unwrap(), vec![77, 28]);
         // Odd images are left alone.
         let mut bad = img.clone();
         bad.dict.set(b"Width".to_vec(), Object::Int(-4));
-        assert!(convert_image(&doc, &bad).is_none());
+        assert!(convert_image(&doc, &bad, &mut ImageBudget::with_work(u64::MAX)).is_none());
+        // Past the run's allowance an image is left as it is, and not decoded.
+        let mut spent = ImageBudget::with_work(0);
+        assert!(convert_image(&doc, &img, &mut spent).is_none());
+        assert_eq!(spent.refused(), 1);
         let _ = doc.add(Object::Null);
     }
 

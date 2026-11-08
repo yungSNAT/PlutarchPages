@@ -1,0 +1,49 @@
+# PlutarchPages' uk rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	Вітаємо в PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Тут з’являються файли, які ви відкриваєте в PlutarchPages. Перетягніть PDF будь-куди, щоб відкрити його.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages працює офлайн. Без телеметрії, облікового запису та хмарної обробки, якщо ви не додасте постачальника.
+	PlutarchPages on GitHub	PlutarchPages на GitHub
+	About PlutarchPages	Про PlutarchPages
+	Checking for a newer version…	Перевірка наявності новішої версії…
+	PlutarchPages {c} is up to date.	Ваша версія PlutarchPages {c} актуальна.
+	Couldn't check for updates: {e}	Не вдалося перевірити оновлення: {e}
+	You have version {c}. All releases are listed at {page}.	У вас версія {c}. Усі випуски наведено на {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Ключ у В’язці ключів macOS, яка може запитати дозвіл на його використання PlutarchPages.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Ключ у сховищі сертифікатів Windows, яке може запитати дозвіл на його використання PlutarchPages.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Розпізнавання тексту не встановлено: бракує файлів моделей. Перевстановіть PlutarchPages або задайте в PDFCRAFT_MODELS теку, у якій вони лежать.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages завершив роботу некоректно. Зміни цих документів було автоматично збережено:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Форма запитує надсилання до {u}; PlutarchPages не надсилає дані форми. Збережіть документ, щоб зберегти введені дані.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} надсилає форму до {url}; PlutarchPages не надсилає дані форми. Збережіть документ, щоб зберегти введені дані.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Це динамічна форма XFA, яку PlutarchPages ще не може відобразити. Ви бачите сторінку-заглушку файлу.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	моделі розпізнавання тексту не встановлено (перевстановіть PlutarchPages або задайте в PDFCRAFT_MODELS теку, у якій вони лежать)
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages малює без графічного процесора, тому може працювати повільно. Оновлення графічного драйвера може допомогти.
+	Reopen the files that were open when PlutarchPages last closed	Знову відкривати файли, які були відкриті під час останнього закриття PlutarchPages
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} у цьому документі намагається відкрити адресу, яку PlutarchPages не відкриває: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} у цьому документі намагається відкрити адресу, яку PlutarchPages не відкриває: {e}. З документів відкриваються лише вебпосилання (http, https) та посилання на електронну пошту (mailto).
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Шрифт цього поля не може відобразити «{c}» ({code}), тому PlutarchPages показує на його місці ?. Значення збережено, і інші програми перегляду PDF перемалюють поле за ним.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Шрифти, якими пише PlutarchPages, не можуть відобразити «{c}» ({code}), тому в усіх програмах перегляду PDF на його місці буде ?. Текст збережено.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Розпишіться на аркуші білого паперу та сфотографуйте його за яскравого рівномірного освітлення (зі спалахом). Виберіть фото або перетягніть його сюди: PlutarchPages знайде підпис і прибере папір.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Вилучіть цей кінцевий тег із порядку читання та позначте його безпосередній вміст як артефакт
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Сторінки зі шрифтами Type 3 друкуються як зображення, бо Windows може закрити PlutarchPages під час їх друку. Інші сторінки друкуються як зазвичай.
+	Create PDF from web page…	Створити PDF із вебсторінки…
+	Read this page aloud	Прочитати цю сторінку вголос
+	Convert colours to grayscale	Перетворити кольори на відтінки сірого
+	Report a problem	Повідомити про проблему
+	Upstream PdfCraft	Оригінальний PdfCraft
+	Web page	Вебсторінка
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	Форк PdfCraft від команди ArtCraft. PlutarchPages не є продуктом ArtCraft.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	На основі PdfCraft від команди ArtCraft. Повідомляйте про проблеми PlutarchPages на GitHub.
+	Convert Office files, HTML files and web pages with installed programs	Перетворювати файли Office, файли HTML і вебсторінки встановленими програмами
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	Перетворено на відтінки сірого: кольорів — {ops}, зображень — {images}, форм — {forms}; без змін — {left}
+	Create PDF from web page	Створити PDF із вебсторінки
+	Discard external cross-references	Видалити зовнішні перехресні посилання
+	Discard form submission, import and reset actions	Видалити дії надсилання, імпорту та скидання форм
+	External converters	Зовнішні конвертери
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	Зовнішні конвертери вимкнено. Увімкніть їх у налаштуваннях, щоб використовувати встановлений Chrome або Edge.
+	PlutarchPages is a fork of PdfCraft	PlutarchPages — форк PdfCraft
+	Remove PDF/A and PDF/X identification	Видалити ідентифікацію PDF/A і PDF/X
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Використовує LibreOffice (26.2.5 або новіший) для файлів Office і Chrome або Edge для HTML і вебсторінок, щоразу з новим приватним профілем. Локальний HTML відкривається без скриптів і мережі. PlutarchPages не ізолює ці програми: перетворюйте лише файли, яким довіряєте.
+	Web address (http or https)	Вебадреса (http або https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	Сторінка відкривається в новому приватному вікні встановленого Chrome або Edge і друкується в PDF. Відкривайте лише сторінки, яким довіряєте: загальнодоступна сторінка все одно може переспрямувати на адреси у вашій власній мережі або завантажити їх.

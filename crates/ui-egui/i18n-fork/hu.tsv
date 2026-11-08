@@ -1,0 +1,49 @@
+# PlutarchPages' hu rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	Üdvözöljük a PlutarchPagesban
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	A PlutarchPagesban megnyitott fájlok itt jelennek meg. Húzz ide egy PDF-et a megnyitáshoz.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	A PlutarchPages offline működik. Nincs telemetria, nincs fiók, és nincs felhőfeldolgozás, amíg nem adsz hozzá szolgáltatót.
+	PlutarchPages on GitHub	PlutarchPages a GitHubon
+	About PlutarchPages	A PlutarchPagesról
+	Checking for a newer version…	Újabb verzió keresése…
+	PlutarchPages {c} is up to date.	A PlutarchPages {c} naprakész.
+	Couldn't check for updates: {e}	A frissítések keresése nem sikerült: {e}
+	You have version {c}. All releases are listed at {page}.	A jelenlegi verzió: {c}. Minden kiadás itt található: {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	A kulcs a macOS Kulcskarikában van, amely megkérdezheti, engedélyezed-e a PlutarchPagesnak a használatát.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	A kulcs a Windows tanúsítványtárolójában van, amely megkérdezheti, engedélyezed-e a PlutarchPagesnak a használatát.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	A szövegfelismerés nincs telepítve: hiányoznak a modellfájljai. Telepítsd újra a PlutarchPagesot, vagy állítsd a PDFCRAFT_MODELS változót az őket tartalmazó mappára.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	A PlutarchPages nem szabályosan állt le. Ezekben a dokumentumokban automatikusan mentett módosítások voltak:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Az űrlap ide kéri a beküldést: {u}; a PlutarchPages nem küld űrlapadatot. Mentsd a dokumentumot, hogy megmaradjanak a beírásaid.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} ide küldi az űrlapot: {url}; a PlutarchPages nem küld űrlapadatot. Mentsd a dokumentumot, hogy megmaradjanak a beírásaid.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	A PlutarchPages grafikus processzor nélkül rajzol, ezért lassú lehet. A grafikus illesztőprogram frissítése segíthet.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Ez egy dinamikus XFA-űrlap, amelyet a PlutarchPages még nem tud megjeleníteni. Amit látsz, a fájl helyőrző oldala.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	a szövegfelismerés modelljei nincsenek telepítve (telepítsd újra a PlutarchPagesot, vagy állítsd a PDFCRAFT_MODELS változót az őket tartalmazó mappára)
+	Reopen the files that were open when PlutarchPages last closed	A PlutarchPages legutóbbi bezárásakor megnyitott fájlok újranyitása
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} ebben a dokumentumban olyan címet próbált megnyitni, amelyet a PlutarchPages nem nyit meg: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} ebben a dokumentumban olyan címet próbált megnyitni, amelyet a PlutarchPages nem nyit meg: {e}. Dokumentumokból csak webes (http, https) és e-mail (mailto) hivatkozások nyílnak meg.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	A mező betűtípusa nem tudja megjeleníteni ezt: „{c}” ({code}), ezért a PlutarchPages ? jelet mutat a helyén. Az érték mentve van, és a többi PDF-megjelenítő ebből rajzolja újra a mezőt.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	A PlutarchPages által íráshoz használt betűtípusok nem tudják megjeleníteni ezt: „{c}” ({code}), ezért minden PDF-megjelenítőben ? látszik a helyén. A szöveg mentve van.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Írja alá a nevét egy fehér papírlapon, és fényképezze le erős, egyenletes fényben (vakuval). Válassza ki a fényképet, vagy húzza ide: a PlutarchPages megkeresi az aláírást, és eltávolítja a papírt.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Távolítsa el ezt a levélcímkét az olvasási sorrendből, és jelölje meg a közvetlen tartalmát műtárgyként
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	A Type 3 betűtípust használó oldalak képként nyomtatódnak, mert a Windows bezárhatja a PlutarchPagesot a nyomtatásuk közben. A többi oldal a szokásos módon nyomtatódik.
+	Create PDF from web page…	PDF létrehozása weboldalból…
+	Read this page aloud	Az oldal felolvasása
+	Convert colours to grayscale	Színek átalakítása szürkeárnyalatossá
+	Report a problem	Probléma bejelentése
+	Upstream PdfCraft	Eredeti PdfCraft
+	Web page	Weboldal
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	Az ArtCraft csapat PdfCraft alkalmazásának forkja. A PlutarchPages nem ArtCraft termék.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	Az ArtCraft csapat PdfCraft alkalmazásán alapul. A PlutarchPages hibáit a GitHubon jelentse.
+	Convert Office files, HTML files and web pages with installed programs	Office-fájlok, HTML-fájlok és weboldalak átalakítása telepített programokkal
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	Szürkeárnyalatossá alakítva: {ops} szín, {images} kép, {forms} űrlap; {left} változatlanul maradt
+	Create PDF from web page	PDF létrehozása weboldalból
+	Discard external cross-references	Külső kereszthivatkozások elvetése
+	Discard form submission, import and reset actions	Űrlapküldési, -importálási és -visszaállítási műveletek elvetése
+	External converters	Külső konverterek
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	A külső konverterek ki vannak kapcsolva. A telepített Chrome vagy Edge használatához kapcsolja be őket a Beállításokban.
+	PlutarchPages is a fork of PdfCraft	A PlutarchPages a PdfCraft forkja
+	Remove PDF/A and PDF/X identification	PDF/A- és PDF/X-azonosítás eltávolítása
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Office-fájlokhoz a LibreOffice (26.2.5 vagy újabb), HTML-hez és weboldalakhoz a Chrome vagy az Edge kerül használatra, mindig új, privát profillal. A helyi HTML szkriptek és hálózat nélkül nyílik meg. A PlutarchPages nem különíti el ezeket a programokat: csak megbízható fájlokat alakítson át.
+	Web address (http or https)	Webcím (http vagy https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	Az oldal a telepített Chrome vagy Edge új, privát ablakában nyílik meg, és PDF-be nyomtatódik. Csak megbízható oldalakat nyisson meg: egy nyilvános oldal így is átirányíthat a saját hálózatán lévő címekre, vagy betöltheti azokat.

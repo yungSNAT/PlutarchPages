@@ -1,0 +1,27 @@
+# PlutarchPages' ckb rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	بەخێربێیت بۆ PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	ئەو فایلانەی لە PlutarchPages دەیانکەیتەوە لێرە دەردەکەون. PDFێک لە هەرکوێ دابنێ بۆ کردنەوەی.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages بەبێ ئینتەرنێت کار دەکات. نە پێوانەی دوورەوە، نە هەژمار و نە پێواژۆی هەور هەیە مەگەر دابینکەرێک زیاد بکەیت.
+	PlutarchPages on GitHub	PlutarchPages لە GitHub
+	About PlutarchPages	دەربارەی PlutarchPages
+	PlutarchPages {c} is up to date.	PlutarchPages {c} نوێکراوەتەوە.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	کلیلەکە لە Keychain ی macOS ـدایە، کە ڕەنگە داوای ڕێگەدان بکات بۆ ئەوەی PlutarchPages بەکاری بهێنێت.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	کلیلەکە لە کۆگای بڕوانامەکانی Windows ـدایە، کە ڕەنگە داوای ڕێگەدان بکات بۆ ئەوەی PlutarchPages بەکاری بهێنێت.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	ناسینەوەی دەق دانەمەزراوە: فایلەکانی مۆدێلەکەی نین. PlutarchPages دووبارە دامەزرێنە، یان PDFCRAFT_MODELS بکە بە ئەو فۆڵدەرەی کە لەخۆی دەگرێت.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages بە شێوەی ئاسایی دانەخرا. ئەم بەڵگەنامانە گۆڕانکارییان هەبوو کە بە شێوەی خۆکار پاشەکەوت کرابوون:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	فۆڕمەکە داوای ناردن دەکات بۆ {u}؛ PlutarchPages داتای فۆڕم نانێرێت. بەڵگەنامەکە پاشەکەوت بکە بۆ پاراستنی تۆمارەکانت.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} فۆڕمەکە دەنێرێت بۆ {url}؛ PlutarchPages داتای فۆڕم نانێرێت. بەڵگەنامەکە پاشەکەوت بکە بۆ پاراستنی تۆمارەکانت.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	ئەمە فۆڕمی داینامیکی XFA یە، کە PlutarchPages هێشتا ناتوانێت پیشانی بدات. ئەوەی دەیبینیت پەڕەی جێگرەوەی فایلەکەیە.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	مۆدێلەکانی ناسینەوەی دەق دانەمەزراون (PlutarchPages دابمەزرێنەرەوە، یان PDFCRAFT_MODELS بکە بە فۆڵدەرەکەی کە لەخۆی دەگرێت)
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages بەبێ پڕۆسێسەری گرافیک وێنە دەکێشێت، بۆیە لەوانەیە هێواش بێت. نوێکردنەوەی درایڤەری گرافیک لەوانەیە یارمەتیدەر بێت.
+	Reopen the files that were open when PlutarchPages last closed	دووبارە کردنەوەی ئەو فایلانەی کاتی کۆتا داخستنی PlutarchPages کراوە بوون
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} لەم بەڵگەنامەیەدا هەوڵیدا ناونیشانێک بکاتەوە کە PlutarchPages نایکاتەوە: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} لەم بەڵگەنامەیەدا هەوڵیدا ناونیشانێک بکاتەوە کە PlutarchPages نایکاتەوە: {e}. تەنها بەستەری وێب (http, https) و ئیمەیڵ (mailto) لە بەڵگەنامەکانەوە دەکرێنەوە.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	فۆنتی ئەم خانەیە ناتوانێت «{c}» بکێشێت ({code})، بۆیە PlutarchPages لە جێگاکەیدا ? پیشان دەدات. بەهاکە پاشەکەوتکراوە، و بینەرەکانی تری PDF خانەکە لەسەر ئەو دووبارە دەکێشنەوە.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	ئەو فۆنتانەی PlutarchPages پێیان دەنووسێت ناتوانن «{c}» بکێشن ({code})، بۆیە لە هەموو بینەرێکی PDFدا وەک ? دەردەکەوێت. دەقەکە پاشەکەوتکراوە.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	لەسەر کاغەزێکی سپی واژوو بکە و لە ڕووناکییەکی بەهێز و یەکساندا وێنەی بگرە (فلاش بەکاربهێنە). وێنەکە هەڵبژێرە یان لێرە دایبنێ: PlutarchPages واژووەکە دەدۆزێتەوە و کاغەزەکە لادەبات.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages هێشتا ناتوانێت ئەم واژووە پشکنی بکات: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	بڕوانامەی واژووکەرەکە درێژکراوەی گرنگی هەیە کە PlutarchPages نایانناسێتەوە ({}).
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	ئەو پەڕانەی فۆنتی Type 3 بەکاردەهێنن وەک وێنە چاپ دەکرێن، چونکە لەوانەیە Windows لە کاتی چاپکردنیاندا PlutarchPages دابخات. پەڕەکانی تر وەک ئاسایی چاپ دەکرێن.
