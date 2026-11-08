@@ -1,0 +1,52 @@
+# PlutarchPages' es rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	Te damos la bienvenida a PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Los archivos que abras en PlutarchPages aparecerán aquí. Suelta un PDF en cualquier parte para abrirlo.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages funciona sin conexión. Sin telemetría, sin cuenta y sin procesamiento en la nube, salvo que añadas un proveedor.
+	PlutarchPages on GitHub	PlutarchPages en GitHub
+	About PlutarchPages	Acerca de PlutarchPages
+	Checking for a newer version…	Buscando una versión más reciente…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} está actualizado.
+	Couldn't check for updates: {e}	No se pudieron buscar actualizaciones: {e}
+	You have version {c}. All releases are listed at {page}.	Tienes la versión {c}. Todas las versiones aparecen en {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	La clave está en el Llavero de macOS, que puede pedirte permiso para que PlutarchPages la use.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	La clave está en el almacén de certificados de Windows, que puede pedirte permiso para que PlutarchPages la use.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	El reconocimiento de texto no está instalado: faltan sus archivos de modelo. Reinstala PlutarchPages o define PDFCRAFT_MODELS con la carpeta que los contiene.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages no se cerró correctamente. Estos documentos tenían cambios que se guardaron automáticamente:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	El formulario pide enviarse a {u}; PlutarchPages no envía datos de formulario. Guarda el documento para conservar lo que has introducido.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} envía el formulario a {url}; PlutarchPages no envía datos de formulario. Guarda el documento para conservar lo que has introducido.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages está dibujando sin procesador gráfico, así que puede ir lento. Actualizar el controlador gráfico puede ayudar.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Este es un formulario XFA dinámico, que PlutarchPages aún no puede mostrar. Lo que ves es la página de marcador de posición del archivo.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	los modelos de reconocimiento de texto no están instalados (reinstala PlutarchPages o define PDFCRAFT_MODELS con la carpeta que los contiene)
+	Reopen the files that were open when PlutarchPages last closed	Volver a abrir los archivos que estaban abiertos al cerrar PlutarchPages por última vez
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} de este documento intentó abrir una dirección que PlutarchPages no abre: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} de este documento intentó abrir una dirección que PlutarchPages no abre: {e}. Desde los documentos solo se abren enlaces web (http, https) y de correo (mailto).
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	La fuente de este campo no puede mostrar «{c}» ({code}), así que PlutarchPages muestra ? en su lugar. El valor se guarda y los demás visores de PDF vuelven a dibujar el campo a partir de él.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Las fuentes con las que escribe PlutarchPages no pueden mostrar «{c}» ({code}), así que aparece como ? en todos los visores de PDF. El texto se guarda.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages todavía no puede comprobar esta firma: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	El certificado del firmante tiene extensiones críticas que PlutarchPages no reconoce ({}).
+	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.	El certificado de {} tiene extensiones críticas que PlutarchPages no reconoce, así que no se usa para avalar a {}.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Firma en una hoja de papel blanco y hazle una foto con luz intensa y uniforme (usa el flash). Elige la foto o suéltala aquí: PlutarchPages encuentra la firma y elimina el papel.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Quite esta etiqueta hoja del orden de lectura y marque su contenido directo como artefacto
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Las páginas que usan fuentes Type 3 se imprimen como imágenes, porque Windows puede cerrar PlutarchPages al imprimirlas. Las demás páginas se imprimen como siempre.
+	Create PDF from web page…	Crear PDF a partir de página web…
+	Read this page aloud	Leer esta página en voz alta
+	Convert colours to grayscale	Convertir colores a escala de grises
+	Report a problem	Informar de un problema
+	Upstream PdfCraft	PdfCraft original
+	Web page	Página web
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	Un fork de PdfCraft del equipo ArtCraft. PlutarchPages no es un producto de ArtCraft.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	Basado en PdfCraft del equipo ArtCraft. Informa de los problemas de PlutarchPages en GitHub.
+	Convert Office files, HTML files and web pages with installed programs	Convertir archivos de Office, archivos HTML y páginas web con programas instalados
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	Convertido a escala de grises: {ops} colores, {images} imágenes, {forms} formularios; {left} sin cambios
+	Create PDF from web page	Crear PDF a partir de página web
+	Discard external cross-references	Descartar referencias cruzadas externas
+	Discard form submission, import and reset actions	Descartar acciones de envío, importación y restablecimiento de formularios
+	External converters	Convertidores externos
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	Los convertidores externos están desactivados. Actívalos en Preferencias para usar tu Chrome o Edge instalado.
+	PlutarchPages is a fork of PdfCraft	PlutarchPages es un fork de PdfCraft
+	Remove PDF/A and PDF/X identification	Quitar la identificación PDF/A y PDF/X
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Usa LibreOffice (26.2.5 o posterior) para archivos de Office y Chrome o Edge para HTML y páginas web, cada uno con un perfil privado nuevo. El HTML local se abre sin scripts ni red. PlutarchPages no aísla estos programas: convierte solo archivos de confianza.
+	Web address (http or https)	Dirección web (http o https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	La página se abre en una ventana privada nueva de tu Chrome o Edge instalado y se imprime como PDF. Abre solo páginas de confianza: una página pública aún puede redirigir a direcciones de tu propia red o cargarlas.

@@ -1,0 +1,47 @@
+# PlutarchPages' zh-hans rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Checking for a newer version…	正在检查新版本…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} 已是最新。
+	Couldn't check for updates: {e}	无法检查更新：{e}
+	You have version {c}. All releases are listed at {page}.	当前版本为 {c}。所有版本列在 {page}。
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	密钥位于 macOS 钥匙串中，系统可能会询问是否允许 PlutarchPages 使用它。
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	密钥位于 Windows 证书存储中，系统可能会询问是否允许 PlutarchPages 使用它。
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	未安装文本识别：缺少模型文件。请重新安装 PlutarchPages，或将 PDFCRAFT_MODELS 设置为包含这些文件的文件夹。
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages 未正常关闭。以下文档的更改已自动保存：
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	该表单请求提交到{u}；PlutarchPages 不发送表单数据。请保存文档以保留填写内容。
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} 将表单提交到{url}；PlutarchPages 不发送表单数据。请保存文档以保留填写内容。
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages 正在不使用图形处理器的情况下绘制，因此可能较慢。更新显卡驱动程序可能会有帮助。
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	这是动态 XFA 表单，PlutarchPages 暂无法显示。您看到的是文件的占位页面。
+	Welcome to PlutarchPages	欢迎使用 PlutarchPages
+	PlutarchPages on GitHub	GitHub 上的 PlutarchPages
+	About PlutarchPages	关于 PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	在 PlutarchPages 中打开的文件会显示在这里。将 PDF 拖放到任意位置即可打开。
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages 可离线工作。无遥测、无账号，除非您自行添加服务商，否则无云端处理。
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	尚未安装文本识别模型（请重新安装 PlutarchPages，或将 PDFCRAFT_MODELS 设置为包含这些模型的文件夹）
+	Reopen the files that were open when PlutarchPages last closed	重新打开上次关闭 PlutarchPages 时打开的文件
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	此字段的字体无法显示“{c}”（{code}），PlutarchPages 会在该处显示 ?。值已保存，其他 PDF 阅读器会根据该值重新绘制此字段。
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	PlutarchPages 写入时使用的字体无法显示“{c}”（{code}），因此它在所有 PDF 阅读器中都会显示为 ?。文本已保存。
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	在白纸上签名，并在明亮、均匀的光线下拍照（使用闪光灯）。选择照片或将其拖放到此处：PlutarchPages 会找到签名并去除纸张背景。
+	Remove this leaf tag from reading order and mark its direct content as an artifact	从阅读顺序中移除此叶标签，并将其直接内容标记为工件
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	使用 Type 3 字体的页面将作为图像打印，因为打印这些页面时 Windows 可能会关闭 PlutarchPages。其他页面照常打印。
+	Create PDF from web page…	从网页创建 PDF…
+	Read this page aloud	朗读此页
+	Convert colours to grayscale	将颜色转换为灰度
+	Report a problem	报告问题
+	Upstream PdfCraft	上游 PdfCraft
+	Web page	网页
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	ArtCraft 团队的 PdfCraft 的分支。PlutarchPages 不是 ArtCraft 产品。
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	基于 ArtCraft 团队的 PdfCraft。请在 GitHub 上报告 PlutarchPages 的问题。
+	Convert Office files, HTML files and web pages with installed programs	使用已安装的程序转换 Office 文件、HTML 文件和网页
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	已转换为灰度：{ops} 种颜色、{images} 张图像、{forms} 个表单；{left} 项保持不变
+	Create PDF from web page	从网页创建 PDF
+	Discard external cross-references	丢弃外部交叉引用
+	Discard form submission, import and reset actions	丢弃表单的提交、导入和重置操作
+	External converters	外部转换器
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	外部转换器已关闭。请在首选项中打开，以使用已安装的 Chrome 或 Edge。
+	PlutarchPages is a fork of PdfCraft	PlutarchPages 是 PdfCraft 的分支
+	Remove PDF/A and PDF/X identification	移除 PDF/A 和 PDF/X 标识
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Office 文件使用 LibreOffice（26.2.5 或更高版本），HTML 和网页使用 Chrome 或 Edge，每次都在全新的私有配置文件中运行。本地 HTML 在关闭脚本和网络的情况下打开。PlutarchPages 不会对这些程序进行沙盒隔离：请只转换您信任的文件。
+	Web address (http or https)	网址（http 或 https）
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	页面会在已安装的 Chrome 或 Edge 的全新私有窗口中打开并打印为 PDF。请只打开您信任的页面：公共页面仍可能重定向到或加载您自己网络上的地址。

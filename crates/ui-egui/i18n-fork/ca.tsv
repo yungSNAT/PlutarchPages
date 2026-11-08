@@ -1,0 +1,28 @@
+# PlutarchPages' ca rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	Et donem la benvinguda a PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Els fitxers que obris a PlutarchPages apareixen aquí. Deixa anar un PDF en qualsevol lloc per obrir-lo.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages funciona sense connexió. Sense telemetria, sense compte i sense processament al núvol tret que afegeixis un proveïdor.
+	PlutarchPages on GitHub	PlutarchPages a GitHub
+	About PlutarchPages	Quant a PlutarchPages
+	PlutarchPages {c} is up to date.	PlutarchPages {c} està actualitzat.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	La clau és al clauer de macOS, que pot demanar permís perquè PlutarchPages la utilitzi.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	La clau és al magatzem de certificats de Windows, que pot demanar permís perquè PlutarchPages la utilitzi.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	El reconeixement de text no està instal·lat: falten els seus fitxers de model. Reinstal·la PlutarchPages o defineix PDFCRAFT_MODELS amb la carpeta que els conté.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages no s'ha tancat amb normalitat. Aquests documents tenien canvis desats automàticament:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	El formulari demana que s'enviï a {u}; PlutarchPages no envia dades de formularis. Desa el document per conservar les dades introduïdes.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} envia el formulari a {url}; PlutarchPages no envia dades de formularis. Desa el document per conservar les dades introduïdes.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages dibuixa sense processador gràfic, de manera que pot anar lent. Pot ajudar actualitzar el controlador gràfic.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Aquest és un formulari XFA dinàmic, que PlutarchPages encara no pot mostrar. El que veus és la pàgina de substitució del fitxer.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	els models de reconeixement de text no estan instal·lats (reinstal·la PlutarchPages o defineix PDFCRAFT_MODELS amb la carpeta que els conté)
+	Reopen the files that were open when PlutarchPages last closed	Reobre els fitxers que eren oberts l'última vegada que es va tancar PlutarchPages
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} d'aquest document ha intentat obrir una adreça que PlutarchPages no obre: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} d'aquest document ha intentat obrir una adreça que PlutarchPages no obre: {e}. Als documents només s'hi poden obrir enllaços web (http, https) i de correu electrònic (mailto).
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	El tipus de lletra d'aquest camp no pot dibuixar “{c}” ({code}), de manera que PlutarchPages hi mostra un ?. El valor es desa i altres visors de PDF tornen a dibuixar el camp a partir d'ell.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Els tipus de lletra amb què escriu PlutarchPages no poden dibuixar “{c}” ({code}), de manera que es mostra com a ? a tots els visors de PDF. El text es desa.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages encara no pot comprovar aquesta signatura: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	El certificat del signant té extensions crítiques que PlutarchPages no reconeix ({}).
+	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Signa un full de paper blanc i fes-ne una foto amb llum intensa i uniforme (utilitza el flaix). Tria la foto o deixa-la anar aquí: PlutarchPages troba la signatura i elimina el paper.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Les pàgines que fan servir tipus de lletra Type 3 s'imprimeixen com a imatges, perquè Windows pot tancar PlutarchPages mentre les imprimeix. Les altres pàgines s'imprimeixen com sempre.

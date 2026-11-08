@@ -1,0 +1,25 @@
+# PlutarchPages' lo rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	ຍິນດີຕ້ອນຮັບສູ່ PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	ໄຟລ໌ທີ່ທ່ານເປີດໃນ PlutarchPages ຈະສະແດງຢູ່ນີ້. ລາກໄຟລ໌ PDF ມາວາງບ່ອນໃດກໍໄດ້ເພື່ອເປີດ.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages ເຮັດວຽກແບບອອບລາຍ. ບໍ່ມີການສົ່ງຂໍ້ມູນການໃຊ້ງານ, ບໍ່ຕ້ອງມີບັນຊີ ແລະ ບໍ່ມີການປະມວນຜົນເທິງຄລາວ ເວັ້ນເສຍແຕ່ທ່ານຈະເພີ່ມຜູ້ໃຫ້ບໍລິການ.
+	PlutarchPages on GitHub	PlutarchPages ເທິງ GitHub
+	About PlutarchPages	ກ່ຽວກັບ PlutarchPages
+	PlutarchPages {c} is up to date.	PlutarchPages {c} ເປັນເວີຊັນລ່າສຸດແລ້ວ.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	ກະແຈຢູ່ໃນ macOS Keychain, ເຊິ່ງອາດຈະຖາມເພື່ອອະນຸຍາດໃຫ້ PlutarchPages ໃຊ້ງານ.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	ກະແຈຢູ່ໃນ Windows Certificate Store, ເຊິ່ງອາດຈະຖາມເພື່ອອະນຸຍາດໃຫ້ PlutarchPages ໃຊ້ງານ.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	ການຮັບຮູ້ຂໍ້ຄວາມຍັງບໍ່ໄດ້ຮັບການຕິດຕັ້ງ: ໄຟລ໌ໂມເດວສູນຫາຍ. ກະລຸນາຕິດຕັ້ງ PlutarchPages ຄືນໃໝ່ ຫຼື ຕັ້ງຄ່າ PDFCRAFT_MODELS ໄປຫາໂຟນເດີທີ່ບັນຈຸໄຟລ໌ດັ່ງກ່າວ.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages ບໍ່ໄດ້ປິດລົງຢ່າງປົກກະຕິ. ເອກະສານເຫຼົ່ານີ້ມີການປ່ຽນແປງທີ່ຖືກບັນທຶກອັດຕະໂນມັດໄວ້:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	ຟອມຮ້ອງຂໍໃຫ້ສົ່ງໄປທີ່ {u}; PlutarchPages ບໍ່ໄດ້ສົ່ງຂໍ້ມູນຟອມ. ກະລຸນາບັນທຶກເອກະສານເພື່ອຮັກສາສິ່ງທີ່ທ່ານປ້ອນໄວ້.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} ສົ່ງຟອມໄປທີ່ {url}; PlutarchPages ບໍ່ໄດ້ສົ່ງຂໍ້ມູນຟອມ. ກະລຸນາບັນທຶກເອກະສານເພື່ອຮັກສາສິ່ງທີ່ທ່ານປ້ອນໄວ້.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages ກຳລັງແຕ້ມສະແດງຜົນໂດຍບໍ່ໃຊ້ໜ່ວຍປະມວນຜົນກຣາບຟິກ, ເຊິ່ງອາດເຮັດໃຫ້ຊ້າ. ການອັບເດດໄດຣເວີກຣາບຟິກອາດຊ່ວຍໄດ້.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	ນີ້ແມ່ນຟອມ XFA ແບບໄດນາມິກ ເຊິ່ງ PlutarchPages ຍັງບໍ່ສາມາດສະແດງຜົນໄດ້. ສິ່ງທີ່ທ່ານເຫັນແມ່ນໜ້າຕົວແທນຊົ່ວຄາວຂອງໄຟລ໌.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	ໂມເດວການຮັບຮູ້ຂໍ້ຄວາມຍັງບໍ່ໄດ້ຕິດຕັ້ງ (ຕິດຕັ້ງ PlutarchPages ຄືນໃໝ່, ຫຼື ຕັ້ງຄ່າ PDFCRAFT_MODELS ໄປຫາໂຟນເດີທີ່ບັນຈຸໂມເດວ)
+	Reopen the files that were open when PlutarchPages last closed	ເປີດໄຟລ໌ທີ່ເຄີຍເປີດຢູ່ຕອນປິດ PlutarchPages ຄັ້ງຫຼ້າສຸດຄືນໃໝ່
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	ຟອນຂອງຊ່ອງນີ້ບໍ່ສາມາດສະແດງ “{c}” ({code}) ໄດ້, ດັ່ງນັ້ນ PlutarchPages ຈຶ່ງສະແດງ ? ແທນ. ຄ່ານີ້ຖືກບັນທຶກໄວ້ ແລະ ໂປຣແກຣມອ່ານ PDF ອື່ນໆຈະແຕ້ມສະແດງຜົນຊ່ອງຂໍ້ມູນຄືນໃໝ່ຈາກຄ່ານັ້ນ.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	ຟອນທີ່ PlutarchPages ໃຊ້ຂຽນບໍ່ສາມາດສະແດງ “{c}” ({code}) ໄດ້, ດັ່ງນັ້ນມັນຈຶ່ງສະແດງເປັນ ? ໃນທຸກໂປຣແກຣມອ່ານ PDF. ຂໍ້ຄວາມຖືກບັນທຶກໄວ້ແລ້ວ.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} ໃນເອກະສານນີ້ພະຍາຍາມເປີດທີ່ຢູ່ທີ່ PlutarchPages ບໍ່ສາມາດເປີດໄດ້: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} ໃນເອກະສານນີ້ພະຍາຍາມເປີດທີ່ຢູ່ທີ່ PlutarchPages ບໍ່ສາມາດເປີດໄດ້: {e}. ສະເພາະລິ້ງເວັບ (http, https) ແລະ ອີເມວ (mailto) ເທົ່ານັ້ນທີ່ສາມາດເປີດຈາກເອກະສານໄດ້.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	ເຊັນລົງໃນເຈ້ຍສີຂາວ ແລະ ຖ່າຍຮູບໃນບ່ອນທີ່ມີແສງສະຫວ່າງພຽງພໍ ແລະ ສະໝ່ຳສະເໝີ (ໃຊ້ແຟລຊ). ເລືອກຮູບ ຫຼື ລາກມາວາງຢູ່ນີ້: PlutarchPages ຈະກວດຫາລາຍເຊັນ ແລະ ລຶບພື້ນເຈ້ຍອອກ.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	ໜ້າທີ່ໃຊ້ຟອນ Type 3 ຈະພິມເປັນຮູບພາບ ເພາະ Windows ອາດປິດ PlutarchPages ໃນຂະນະທີ່ພິມໜ້າເຫຼົ່ານັ້ນ. ໜ້າອື່ນໆຈະພິມຕາມປົກກະຕິ.

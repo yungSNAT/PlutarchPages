@@ -1,0 +1,27 @@
+# PlutarchPages' nb rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	About PlutarchPages	Om PlutarchPages
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	Filer du åpner i PlutarchPages vises her. Slipp en PDF hvor som helst for å åpne den.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages ble ikke avsluttet normalt. Disse dokumentene hadde endringer som ble autolagret:
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages fungerer uten nett. Ingen telemetri, ingen konto og ingen skybehandling med mindre du legger til en leverandør.
+	PlutarchPages {c} is up to date.	PlutarchPages {c} er oppdatert.
+	Reopen the files that were open when PlutarchPages last closed	Åpne filene som var åpne da PlutarchPages sist ble lukket
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Tekstgjenkjenning er ikke installert: modellfilene mangler. Installer PlutarchPages på nytt, eller sett PDFCRAFT_MODELS til mappen som inneholder dem.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	Skriftene PlutarchPages skriver med kan ikke tegne «{c}» ({code}), så det vises som ? i alle PDF-visere. Teksten blir lagret.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Nøkkelen ligger i sertifikatlageret i Windows, som kan be om å tillate at PlutarchPages bruker den.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Nøkkelen ligger i nøkkelringen i macOS, som kan be om å tillate at PlutarchPages bruker den.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Dette er et dynamisk XFA-skjema, som PlutarchPages ikke kan vise ennå. Det du ser er filens plassholderside.
+	Welcome to PlutarchPages	Velkommen til PlutarchPages
+	PlutarchPages on GitHub	PlutarchPages på GitHub
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages kan ikke kontrollere denne signaturen ennå: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	Undertegnerens sertifikat har kritiske utvidelser som PlutarchPages ikke kjenner igjen ({}).
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages tegner uten grafikkprosessor, så det kan gå tregt. Det kan hjelpe å oppdatere grafikkdriveren.
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Skjemaet ber om å bli sendt til {u}; PlutarchPages sender ikke skjemadata. Lagre dokumentet for å beholde det du har fylt inn.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	modellene for tekstgjenkjenning er ikke installert (installer PlutarchPages på nytt, eller sett PDFCRAFT_MODELS til mappen som inneholder dem)
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} sender skjemaet til {url}; PlutarchPages sender ikke skjemadata. Lagre dokumentet for å beholde det du har fylt inn.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} i dette dokumentet prøvde å åpne en adresse PlutarchPages ikke åpner: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} i dette dokumentet prøvde å åpne en adresse PlutarchPages ikke åpner: {e}. Bare nettlenker (http, https) og e-postlenker (mailto) åpnes fra dokumenter.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Signer på et hvitt ark og ta et bilde av det i sterkt, jevnt lys (bruk blitsen). Velg bildet eller slipp det her: PlutarchPages finner signaturen og fjerner papiret.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Skriften i dette feltet kan ikke tegne “{c}” ({code}), så PlutarchPages viser ? i stedet. Verdien lagres, og andre PDF-lesere tegner feltet på nytt ut fra den.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Sider som bruker Type 3-skrifter, skrives ut som bilder, fordi Windows kan lukke PlutarchPages mens de skrives ut. De andre sidene skrives ut som vanlig.

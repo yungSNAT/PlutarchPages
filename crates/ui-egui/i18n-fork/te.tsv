@@ -1,0 +1,44 @@
+# PlutarchPages' te rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	PlutarchPagesకు స్వాగతం
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	PlutarchPagesలో మీరు తెరిచే ఫైల్‌లు ఇక్కడ కనిపిస్తాయి. PDFను తెరవడానికి దాన్ని ఎక్కడైనా లాగి వదలండి.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages ఆఫ్‌లైన్‌లో పనిచేస్తుంది. టెలిమెట్రీ లేదు, ఖాతా అవసరం లేదు, మీరు ప్రొవైడర్‌ను జోడిస్తే తప్ప క్లౌడ్ ప్రాసెసింగ్ ఉండదు.
+	PlutarchPages on GitHub	GitHubలో PlutarchPages
+	About PlutarchPages	PlutarchPages గురించి
+	Checking for a newer version…	కొత్త వెర్షన్ కోసం తనిఖీ చేస్తోంది…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} తాజా వెర్షన్.
+	Couldn't check for updates: {e}	అప్‌డేట్‌ల కోసం తనిఖీ చేయడం సాధ్యం కాలేదు: {e}
+	You have version {c}. All releases are listed at {page}.	మీ వద్ద వెర్షన్ {c} ఉంది. అన్ని విడుదలల జాబితా: {page}.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	కీ macOS Keychainలో ఉంది; దాన్ని ఉపయోగించడానికి PlutarchPagesను అనుమతించమని Keychain అడగవచ్చు.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	టెక్స్ట్ గుర్తింపు ఇన్‌స్టాల్ కాలేదు: దాని మోడల్ ఫైల్‌లు లేవు. PlutarchPagesను మళ్లీ ఇన్‌స్టాల్ చేయండి, లేదా వాటిని కలిగి ఉన్న ఫోల్డర్‌కు PDFCRAFT_MODELSను సెట్ చేయండి.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages సక్రమంగా మూసివేయబడలేదు. ఈ పత్రాలలో ఆటోసేవ్ అయిన మార్పులు ఉన్నాయి:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	ఈ ఫారం {u}కు సమర్పించమని అడుగుతోంది; PlutarchPages ఫారం డేటాను పంపదు. మీరు నింపిన వివరాలను ఉంచుకోవడానికి పత్రాన్ని సేవ్ చేయండి.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} ఫారాన్ని {url}కు సమర్పిస్తుంది; PlutarchPages ఫారం డేటాను పంపదు. మీరు నింపిన వివరాలను ఉంచుకోవడానికి పత్రాన్ని సేవ్ చేయండి.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	ఇది డైనమిక్ XFA ఫారం, దీన్ని ప్రదర్శించడానికి PlutarchPagesలో ఇంకా మద్దతు లేదు. మీరు చూస్తున్నది ఫైల్‌లోని ప్లేస్‌హోల్డర్ పేజీ.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	టెక్స్ట్ గుర్తింపు మోడల్‌లు ఇన్‌స్టాల్ చేయబడలేదు (PlutarchPagesను మళ్లీ ఇన్‌స్టాల్ చేయండి, లేదా వాటిని కలిగి ఉన్న ఫోల్డర్‌కు PDFCRAFT_MODELSను సెట్ చేయండి)
+	Reopen the files that were open when PlutarchPages last closed	PlutarchPagesను చివరిసారి మూసివేసినప్పుడు తెరిచి ఉన్న ఫైల్‌లను మళ్లీ తెరువు
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	కీ Windows సర్టిఫికెట్ స్టోర్‌లో ఉంది; దాన్ని ఉపయోగించడానికి PlutarchPagesను అనుమతించమని Windows అడగవచ్చు.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	తెల్ల కాగితంపై సంతకం చేసి, ప్రకాశవంతమైన, సమానమైన వెలుతురులో దాని ఫోటో తీయండి (ఫ్లాష్ ఉపయోగించండి). ఫోటోను ఎంచుకోండి లేదా ఇక్కడ వదలండి: PlutarchPages సంతకాన్ని కనుగొని కాగితాన్ని తొలగిస్తుంది.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	ఈ లీఫ్ ట్యాగ్‌ను పఠన క్రమం నుంచి తీసివేసి, దాని ప్రత్యక్ష కంటెంట్‌ను ఆర్టిఫాక్ట్‌గా గుర్తించండి
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Type 3 ఫాంట్‌లను ఉపయోగించే పేజీలు చిత్రాలుగా ముద్రించబడతాయి, ఎందుకంటే వాటిని ముద్రించేటప్పుడు Windows PlutarchPages ను మూసివేయవచ్చు. ఇతర పేజీలు ఎప్పటిలాగే ముద్రించబడతాయి.
+	Create PDF from web page…	వెబ్ పేజీ నుండి PDF సృష్టించు…
+	Read this page aloud	ఈ పేజీని బిగ్గరగా చదువు
+	Convert colours to grayscale	రంగులను గ్రేస్కేల్‌గా మార్చు
+	Report a problem	సమస్యను నివేదించు
+	Upstream PdfCraft	మూల PdfCraft
+	Web page	వెబ్ పేజీ
+	A fork of PdfCraft by the ArtCraft team. PlutarchPages is not an ArtCraft product.	ArtCraft బృందపు PdfCraft యొక్క ఫోర్క్. PlutarchPages ArtCraft ఉత్పత్తి కాదు.
+	Based on PdfCraft by the ArtCraft team. Report problems with PlutarchPages on GitHub.	ArtCraft బృందపు PdfCraft ఆధారంగా రూపొందింది. PlutarchPages సమస్యలను GitHub లో నివేదించండి.
+	Convert Office files, HTML files and web pages with installed programs	ఇన్‌స్టాల్ చేసిన ప్రోగ్రామ్‌లతో Office ఫైళ్లు, HTML ఫైళ్లు, వెబ్ పేజీలను మార్చు
+	Converted to grayscale: {ops} colours, {images} images, {forms} forms; {left} left as they were	గ్రేస్కేల్‌కు మార్చబడింది: {ops} రంగులు, {images} చిత్రాలు, {forms} ఫారమ్‌లు; {left} ఉన్నట్లే వదిలివేయబడ్డాయి
+	Create PDF from web page	వెబ్ పేజీ నుండి PDF సృష్టించు
+	Discard external cross-references	బాహ్య క్రాస్-రిఫరెన్స్‌లను తొలగించు
+	Discard form submission, import and reset actions	ఫారమ్ పంపడం, దిగుమతి, రీసెట్ చర్యలను తొలగించు
+	External converters	బాహ్య కన్వర్టర్‌లు
+	External converters are off. Turn them on in Preferences to use your installed Chrome or Edge.	బాహ్య కన్వర్టర్‌లు ఆఫ్‌లో ఉన్నాయి. ఇన్‌స్టాల్ చేసిన Chrome లేదా Edge ఉపయోగించడానికి వాటిని ప్రాధాన్యతలలో ఆన్ చేయండి.
+	PlutarchPages is a fork of PdfCraft	PlutarchPages అనేది PdfCraft యొక్క ఫోర్క్
+	Remove PDF/A and PDF/X identification	PDF/A మరియు PDF/X గుర్తింపును తీసివేయి
+	Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust.	Office ఫైళ్లకు LibreOffice (26.2.5 లేదా కొత్తది), HTML మరియు వెబ్ పేజీలకు Chrome లేదా Edge ఉపయోగిస్తుంది, ప్రతిసారీ కొత్త ప్రైవేట్ ప్రొఫైల్‌తో. స్థానిక HTML స్క్రిప్ట్‌లు, నెట్‌వర్క్ లేకుండా తెరుచుకుంటుంది. PlutarchPages ఈ ప్రోగ్రామ్‌లను శాండ్‌బాక్స్ చేయదు: మీరు నమ్మే ఫైళ్లను మాత్రమే మార్చండి.
+	Web address (http or https)	వెబ్ చిరునామా (http లేదా https)
+	The page opens in a fresh, private window of your installed Chrome or Edge and is printed to PDF. Open only pages you trust: a public page can still redirect to or load addresses on your own network.	పేజీ ఇన్‌స్టాల్ చేసిన Chrome లేదా Edge యొక్క కొత్త ప్రైవేట్ విండోలో తెరుచుకుని PDF గా ముద్రించబడుతుంది. మీరు నమ్మే పేజీలను మాత్రమే తెరవండి: పబ్లిక్ పేజీ కూడా మీ స్వంత నెట్‌వర్క్‌లోని చిరునామాలకు దారి మళ్లించవచ్చు లేదా వాటిని లోడ్ చేయవచ్చు.

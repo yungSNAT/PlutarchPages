@@ -9,7 +9,7 @@
 use pdfcraft_cos::{Dict, Document, Object, PdfString};
 use pdfcraft_fonts::{helvetica_width, literal, win_ansi, win_ansi_encodable};
 
-use crate::{CreateError, add_page, set_title};
+use crate::{CreateError, Pages, set_title};
 
 /// More pages than this is refused rather than written.
 pub(crate) const MAX_PAGES: usize = 10_000;
@@ -522,6 +522,7 @@ impl Writer {
         }
         let mut resources = Dict::new();
         resources.set(b"Font".to_vec(), Object::Dict(fonts));
+        let mut tree = Pages::of(&doc)?;
         for sheet in self.done {
             let mut annots = Vec::new();
             for (r, url) in sheet.links {
@@ -536,12 +537,13 @@ impl Writer {
                 a.set(b"A".to_vec(), Object::Dict(action));
                 annots.push(Object::Ref(doc.add(a)));
             }
-            let page = add_page(&mut doc, self.page.width, self.page.height, resources.clone(), Some(sheet.content))?;
+            let page = tree.add(&mut doc, self.page.width, self.page.height, resources.clone(), Some(sheet.content));
             if !annots.is_empty() {
                 doc.update_dict(page, |d| d.set(b"Annots".to_vec(), Object::Array(annots)))
                     .map_err(|e| CreateError::Invalid(format!("couldn't add the links: {e}")))?;
             }
         }
+        tree.finish(&mut doc)?;
         set_title(&mut doc, title);
         Ok((doc, self.replaced))
     }

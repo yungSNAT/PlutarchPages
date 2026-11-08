@@ -1,0 +1,28 @@
+# PlutarchPages' fi rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	Tervetuloa PlutarchPagesiin
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	PlutarchPagesissa avatut tiedostot näkyvät tässä. Avaa PDF pudottamalla se mihin tahansa.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages toimii ilman verkkoyhteyttä. Ei telemetriaa, ei tiliä eikä pilvikäsittelyä, ellei palveluntarjoajaa lisätä.
+	PlutarchPages on GitHub	PlutarchPages GitHubissa
+	About PlutarchPages	Tietoja PlutarchPagesista
+	PlutarchPages {c} is up to date.	PlutarchPages {c} on ajan tasalla.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Avain on macOS-avainnipussa, joka voi pyytää lupaa PlutarchPagesin käytölle.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Avain on Windowsin varmennesäilössä, joka voi pyytää lupaa PlutarchPagesin käytölle.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Tekstintunnistusta ei ole asennettu: sen mallitiedostot puuttuvat. Asenna PlutarchPages uudelleen tai aseta PDFCRAFT_MODELS osoittamaan kansioon, jossa ne ovat.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages ei sulkeutunut normaalisti. Näiden asiakirjojen muutokset tallennettiin automaattisesti:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Lomake pyytää lähettämään tiedot osoitteeseen {u}; PlutarchPages ei lähetä lomaketietoja. Tallenna asiakirja, jotta syötetyt tiedot säilyvät.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} lähettää lomakkeen osoitteeseen {url}; PlutarchPages ei lähetä lomaketietoja. Tallenna asiakirja, jotta syötetyt tiedot säilyvät.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Tämä on dynaaminen XFA-lomake, jota PlutarchPages ei vielä osaa näyttää. Näet tiedoston paikkamerkkisivun.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	tekstintunnistusmalleja ei ole asennettu (asenna PlutarchPages uudelleen tai aseta PDFCRAFT_MODELS osoittamaan mallien kansioon)
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages piirtää ilman grafiikkasuoritinta, joten se voi olla hidas. Näytönohjaimen ajurin päivittäminen voi auttaa.
+	Reopen the files that were open when PlutarchPages last closed	Avaa uudelleen tiedostot, jotka olivat auki, kun PlutarchPages viimeksi suljettiin
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	Tämän asiakirjan {who} yritti avata osoitteen, jota PlutarchPages ei avaa: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	Tämän asiakirjan {who} yritti avata osoitteen, jota PlutarchPages ei avaa: {e}. Asiakirjoista avautuvat vain verkkolinkit (http, https) ja sähköpostilinkit (mailto).
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Tämän kentän fontti ei pysty piirtämään merkkiä ”{c}” ({code}), joten PlutarchPages näyttää sen tilalla merkin ?. Arvo tallennetaan, ja muut PDF-katseluohjelmat piirtävät kentän sen perusteella uudelleen.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	PlutarchPagesin käyttämät fontit eivät pysty piirtämään merkkiä ”{c}” ({code}), joten se näkyy merkkinä ? kaikissa PDF-katseluohjelmissa. Teksti tallennetaan.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Allekirjoita valkoinen paperiarkki ja ota siitä valokuva kirkkaassa, tasaisessa valossa (käytä salamaa). Valitse kuva tai pudota se tähän: PlutarchPages löytää allekirjoituksen ja poistaa paperin.
+	PlutarchPages can't check this signature yet: {}.	PlutarchPages ei vielä pysty tarkistamaan tätä allekirjoitusta: {}.
+	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	Allekirjoittajan varmenteessa on kriittisiä laajennuksia, joita PlutarchPages ei tunnista ({}).
+	The certificate of {} has critical extensions PlutarchPages does not recognize, so it is not used to vouch for {}.	Kohteen {} varmenteessa on kriittisiä laajennuksia, joita PlutarchPages ei tunnista, joten sitä ei käytetä kohteen {} vahvistamiseen.
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Type 3 -fontteja käyttävät sivut tulostetaan kuvina, koska Windows voi sulkea PlutarchPagesin niitä tulostettaessa. Muut sivut tulostetaan tavalliseen tapaan.

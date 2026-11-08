@@ -1,0 +1,29 @@
+# PlutarchPages' tr rows that craft-i18n doesn't have (yet), in its catalog format. build.rs
+# embeds them before craft-i18n's pdfcraft.tsv (build_i18n_fork.rs). Once craft-i18n has a row,
+# the_fork_overlay_is_embedded_and_served fails on it as defined twice: delete it here then.
+	Welcome to PlutarchPages	PlutarchPages'a Hoş Geldiniz
+	Files you open in PlutarchPages appear here. Drop a PDF anywhere to open it.	PlutarchPages'ta açtığınız dosyalar burada görünür. Açmak için bir PDF'i herhangi bir yere bırakın.
+	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages çevrimdışı çalışır. Bir sağlayıcı eklemediğiniz sürece telemetri yok, hesap yok ve bulut işleme yok.
+	PlutarchPages on GitHub	GitHub'da PlutarchPages
+	About PlutarchPages	PlutarchPages hakkında
+	Checking for a newer version…	Daha yeni bir sürüm denetleniyor…
+	PlutarchPages {c} is up to date.	PlutarchPages {c} güncel.
+	Couldn't check for updates: {e}	Güncellemeler denetlenemedi: {e}
+	You have version {c}. All releases are listed at {page}.	{c} sürümüne sahipsiniz. Tüm sürümler {page} adresinde listelenmiştir.
+	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	Anahtar macOS Anahtar Zinciri'ndedir ve PlutarchPages'ın kullanmasına izin vermenizi isteyebilir.
+	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	Anahtar Windows sertifika deposundadır ve PlutarchPages'ın kullanmasına izin vermenizi isteyebilir.
+	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	Metin tanıma yüklü değil: model dosyaları eksik. PlutarchPages'ı yeniden yükleyin veya PDFCRAFT_MODELS ortam değişkenini bunları içeren klasöre ayarlayın.
+	PlutarchPages didn't shut down normally. These documents had changes that were autosaved:	PlutarchPages normal şekilde kapanmadı. Bu belgelerde otomatik olarak kaydedilen değişiklikler vardı:
+	The form asks to be submitted to {u}; PlutarchPages doesn't send form data. Save the document to keep your entries.	Form {u} adresine gönderilmek isteniyor; PlutarchPages form verilerini göndermez. Girdilerinizi korumak için belgeyi kaydedin.
+	{name} submits the form to {url}; PlutarchPages doesn't send form data. Save the document to keep your entries.	{name} formu {url} adresine gönderiyor; PlutarchPages form verilerini göndermez. Girdilerinizi korumak için belgeyi kaydedin.
+	PlutarchPages is drawing without a graphics processor, so it may be slow. Updating the graphics driver may help.	PlutarchPages grafik işlemcisi olmadan çizim yapıyor, bu nedenle yavaş olabilir. Grafik sürücüsünü güncellemek yardımcı olabilir.
+	This is a dynamic XFA form, which PlutarchPages can't display yet. What you see is the file's placeholder page.	Bu, PlutarchPages'ın henüz görüntüleyemediği dinamik bir XFA formudur. Gördüğünüz şey dosyanın yer tutucu sayfasıdır.
+	the text recognition models are not installed (reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them)	metin tanıma modelleri yüklü değil (PlutarchPages'ı yeniden yükleyin veya PDFCRAFT_MODELS değişkenini bunları içeren klasöre ayarlayın)
+	Reopen the files that were open when PlutarchPages last closed	PlutarchPages en son kapatıldığında açık olan dosyaları yeniden aç
+	{who} in this document tried to open an address PlutarchPages won't open: {e}.	Bu belgedeki {who}, PlutarchPages'ın açamayacağı bir adresi açmaya çalıştı: {e}.
+	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	Bu belgedeki {who}, PlutarchPages'ın açamayacağı bir adresi açmaya çalıştı: {e}. Belgelerden yalnızca web (http, https) ve e-posta (mailto) bağlantıları açılır.
+	This field's font can't draw “{c}” ({code}), so PlutarchPages shows ? in its place. The value is saved, and other PDF viewers redraw the field from it.	Bu alanın yazı tipi “{c}” ({code}) karakterini çizemiyor, bu yüzden PlutarchPages yerine ? gösteriyor. Değer kaydedilir ve diğer PDF görüntüleyiciler alanı ondan yeniden çizer.
+	The fonts PlutarchPages writes with can't draw “{c}” ({code}), so it shows as ? in every PDF viewer. The text is saved.	PlutarchPages'ın yazdığı yazı tipleri “{c}” ({code}) karakterini çizemiyor, bu yüzden her PDF görüntüleyicide ? olarak görünür. Metin kaydedilir.
+	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Beyaz bir kâğıda imzanızı atın ve parlak, eşit ışıkta fotoğrafını çekin (flaş kullanın). Fotoğrafı seçin veya buraya bırakın: PlutarchPages imzayı bulur ve kâğıdı kaldırır.
+	Remove this leaf tag from reading order and mark its direct content as an artifact	Bu yaprak etiketini okuma sırasından kaldırın ve doğrudan içeriğini yapıt olarak işaretleyin
+	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Type 3 yazı tipleri kullanan sayfalar resim olarak yazdırılır, çünkü Windows bu sayfaları yazdırırken PlutarchPages'ı kapatabilir. Diğer sayfalar her zamanki gibi yazdırılır.

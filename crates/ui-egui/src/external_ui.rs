@@ -70,23 +70,6 @@ pub(crate) fn web_page_body(ui: &mut egui::Ui, app: &mut PdfCraftApp) -> (bool, 
     (go, cancel)
 }
 
-/// Preferences ▸ External converters.
-pub(crate) fn preferences(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &theme::Tokens) {
-    ui.label(egui::RichText::new(tl!("External converters")).font(theme::semibold(13.0)));
-    egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let mut c = app.session.external_converters().clone();
-        if ui.add(crate::widgets::checkbox(&mut c.enabled, tl!("Convert Office files, HTML files and web pages with installed programs"))).changed() {
-            app.session.set_external_converters(c);
-        }
-        ui.label(
-            egui::RichText::new(tl!("Uses LibreOffice (26.2.5 or later) for Office files and Chrome or Edge for HTML and web pages, each in a fresh private profile. Local HTML opens with scripts and network off. These programs are not sandboxed by PlutarchPages: convert only files you trust."))
-                .small()
-                .color(t.text_muted),
-        );
-    });
-}
-
 impl PdfCraftApp {
     /// Convert an Office or HTML file through the external converters on a background thread;
     /// the result opens in a new tab when it's ready.

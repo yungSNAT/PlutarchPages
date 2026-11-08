@@ -36,6 +36,7 @@ mod history;
 pub mod js;
 mod layers;
 pub mod links;
+pub mod model3d;
 pub mod ocr;
 mod open;
 pub mod optimizer;
@@ -45,6 +46,8 @@ pub mod print_raster;
 mod print_source;
 pub mod printcheck;
 mod protection;
+mod rich_copy;
+pub mod scan_clean;
 mod scan_colours;
 mod scan_fields;
 mod session;
@@ -56,6 +59,7 @@ mod stamp_preview;
 mod test_hooks;
 pub mod text_fonts;
 mod text_preview;
+pub mod text_script;
 pub mod text_style_bookmarks;
 pub mod word_count;
 pub mod xfa;
@@ -66,12 +70,17 @@ use std::sync::Arc;
 pub use links::{
     MAX_REMOTE_DOCUMENT_BYTES, RemoteDocumentPathError, read_remote_document, remote_document_path_is_absolute, resolve_remote_document_path,
 };
+pub use pdfcraft_edit::strip_subset_tag;
+pub use rich_copy::RichCopy;
 pub use signature_image::{ImageSignaturePreview, SignatureImage};
 pub use signature_scan::{PhotoRect, ScanError, SignaturePhoto, Turn};
 pub use stamp_preview::{CommentLayer, StampPreview};
 pub use text_preview::{TextEditPreview, UnmarkedPages};
 
-pub use pdfcraft_organize::{BoxSpec, FieldConflicts, PageBox, SplitBy, Transition, TransitionSpec, mime_for_name, split_ranges};
+pub use pdfcraft_organize::{
+    BoxSpec, FieldConflicts, MAX_IMPORT_BOOKMARKS, OutlineNode, OutlineTree, PageBox, SplitBy, Transition, TransitionSpec, mime_for_name,
+    split_ranges, unmapped as outline_unmapped, view_arity as outline_view_arity,
+};
 
 pub use pdfcraft_organize::LabelStyle;
 pub use pdfcraft_organize::Standard;
@@ -87,7 +96,8 @@ pub use pdfcraft_edit::added::{
 };
 pub use pdfcraft_edit::paragraph_align;
 pub use pdfcraft_edit::{
-    Added, AddedImage, AddedText, Align as TextAlign, Background, Content as AddedContent, Family as FontFamily, HeaderFooter, MarkKind, Watermark,
+    Added, AddedImage, AddedText, Align as TextAlign, Background, Content as AddedContent, Family as FontFamily, HeaderFooter, Ink as TextInk,
+    MarkKind, Watermark,
 };
 #[cfg(not(target_arch = "wasm32"))]
 pub use pdfcraft_external::{MAX_SPEECH, Speech, SpeechBackend};
@@ -111,9 +121,10 @@ pub use pdfcraft_fonts::{MAX_SIGNATURE_CHARS, ScriptOutline, script_missing, scr
 pub use pdfcraft_annot::appearance as annot_text;
 pub use pdfcraft_annot::links::{Highlight as LinkHighlight, LinkAction, LinkItem, LinkStyle};
 pub use pdfcraft_annot::{
-    AppearanceCache, AttachIcon, FillMark, LineEnding, Markup, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont, OverlayLook, Props as CommentProps,
-    ReviewState, Rgb, Shape, StampGroup, StampKind, Style, rect_quad,
+    Activation3d, AppearanceCache, AttachIcon, BorderShape, FillMark, LineEnding, Markup, NOTE_SIZE, NewAnnotation, NoteIcon, OverlayFont,
+    OverlayLook, Props as CommentProps, ReviewState, Rgb, Shape, StampGroup, StampKind, Style, rect_quad,
 };
+pub use pdfcraft_annot::{MAX_MODEL_BYTES as MAX_3D_MODEL_BYTES, ModelFormat as Model3dFormat};
 pub use pdfcraft_forms::detect;
 pub use pdfcraft_optimize as optimize;
 pub use pdfcraft_preflight as pdfa;
@@ -126,6 +137,7 @@ pub use pdfcraft_redact::sanitize::{HIDDEN, Hidden};
 pub use pdfcraft_sign as sign;
 pub use pdfcraft_sign::{SignOptions, SignatureInfo, Status as SignatureStatus, TrustStore};
 pub use pdfcraft_xfdf::Format as DataFormat;
+pub use pdfcraft_xfdf::{Outline as CommentOutline, comment_count, comment_outlines, comments_bounds, is_xfdf_comments};
 
 use bookmarks::outline_rows;
 pub use bookmarks::{BookmarkPage, BookmarkRow};
@@ -142,8 +154,8 @@ pub use history::Label;
 use layers::{apply_layer_state, set_default_layer_state, use_layer_choices};
 pub use open::{OpenContext, PreparedDocument};
 pub use page_filter::{PageOrientation, PageParity, filter_pages};
-pub use pictures::MarkFile;
-use pictures::{embed_image, fit_picture, mark_source};
+pub use pictures::{MarkFile, image_dimensions};
+use pictures::{embed_image, fit_picture, mark_source, model_poster};
 pub use print_source::{PrintSource, Printed};
 use protection::unrestricted;
 pub use protection::{Changes, Printing, Protection, SecuritySummary};
@@ -159,6 +171,8 @@ use xfa_form::{
 
 mod clock;
 mod doc_state;
+
+pub use pdfcraft_edit::ArrangeOrder;
 
 use clock::{local_utc_offset, parse_ymd};
 pub use doc_state::{DocId, ImageEdit, OptimizeReport, RecoverySnapshot, SplitPart, guard, merge_data_files};
