@@ -57,8 +57,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `build.rs` reach it, so keep them when a merge changes `craft_i18n` or `locales`.
   `the_fork_overlay_is_embedded_and_served` fails when an overlay row stops being served or
   craft-i18n gains one: delete that row from the overlay then, and update the file's `sha256` in
-  `ATTRIBUTION.toml`, where each overlay is an `[[asset]]`. Every release build job checks out
-  craft-i18n at that commit.
+  `ATTRIBUTION.toml`, where each overlay is an `[[asset]]`. A build with `CRAFT_I18N_REQUIRED=1`
+  fails when an overlay listed there is missing. Every release build job checks out craft-i18n at
+  that commit.
 - Flatpak manifests don't carry upstream's `--filesystem=xdg-data/ArtCraft/versions:ro` grant, which
   lets an upstream launcher's version choices reach the app.
 - Shared CI: workflows from `storytold/craft-common-actions` are pinned to a commit, and SonarCloud

@@ -36,11 +36,35 @@ pub fn app_catalog(code: &str, app: PathBuf) -> Result<PathBuf, String> {
     Ok(joined)
 }
 
-/// Report overlay locales craft-i18n has no catalog for (`embedded`): their rows would be lost.
-/// An error under `CRAFT_I18N_REQUIRED=1` (`required`), else a warning.
+/// The overlays `ATTRIBUTION.toml` lists, each an `[[asset]]`, as paths from the workspace root.
+fn listed(root: &Path) -> Result<Vec<String>, String> {
+    let file = root.join("ATTRIBUTION.toml");
+    println!("cargo::rerun-if-changed={}", file.display());
+    let table: toml::Table = std::fs::read_to_string(&file)
+        .map_err(|e| e.to_string())
+        .and_then(|t| t.parse::<toml::Table>().map_err(|e| e.to_string()))
+        .map_err(|e| format!("{}: {e}", file.display()))?;
+    let assets = table.get("asset").and_then(toml::Value::as_array).map_or(&[][..], Vec::as_slice);
+    Ok(assets.iter().filter_map(|a| a.get("path")?.as_str()).filter(|p| p.starts_with("crates/ui-egui/i18n-fork/")).map(str::to_owned).collect())
+}
+
+/// Report overlays `ATTRIBUTION.toml` lists that are missing, and overlay locales craft-i18n has
+/// no catalog for (`embedded`): either way their rows would be lost. An error under
+/// `CRAFT_I18N_REQUIRED=1` (`required`), else a warning.
 pub fn check_locales(embedded: &[&str], required: bool) {
+    let level = if required { "error" } else { "warning" };
     // The directory, so an overlay added or removed reruns the script too.
     println!("cargo::rerun-if-changed={}", overlays().display());
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).expect("crates/ui-egui is two levels down");
+    match listed(root) {
+        Ok(paths) => {
+            let missing: Vec<&str> = paths.iter().filter(|p| !root.join(p).is_file()).map(String::as_str).collect();
+            if !missing.is_empty() {
+                println!("cargo::{level}=ATTRIBUTION.toml lists overlays that are missing: {}", missing.join(", "));
+            }
+        }
+        Err(e) => println!("cargo::{level}={e}"),
+    }
     let Ok(list) = std::fs::read_dir(overlays()) else { return };
     let mut lost: Vec<String> = list
         .flatten()
@@ -49,7 +73,6 @@ pub fn check_locales(embedded: &[&str], required: bool) {
         .collect();
     if !lost.is_empty() {
         lost.sort();
-        let level = if required { "error" } else { "warning" };
         println!("cargo::{level}=crates/ui-egui/i18n-fork has rows for {}, which CRAFT_I18N_DIR has no pdfcraft.tsv for", lost.join(", "));
     }
 }
