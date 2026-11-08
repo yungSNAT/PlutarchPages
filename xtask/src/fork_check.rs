@@ -555,15 +555,26 @@ fn weak_hash_markers(tree: &Tree) -> Vec<String> {
             out.push(format!("{path} is missing: find where its MD5 or RIPEMD-160 lines went and mark them"));
             continue;
         };
-        let hashes: Vec<(usize, &str)> = text.lines().enumerate().filter(|(_, l)| l.contains("Md5::") || l.contains("Ripemd160::")).collect();
+        let Some(lexed) = lex(text) else {
+            out.push(format!("{path} doesn't lex, so its NOSONAR comments can't be told from strings: check them by hand"));
+            continue;
+        };
+        let lines = text.lines().zip(lexed.text.lines()).zip(lexed.code.lines()).enumerate();
+        let hashes: Vec<_> = lines.filter(|(_, (_, code))| code.contains("Md5::") || code.contains("Ripemd160::")).collect();
         if hashes.is_empty() {
             out.push(format!("{path}: no MD5 or RIPEMD-160 line: find where they went and mark them"));
         }
-        for (n, line) in hashes.into_iter().filter(|(_, l)| !l.contains("NOSONAR")) {
+        for (n, ((line, _), _)) in hashes.into_iter().filter(|(_, ((line, kept), _))| !marked_in_comment(line, kept)) {
             out.push(format!("{path}:{}: {} has lost its NOSONAR marker (rust:S4790)", n + 1, excerpt(line)));
         }
     }
     out
+}
+
+/// Whether a source line has `NOSONAR` in a comment: there, the line without its comments
+/// (`kept`, from [`Lexed`]) has blanks in its place.
+fn marked_in_comment(line: &str, kept: &str) -> bool {
+    line.match_indices("NOSONAR").any(|(i, m)| kept.get(i..i + m.len()).is_some_and(|s| s.trim().is_empty()))
 }
 
 fn flatpak_grant(tree: &Tree) -> Vec<String> {
@@ -795,6 +806,13 @@ mod tests {
         let added = format!("{crypt}digest = Md5::digest(&digest).to_vec();\n");
         fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], added.as_str()), (WEAK_HASH_FILES[1], keys)], "lib.rs:3");
         fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], crypt)], "keys.rs is missing");
+        // The marker counts only in a comment, and a hash only in code.
+        let in_string = crypt.replace(" // NOSONAR: ISO 32000 mandates MD5", r#"; log("NOSONAR");"#);
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], in_string.as_str()), (WEAK_HASH_FILES[1], keys)], "lib.rs:2");
+        let block = crypt.replace("// NOSONAR: ISO 32000 mandates MD5", "/* NOSONAR: ISO 32000 */");
+        passes(weak_hash_markers, &[(WEAK_HASH_FILES[0], block.as_str()), (WEAK_HASH_FILES[1], keys)]);
+        let mentioned = format!("{crypt}// Md5::new() is ISO 32000's\nlet s = \"Md5::digest\";\n");
+        passes(weak_hash_markers, &[(WEAK_HASH_FILES[0], mentioned.as_str()), (WEAK_HASH_FILES[1], keys)]);
     }
 
     #[test]
