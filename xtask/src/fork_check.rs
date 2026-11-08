@@ -15,6 +15,7 @@
 //! - once a build script reads `CRAFT_I18N_DIR`, a place in `release.yml` that sets
 //!   `CRAFT_FONTS_DIR` doesn't also set `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1`.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::Path;
@@ -112,8 +113,43 @@ fn check(tree: &Tree) -> Vec<String> {
     RULES.iter().flat_map(|(name, rule)| rule(tree).into_iter().map(move |p| format!("{name}: {p}"))).collect()
 }
 
-fn is_test(path: &str) -> bool {
-    path.split('/').any(|c| c == "tests" || c == "tests.rs" || c.ends_with("_tests.rs"))
+/// Whether `path` is test code: named for tests and outside `src/`, as integration tests are, or
+/// named for tests in `src/` and declared only for them ([`declared_for_tests`]).
+fn is_test(tree: &Tree, path: &str) -> bool {
+    let named = path.split('/').any(|c| c == "tests" || c == "tests.rs" || c.ends_with("_tests.rs"));
+    named && (!path.contains("/src/") || declared_for_tests(tree, path))
+}
+
+/// Whether each `mod` that declares the source file `path` in its parent file is in a test module,
+/// or the parent is test code itself. A file only `#[path]` declares, or whose parent doesn't lex,
+/// isn't, so it is read.
+fn declared_for_tests(tree: &Tree, path: &str) -> bool {
+    let Some((dir, file)) = path.rsplit_once('/') else { return false };
+    let module = if file == "mod.rs" { dir.rsplit_once('/') } else { file.strip_suffix(".rs").map(|name| (dir, name)) };
+    let Some((dir, name)) = module else { return false };
+    let parents =
+        if dir.ends_with("/src") { [format!("{dir}/lib.rs"), format!("{dir}/main.rs")] } else { [format!("{dir}.rs"), format!("{dir}/mod.rs")] };
+    let mut declared = false;
+    for parent in parents {
+        let Some(text) = tree.get(&parent) else { continue };
+        let Some(lexed) = lex(text) else { return false };
+        let Some(level) = item_level(&lexed.code) else { return false };
+        let code = lexed.code.as_str();
+        let declares = |i: usize| {
+            let after = code[i + "mod".len()..].trim_start_matches(is_space);
+            found_at(code, i, "mod") && found_at(code, code.len() - after.len(), name)
+        };
+        let declarations: Vec<usize> = code.match_indices("mod").map(|(i, _)| i).filter(|&i| declares(i)).collect();
+        if declarations.is_empty() {
+            continue;
+        }
+        declared = true;
+        let tests = test_modules(code, &level);
+        if !is_test(tree, &parent) && !declarations.iter().all(|d| tests.iter().any(|t| t.contains(d))) {
+            return false;
+        }
+    }
+    declared
 }
 
 /// A line for a message: trimmed, and cut short when it is long.
@@ -129,7 +165,7 @@ fn excerpt(line: &str) -> String {
 fn app_code(tree: &Tree) -> impl Iterator<Item = (&str, &str)> {
     tree.text
         .iter()
-        .filter(|(p, _)| (p.starts_with("crates/") || p.starts_with("apps/")) && p.contains("/src/") && p.ends_with(".rs") && !is_test(p))
+        .filter(|(p, _)| (p.starts_with("crates/") || p.starts_with("apps/")) && p.contains("/src/") && p.ends_with(".rs") && !is_test(tree, p))
         .map(|(p, t)| (p.as_str(), t.as_str()))
 }
 
@@ -137,49 +173,107 @@ fn artcraft_names(tree: &Tree) -> Vec<String> {
     let mut out: Vec<String> =
         tree.paths.iter().filter(|p| p.to_ascii_lowercase().contains("artcraft")).map(|p| format!("{p}: the path names ArtCraft")).collect();
     let scanned = tree.text.iter().filter(|(p, _)| {
-        let code = ["crates/", "apps/", "xtask/src/"].iter().any(|d| p.starts_with(d)) && !is_test(p) && *p != THIS_FILE;
+        let code = ["crates/", "apps/", "xtask/src/"].iter().any(|d| p.starts_with(d)) && !is_test(tree, p) && *p != THIS_FILE;
         code || p.starts_with("packaging/") || p.starts_with(".github/")
     });
     for (path, text) in scanned {
-        let lines = if path.ends_with(".rs") { rust_lines(text) } else { text.lines().enumerate().map(|(i, l)| (i + 1, l.to_string())).collect() };
-        for (n, line) in lines {
-            let line = if path.ends_with(".tsv") { catalogue_source(&line) } else { &line };
+        let text = if path.ends_with(".rs") { production(text) } else { Cow::Borrowed(text.as_str()) };
+        for (n, line) in text.lines().enumerate() {
+            let line = if path.ends_with(".tsv") { catalogue_source(line) } else { line };
             if names_artcraft(line) {
-                out.push(format!("{path}:{n}: {}", excerpt(line)));
+                out.push(format!("{path}:{}: {}", n + 1, excerpt(line)));
             }
         }
     }
     out
 }
 
-/// Each line of Rust source with its number from 1, its comments and `#[cfg(test)]` modules
-/// blanked. Source that doesn't lex, or whose braces don't balance, is read whole and as it is,
-/// comments and test modules too: a false failure rather than a miss.
-fn rust_lines(source: &str) -> Vec<(usize, String)> {
-    let read = lex(source).filter(|l| balanced(&l.code)).and_then(|l| without_test_modules(&l));
-    read.as_deref().unwrap_or(source).lines().enumerate().map(|(i, l)| (i + 1, l.to_string())).collect()
+/// Rust source with its comments and test modules blanked, each from its `#[cfg(test)]` to its
+/// closing brace or semicolon, so code before or after it on the same line is still read. Source
+/// that doesn't lex, or whose brackets don't pair up, is read whole and as it is, comments and
+/// test modules too: a false failure rather than a miss.
+fn production(source: &str) -> Cow<'_, str> {
+    let blanked = lex(source).and_then(|lexed| {
+        let tests = test_modules(&lexed.code, &item_level(&lexed.code)?);
+        let mut text = lexed.text.into_bytes();
+        for t in tests {
+            text[t].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
+        }
+        String::from_utf8(text).ok()
+    });
+    blanked.map_or(Cow::Borrowed(source), Cow::Owned)
 }
 
-/// `lexed.text` with each `#[cfg(test)]` module blanked from its attribute to its closing brace
-/// or semicolon, so code before or after it on the same line is still read.
-fn without_test_modules(lexed: &Lexed) -> Option<String> {
+/// The bytes of each test module in `code` ([`Lexed::code`]), from its `#[cfg(test)]` to its
+/// closing brace or semicolon. Only at item level (`level`, from [`item_level`]) does the
+/// attribute certainly gate a module: in a macro's tokens it may be rewritten.
+fn test_modules(code: &str, level: &[bool]) -> Vec<Range<usize>> {
     const ATTRIBUTE: &str = "#[cfg(test)]";
-    let mut text = lexed.text.clone().into_bytes();
-    for (start, _) in lexed.code.match_indices(ATTRIBUTE) {
-        if let Some(end) = test_mod_end(lexed.code.as_bytes(), start + ATTRIBUTE.len()) {
-            text[start..end].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
+    code.match_indices(ATTRIBUTE)
+        .filter(|&(i, _)| level[i])
+        .filter_map(|(i, attribute)| Some(i..test_mod_end(code.as_bytes(), i + attribute.len())?))
+        .collect()
+}
+
+/// For each byte of `code` ([`Lexed::code`]), whether it is at item level: in no bracket but the
+/// braces of a `mod`. In a function body or a macro's tokens, a `#[cfg(test)]` or a `const` may
+/// not be what it seems. `None` when the brackets don't pair up.
+fn item_level(code: &str) -> Option<Vec<bool>> {
+    let (mut open, mut others, mut level) = (Vec::new(), 0usize, Vec::with_capacity(code.len()));
+    for (k, b) in code.bytes().enumerate() {
+        match b {
+            b'{' | b'(' | b'[' => {
+                level.push(others == 0);
+                let module = b == b'{' && opens_a_module(code, k);
+                others += usize::from(!module);
+                open.push((b, module));
+            }
+            b'}' | b')' | b']' => {
+                let (opener, module) = open.pop()?;
+                if !matches!((opener, b), (b'{', b'}') | (b'(', b')') | (b'[', b']')) {
+                    return None;
+                }
+                others -= usize::from(!module);
+                level.push(others == 0);
+            }
+            _ => level.push(others == 0),
         }
     }
-    String::from_utf8(text).ok()
+    open.is_empty().then_some(level)
 }
 
-/// Whether every `{` closes and no `}` closes nothing.
-fn balanced(code: &str) -> bool {
-    code.bytes().try_fold(0usize, |depth, b| match b {
-        b'{' => Some(depth + 1),
-        b'}' => depth.checked_sub(1),
-        _ => Some(depth),
-    }) == Some(0)
+/// Whether the `{` at byte `k` of `code` opens a module's items: `mod` and its name come before it.
+fn opens_a_module(code: &str, k: usize) -> bool {
+    let before = code[..k].trim_end_matches(|c: char| c.is_ascii_whitespace());
+    let name = before.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+    let keyword = name.trim_end_matches(|c: char| c.is_ascii_whitespace());
+    name.len() < before.len() && keyword.len() < name.len() && keyword.ends_with("mod") && starts_word(code.as_bytes(), keyword.len() - "mod".len())
+}
+
+/// Rust's whitespace, and more besides.
+fn is_space(c: char) -> bool {
+    c.is_whitespace() || matches!(c, '\u{200e}' | '\u{200f}')
+}
+
+/// Whether `word` is at byte `i` of `code` with no ASCII letter, digit or `_` either side: where a
+/// rule looks for something, a character outside ASCII beside it doesn't hide it.
+fn found_at(code: &str, i: usize, word: &str) -> bool {
+    let ident = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
+    code[i..].starts_with(word) && !ident(code[..i].chars().next_back()) && !ident(code[i + word.len()..].chars().next())
+}
+
+/// Each place `ident` starts a path in `code` ([`Lexed::code`]): its offset, and the offset of
+/// what follows its `::`. Whitespace may come between them, comments too as they are blanks.
+fn path_heads<'a>(code: &'a str, ident: &'a str) -> impl Iterator<Item = (usize, usize)> + 'a {
+    code.match_indices(ident).filter(move |&(i, _)| found_at(code, i, ident)).filter_map(move |(i, _)| {
+        let rest = code[i + ident.len()..].trim_start_matches(is_space).strip_prefix("::")?;
+        Some((i, code.len() - rest.trim_start_matches(is_space).len()))
+    })
+}
+
+/// The line, from 0, that byte `i` of `text` is on.
+fn line_index(text: &str, i: usize) -> usize {
+    text[..i].matches('\n').count()
 }
 
 /// When the item after a `#[cfg(test)]` that ends at byte `j` of `code` ([`Lexed::code`]) is a
@@ -343,20 +437,27 @@ fn quote(source: &str, i: usize) -> Option<(Lexeme, usize)> {
     (c.is_alphabetic() || c == '_').then_some((Lexeme::Code, i + 1))
 }
 
-/// The bytes between the braces of each `const` called `name`; `None` for one whose initialiser
-/// isn't in braces.
-fn initialisers(lexed: &Lexed, name: &str) -> Vec<Option<Range<usize>>> {
-    let code = lexed.code.as_bytes();
+/// Each `const` called `name`: the offset of its name, and the bytes between the braces of its
+/// initialiser (`None` when that isn't in braces).
+fn initialisers(lexed: &Lexed, name: &str) -> Vec<(usize, Option<Range<usize>>)> {
+    let code = lexed.code.as_str();
     let declared = |i: usize| {
-        let before = lexed.code[..i].trim_end();
-        word_at(code, i, name) && before.ends_with("const") && starts_word(code, before.len() - "const".len())
+        let before = code[..i].trim_end_matches(is_space).strip_suffix("const");
+        found_at(code, i, name) && before.is_some_and(|b| found_at(code, b.len(), "const"))
     };
     let body = |i: usize| {
-        let rest = &lexed.code[i..];
+        let rest = &code[i..];
         let open = i + rest.find(['{', ';']).filter(|&n| rest.as_bytes()[n] == b'{')?;
-        Some(open + 1..group_end(code, open)? - 1)
+        Some(open + 1..group_end(code.as_bytes(), open)? - 1)
     };
-    lexed.code.match_indices(name).map(|(i, _)| i).filter(|&i| declared(i)).map(body).collect()
+    code.match_indices(name).map(|(i, _)| i).filter(|&i| declared(i)).map(|i| (i, body(i))).collect()
+}
+
+/// Whether what comes before the item named at byte `i` of `code`, back to the item before it or
+/// the brace that opens its module, mentions `test`, as `#[cfg(test)]` on the item would.
+fn mentions_test(code: &str, level: &[bool], i: usize) -> bool {
+    let start = (0..i).rev().find(|&k| level[k] && matches!(code.as_bytes()[k], b';' | b'{' | b'}')).map_or(0, |k| k + 1);
+    code[start..i].match_indices("test").any(|(k, _)| found_at(code, start + k, "test"))
 }
 
 /// The value, trimmed and with comments blanked, that a struct literal gives field `name` at its
@@ -423,34 +524,41 @@ fn upstream_links(tree: &Tree) -> Vec<String> {
 
 /// Upstream's `UPDATE_APP` takes its repository from `craft_update::suite::PDFCRAFT`, so a merge
 /// that drops the fork's `repo` field reads and downloads upstream's releases. Each `UPDATE_APP`
-/// initialiser needs the field itself.
+/// initialiser needs the field itself, and one must be a production item: at item level, outside
+/// test modules, with nothing before it that mentions `test`. One in a test module, a macro or a
+/// function doesn't count.
 fn update_source(tree: &Tree) -> Vec<String> {
     let Some(text) = tree.get(UPDATE_APP_FILE) else {
         return vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")];
     };
-    if let Some(lexed) = lex(text) {
-        let bodies = initialisers(&lexed, "UPDATE_APP");
-        if !bodies.is_empty() && bodies.into_iter().all(|b| b.is_some_and(|b| field(&lexed, b, "repo") == Some(FORK_REPO))) {
+    if let Some(lexed) = lex(text)
+        && let Some(level) = item_level(&lexed.code)
+    {
+        let tests = test_modules(&lexed.code, &level);
+        let production = |i: usize| level[i] && !tests.iter().any(|t| t.contains(&i)) && !mentions_test(&lexed.code, &level, i);
+        let repo = |body: &Option<Range<usize>>| body.clone().is_some_and(|b| field(&lexed, b, "repo") == Some(FORK_REPO));
+        let declared = initialisers(&lexed, "UPDATE_APP");
+        if declared.iter().any(|(i, _)| production(*i)) && declared.iter().all(|(_, body)| repo(body)) {
             return Vec::new();
         }
     }
     vec![format!("{UPDATE_APP_FILE}: `UPDATE_APP` lacks `repo: {FORK_REPO}`, so updates would come from upstream")]
 }
 
-/// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant.
+/// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant:
+/// `Color32`, `::` and a capital, whatever whitespace or comments come between.
 fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
     let mut out = Vec::new();
     for (path, text) in tree.under("crates/ui-egui/src/") {
-        // The same files `chrome_literals_stay_in_the_theme` reads.
-        if !path.ends_with(".rs") || path == "crates/ui-egui/src/theme.rs" || path.contains("tests") {
+        if !path.ends_with(".rs") || path == "crates/ui-egui/src/theme.rs" || is_test(tree, path) {
             continue;
         }
-        for (n, line) in rust_lines(text) {
-            let named = line.match_indices("Color32::").any(|(i, m)| line[i + m.len()..].starts_with(|c: char| c.is_ascii_uppercase()));
-            if named {
-                out.push((path, n, line.trim().to_string()));
-            }
-        }
+        let read = production(text);
+        let lines: Vec<&str> = read.lines().collect();
+        let capital = |next: usize| read[next..].strip_prefix("r#").unwrap_or(&read[next..]).starts_with(|c: char| c.is_ascii_uppercase());
+        let mut named: Vec<usize> = path_heads(&read, "Color32").filter(|&(_, next)| capital(next)).map(|(i, _)| line_index(&read, i)).collect();
+        named.dedup();
+        out.extend(named.into_iter().map(|n| (path, n + 1, lines[n].trim().to_string())));
     }
     out
 }
@@ -559,12 +667,15 @@ fn weak_hash_markers(tree: &Tree) -> Vec<String> {
             out.push(format!("{path} doesn't lex, so its NOSONAR comments can't be told from strings: check them by hand"));
             continue;
         };
-        let lines = text.lines().zip(lexed.text.lines()).zip(lexed.code.lines()).enumerate();
-        let hashes: Vec<_> = lines.filter(|(_, (_, code))| code.contains("Md5::") || code.contains("Ripemd160::")).collect();
+        let lines: Vec<(&str, &str)> = text.lines().zip(lexed.text.lines()).collect();
+        let heads = ["Md5", "Ripemd160"].into_iter().flat_map(|hash| path_heads(&lexed.code, hash));
+        let mut hashes: Vec<usize> = heads.map(|(i, _)| line_index(&lexed.code, i)).collect();
+        hashes.sort_unstable();
+        hashes.dedup();
         if hashes.is_empty() {
             out.push(format!("{path}: no MD5 or RIPEMD-160 line: find where they went and mark them"));
         }
-        for (n, ((line, _), _)) in hashes.into_iter().filter(|(_, ((line, kept), _))| !marked_in_comment(line, kept)) {
+        for (n, (line, _)) in hashes.into_iter().map(|n| (n, lines[n])).filter(|(_, (line, kept))| !marked_in_comment(line, kept)) {
             out.push(format!("{path}:{}: {} has lost its NOSONAR marker (rust:S4790)", n + 1, excerpt(line)));
         }
     }
@@ -659,8 +770,13 @@ mod tests {
     }
 
     fn fails(rule: Rule, files: &[(&str, &str)], expected: &str) {
+        fails_all(rule, files, &[expected]);
+    }
+
+    fn fails_all(rule: Rule, files: &[(&str, &str)], expected: &[&str]) {
         let problems = rule(&tree(files));
-        assert!(problems.iter().any(|p| p.contains(expected)), "expected a problem naming {expected:?}, got {problems:#?}");
+        let missed: Vec<_> = expected.iter().filter(|e| !problems.iter().any(|p| p.contains(*e))).collect();
+        assert!(missed.is_empty(), "expected problems naming {missed:?}, got {problems:#?}");
     }
 
     #[test]
@@ -696,7 +812,7 @@ mod tests {
     #[test]
     fn app_code_links_to_upstream_only_as_its_credit() {
         let ok = [
-            ("crates/engine/src/links.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";"),
+            ("crates/engine/src/links.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";\n#[cfg(test)]\nmod tests;\n"),
             ("crates/engine/src/links/tests.rs", "assert_eq!(super::UPSTREAM, \"https://github.com/storytold/pdfcraft\");"),
             ("crates/render/src/raster.rs", "/// See https://github.com/storytold/pdfcraft/issues/623."),
         ];
@@ -729,8 +845,10 @@ mod tests {
     fn a_named_colour_must_be_in_the_baseline() {
         // A test module's colours aren't listed; a colour after a test-only `use` is.
         let canvas = "#[cfg(test)]\nuse crate::Harness;\nfn page() {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n#[cfg(test)]\nmod tests {\n    fn f() { let c = Color32::RED; }\n}\n";
-        let others =
-            [("crates/ui-egui/src/theme.rs", "pub const PAGE: Color32 = Color32::WHITE;"), ("crates/ui-egui/src/theme/tests.rs", "Color32::BLACK")];
+        let others = [
+            ("crates/ui-egui/src/theme.rs", "pub const PAGE: Color32 = Color32::WHITE;\n#[cfg(test)]\nmod tests;\n"),
+            ("crates/ui-egui/src/theme/tests.rs", "Color32::BLACK"),
+        ];
         let mut files = vec![("crates/ui-egui/src/canvas.rs", canvas)];
         files.extend(others);
         let baseline = colour_baseline(&tree(&files));
@@ -900,7 +1018,8 @@ mod tests {
         fails(artcraft_names, &[(home, "#[cfg(test)]\nmod tests;\nfn f() { widgets::artcraft_mark(ui, 28.0); }\n")], "home.rs:3");
         // Source that doesn't lex or balance is read whole, test modules too.
         let module = "#[cfg(test)]\nmod tests {\n    const MARK: &str = \"artcraft-mark.svg\";\n}\n";
-        for unread in ["const S: &str = \"unclosed;\n", "/* unclosed\n", "const R: &str = r#\"unclosed\"\n", "const Q: u8 = '{x;\n", "}\n"] {
+        for unread in ["const S: &str = \"unclosed;\n", "/* unclosed\n", "const R: &str = r#\"unclosed\"\n", "const Q: u8 = '{x;\n", "}\n", "f(];\n"]
+        {
             fails(artcraft_names, &[(home, format!("{module}{unread}").as_str())], "home.rs:3");
         }
     }
@@ -978,6 +1097,96 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         {
             fails(artcraft_names, &[(home, format!("label(tl!(\"{slogan}\"));").as_str())], "home.rs:1");
         }
+    }
+
+    #[test]
+    fn update_app_counts_only_as_a_production_item() {
+        let app = "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n    ..suite::PDFCRAFT\n};\n";
+        let tested = format!("#[cfg(test)]\nmod tests {{\n{app}}}\n");
+        passes(update_source, &[(UPDATE_APP_FILE, format!("{app}{tested}").as_str())]);
+        let merged = app.replace("    repo: \"yungSNAT/PlutarchPages\",\n", "");
+        fails(update_source, &[(UPDATE_APP_FILE, format!("{merged}{tested}").as_str())], "lacks `repo");
+        let missed: Vec<&str> = [
+            ("a test module", tested.clone()),
+            ("a macro_rules! body", format!("macro_rules! app {{\n    () => {{\n{app}    }};\n}}\n")),
+            ("a macro item", format!("pub macro app() {{\n{app}}}\n")),
+            ("a macro call", format!("app! {{\n{app}}}\n")),
+            ("a function", format!("fn f() {{\n{app}}}\n")),
+            ("a #[cfg(test)] item", format!("#[cfg(test)]\n{app}")),
+            ("a #[cfg(any(test))] item", format!("#[cfg(any(test))]\n{app}")),
+        ]
+        .into_iter()
+        .filter(|(_, text)| !update_source(&tree(&[(UPDATE_APP_FILE, text.as_str())])).iter().any(|p| p.contains("lacks `repo")))
+        .map(|(place, _)| place)
+        .collect();
+        assert!(missed.is_empty(), "UPDATE_APP counted from {missed:?}");
+    }
+
+    #[test]
+    fn a_hash_path_is_read_across_whitespace_and_comments() {
+        let crypt = "use md5::{Digest as _, Md5};\nlet mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5\n";
+        let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n";
+        let crypt = format!("{crypt}digest = Md5/* c */::digest(&digest).to_vec();\nlet h = Md5 ::new();\nlet h = md5::Md5\n    ::new();\n");
+        let keys = format!("{keys}let h = ripemd::Ripemd160/* c */\u{200e}::new();\n");
+        fails_all(
+            weak_hash_markers,
+            &[(WEAK_HASH_FILES[0], crypt.as_str()), (WEAK_HASH_FILES[1], keys.as_str())],
+            &["lib.rs:3", "lib.rs:4", "lib.rs:5", "keys.rs:3"],
+        );
+    }
+
+    #[test]
+    fn a_colour_path_is_read_across_whitespace_and_comments() {
+        let canvas = "fn page() {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n";
+        let mut files = vec![("crates/ui-egui/src/canvas.rs", canvas)];
+        let baseline = colour_baseline(&tree(&files));
+        files.push((COLOUR_BASELINE, baseline.as_str()));
+        passes(named_colours, &files);
+        let added = format!(
+            "{canvas}fn border() {{\n    painter.rect_filled(r, 0.0, Color32/* c */::BLACK);\n    painter.rect_filled(r, 0.0, egui::Color32 :: GRAY);\n    painter.rect_filled(r, 0.0, Color32\n        ::RED);\n    painter.rect_filled(r, 0.0, Color32::\u{200e}r#BLUE);\n}}\n"
+        );
+        files[0].1 = added.as_str();
+        fails_all(named_colours, &files, &["canvas.rs:5", "canvas.rs:6", "canvas.rs:7", "canvas.rs:9"]);
+    }
+
+    #[test]
+    fn a_test_file_is_test_code_only_when_declared_for_tests() {
+        let lib = "crates/engine/src/lib.rs";
+        let file = ("crates/engine/src/tests.rs", "const URL: &str = \"https://github.com/storytold/pdfcraft\";\n");
+        let nested = ("crates/engine/src/tests/more.rs", file.1);
+        passes(upstream_links, &[(lib, "#[cfg(test)]\nmod tests;\n"), (file.0, "mod more;\n"), nested]);
+        passes(upstream_links, &[(lib, "#[cfg(test)]\n#[allow(dead_code)]\nmod tests;\n"), file]);
+        let canvas = ("crates/ui-egui/src/canvas.rs", "#[cfg(test)]\nmod tests;\n");
+        passes(named_colours, &[(COLOUR_BASELINE, ""), canvas, ("crates/ui-egui/src/canvas/tests.rs", "Color32::RED\n")]);
+        let mut missed: Vec<&str> = [
+            ("an undeclared tests.rs", vec![file]),
+            ("a tests.rs declared outside a test module", vec![(lib, "mod tests;\n"), file]),
+            ("a tests.rs declared twice", vec![(lib, "#[cfg(test)]\nmod tests;\n#[cfg(not(test))]\nmod tests;\n"), file]),
+            ("a tests.rs declared in a macro", vec![(lib, "m! {\n    #[cfg(test)]\n    mod tests;\n}\n"), file]),
+            ("a file under a production tests.rs", vec![(lib, "pub mod tests;\n"), (file.0, "mod more;\n"), nested]),
+        ]
+        .into_iter()
+        .filter(|(_, files)| !upstream_links(&tree(files)).iter().any(|p| p.contains("tests") && p.contains(".rs:1")))
+        .map(|(case, _)| case)
+        .collect();
+        let contests = ("crates/ui-egui/src/contests.rs", "fn f() { painter.rect_filled(r, 0.0, Color32::WHITE); }\n");
+        if named_colours(&tree(&[(COLOUR_BASELINE, ""), contests])).is_empty() {
+            missed.push("a file whose name contains 'tests'");
+        }
+        assert!(missed.is_empty(), "read as test code: {missed:?}");
+    }
+
+    #[test]
+    fn only_item_level_test_modules_are_left_alone() {
+        let home = "crates/ui-egui/src/home.rs";
+        let module = "#[cfg(test)]\n    mod tests {\n        fn f() { widgets::artcraft_mark(ui, 28.0); }\n    }\n";
+        passes(artcraft_names, &[(home, format!("mod a {{\n    {module}}}\n").as_str())]);
+        let missed: Vec<&str> = [("a macro call", format!("m! {{\n    {module}}}\n")), ("a function", format!("fn g() {{\n    {module}}}\n"))]
+            .into_iter()
+            .filter(|(_, text)| !artcraft_names(&tree(&[(home, text.as_str())])).iter().any(|p| p.contains("home.rs:4")))
+            .map(|(place, _)| place)
+            .collect();
+        assert!(missed.is_empty(), "a test module left alone in {missed:?}");
     }
 
     #[test]
