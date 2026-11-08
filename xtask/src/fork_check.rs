@@ -3,7 +3,8 @@
 //! `cargo xtask ci`: Red Queen work, running to keep the fork in the same place. It fails when:
 //! - a path names ArtCraft, or app code, packaging, `.github/` or the xtask names it other than as
 //!   'the ArtCraft team' or 'an ArtCraft product' (comments and test modules in Rust are left alone);
-//! - app code or packaging names `storytold/pdfcraft` anywhere but `links::UPSTREAM`;
+//! - app code or packaging names `storytold/pdfcraft` anywhere but `links::UPSTREAM` and the XFDF
+//!   namespace `PDFCRAFT_NS`;
 //! - `UPDATE_APP` loses `repo: "yungSNAT/PlutarchPages"`, so updates would come from upstream's releases;
 //! - interface code uses a named colour (`Color32::WHITE` and the like) on a line that
 //!   `xtask/baselines/named-colours.txt` doesn't list (`--write` re-records it);
@@ -28,8 +29,12 @@ const WEAK_HASH_FILES: [&str; 2] = ["crates/crypt/src/lib.rs", "crates/sign/src/
 const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
 /// The value `UPDATE_APP` gives its `repo` field.
 const FORK_REPO: &str = "\"yungSNAT/PlutarchPages\"";
-/// `links::UPSTREAM`, which credits upstream: the one line in app code that may link to it.
-const UPSTREAM_CREDIT: (&str, &str) = ("crates/engine/src/links.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";");
+/// The lines in app code that may name upstream: `links::UPSTREAM`, which credits it, and
+/// `PDFCRAFT_NS`, the XFDF namespace of PdfCraft's own attributes, kept so XFDF files interchange.
+const UPSTREAM_KEPT: [(&str, &str); 2] = [
+    ("crates/engine/src/links.rs", "pub const UPSTREAM: &str = \"https://github.com/storytold/pdfcraft\";"),
+    ("crates/xfdf/src/xfdf.rs", "pub(crate) const PDFCRAFT_NS: &str = \"https://github.com/storytold/pdfcraft#xfdf\";"),
+];
 /// Its own rules name ArtCraft and upstream to look for them.
 const THIS_FILE: &str = "xtask/src/fork_check.rs";
 
@@ -505,16 +510,16 @@ fn names_artcraft(line: &str) -> bool {
 }
 
 fn upstream_links(tree: &Tree) -> Vec<String> {
-    // The credit's code with its string blanked, so a string holding the same line isn't it.
-    let credit_code = lex(UPSTREAM_CREDIT.1).map(|l| l.code);
-    let credit_code = credit_code.as_deref().map(str::trim);
+    // Each kept line's code with its string blanked, so a string holding the same line isn't it.
+    let kept: Vec<(&str, &str, Option<String>)> = UPSTREAM_KEPT.iter().map(|&(p, l)| (p, l, lex(l).map(|x| x.code))).collect();
     let mut out = Vec::new();
     for (path, text) in app_code(tree).chain(tree.under("packaging/")) {
         let lexed = if path.ends_with(".rs") { lex(text) } else { None };
         let code: Vec<&str> = lexed.as_ref().map(|l| l.code.lines().collect()).unwrap_or_default();
         for (n, line) in lexed.as_ref().map_or(text, |l| l.text.as_str()).lines().enumerate() {
-            let credit = (path, line.trim()) == UPSTREAM_CREDIT && code.get(n).map(|c| c.trim()) == credit_code;
-            if !credit && line.to_ascii_lowercase().contains("storytold/pdfcraft") {
+            let is_kept =
+                kept.iter().any(|(p, l, c)| (path, line.trim()) == (*p, *l) && code.get(n).map(|x| x.trim()) == c.as_deref().map(str::trim));
+            if !is_kept && line.to_ascii_lowercase().contains("storytold/pdfcraft") {
                 out.push(format!("{path}:{}: {} (point it at this fork)", n + 1, excerpt(line)));
             }
         }
@@ -1080,6 +1085,15 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
 "#;
 "##;
         fails(upstream_links, &[("crates/engine/src/links.rs", in_string)], "links.rs:2");
+    }
+
+    #[test]
+    fn the_xfdf_namespace_keeps_upstreams_url() {
+        let ns = "pub(crate) const PDFCRAFT_NS: &str = \"https://github.com/storytold/pdfcraft#xfdf\";\n";
+        passes(upstream_links, &[("crates/xfdf/src/xfdf.rs", ns)]);
+        fails(upstream_links, &[("crates/xfdf/src/fdf.rs", ns)], "fdf.rs:1");
+        let in_string = format!("pub const NOTES: &str = r#\"\n{ns}\"#;\n");
+        fails(upstream_links, &[("crates/xfdf/src/xfdf.rs", in_string.as_str())], "xfdf.rs:2");
     }
 
     #[test]

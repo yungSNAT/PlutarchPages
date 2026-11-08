@@ -49,7 +49,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
-  and binaries the updater installs.
+  and binaries the updater installs. `PDFCRAFT_NS` in `crates/xfdf/src/xfdf.rs` keeps upstream's
+  URL: it is the XFDF namespace of PdfCraft's own attributes, so XFDF files interchange with PdfCraft.
 - Update results: `crates/ui-egui/src/platform/updates.rs` keeps the fork's themed, translated dialog
   over `craft_update`'s `CheckResultDialog`, which is English only with its own colours. Upstream
   merges change `crates/ui-egui/tests/it/updates.rs`, so keep the fork's tests there. Its strings
@@ -161,7 +162,8 @@ hayro-jbig2 11, hayro-syntax 30 and 31, and hayro-interpret 73 aren't here.
 
 1. `git merge --no-ff` upstream's `main` on a `ryan/` branch. Never rewrite history.
 2. Run `cargo xtask fork-check`. It fails when the merge brings back an ArtCraft name, a
-   `storytold/pdfcraft` reference in app code or packaging, an `UPDATE_APP` without the fork's
+   `storytold/pdfcraft` reference in app code or packaging (other than `links::UPSTREAM` and
+   `PDFCRAFT_NS`), an `UPDATE_APP` without the fork's
    `repo`, a named colour the baseline doesn't list, `@main` or `secrets: inherit` in a workflow, a
    crate without `publish = false`, a hash line without its `NOSONAR`, the Flatpak grant or an
    `ai.storyteller` Flatpak manifest. Once a build script reads
