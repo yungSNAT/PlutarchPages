@@ -39,8 +39,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `Color32::WHITE`, that `xtask/baselines/named-colours.txt` doesn't list; a line it lists can still
   move onto chrome, so look at the controls upstream moves.
 - Brand: no ArtCraft name or logos (`AGENTS.md` section 1.2). Upstream merges add them back, in new
-  files too. `cargo xtask fork-check` finds the name in paths, app code and packaging;
-  trademark-licensed assets still need a search.
+  files too. `cargo xtask fork-check` finds the name in paths, app code, packaging, `.github/` and
+  the xtask; trademark-licensed assets still need a search.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
@@ -144,9 +144,10 @@ hayro-jbig2 11, hayro-syntax 30 and 31, and hayro-interpret 73 aren't here.
 
 1. `git merge --no-ff` upstream's `main` on a `ryan/` branch. Never rewrite history.
 2. Run `cargo xtask fork-check`. It fails when the merge brings back an ArtCraft name, a
-   `storytold/pdfcraft` link in app code, a named colour the baseline doesn't list, `@main` or
-   `secrets: inherit` in a workflow, a crate without `publish = false`, a hash line without its
-   `NOSONAR`, the Flatpak grant or an `ai.storyteller` Flatpak manifest. Once a build script reads
+   `storytold/pdfcraft` reference in app code or packaging, an `UPDATE_APP` without the fork's
+   `repo`, a named colour the baseline doesn't list, `@main` or `secrets: inherit` in a workflow, a
+   crate without `publish = false`, a hash line without its `NOSONAR`, the Flatpak grant or an
+   `ai.storyteller` Flatpak manifest. Once a build script reads
    `CRAFT_I18N_DIR`, it also fails when a `release.yml` build sets `CRAFT_FONTS_DIR` without
    `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1` beside it. When a flagged named colour colours a page
    rather than chrome, `cargo xtask fork-check --write` records it. Search by hand for

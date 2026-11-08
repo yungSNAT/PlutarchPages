@@ -1,9 +1,10 @@
 //! `cargo xtask fork-check [--write]`: what PATCHES.md says an upstream merge must not undo.
 //! Each merge brings upstream's side of these back, so this runs after every merge and in
 //! `cargo xtask ci`: Red Queen work, running to keep the fork in the same place. It fails when:
-//! - a path names ArtCraft, or app code or packaging names it other than as 'the ArtCraft team'
-//!   or 'an ArtCraft product' (comments in Rust are left alone);
-//! - app code links to `github.com/storytold/pdfcraft` anywhere but `links::UPSTREAM`;
+//! - a path names ArtCraft, or app code, packaging, `.github/` or the xtask names it other than as
+//!   'the ArtCraft team' or 'an ArtCraft product' (comments and test modules in Rust are left alone);
+//! - app code or packaging names `storytold/pdfcraft` anywhere but `links::UPSTREAM`;
+//! - `UPDATE_APP` loses `repo: "yungSNAT/PlutarchPages"`, so updates would come from upstream's releases;
 //! - interface code uses a named colour (`Color32::WHITE` and the like) on a line that
 //!   `xtask/baselines/named-colours.txt` doesn't list (`--write` re-records it);
 //! - a workflow uses `@main`, a `craft-common-actions` reference that isn't a commit, or
@@ -22,12 +23,16 @@ use anyhow::{Context, Result, bail};
 const COLOUR_BASELINE: &str = "xtask/baselines/named-colours.txt";
 const RELEASE: &str = ".github/workflows/release.yml";
 const WEAK_HASH_FILES: [&str; 2] = ["crates/crypt/src/lib.rs", "crates/sign/src/keys.rs"];
+const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
+/// Its own rules name ArtCraft and upstream to look for them.
+const THIS_FILE: &str = "xtask/src/fork_check.rs";
 
 type Rule = fn(&Tree) -> Vec<String>;
 
-const RULES: [(&str, Rule); 9] = [
+const RULES: [(&str, Rule); 10] = [
     ("ArtCraft name", artcraft_names),
     ("upstream link", upstream_links),
+    ("update source", update_source),
     ("named colour", named_colours),
     ("workflow", workflow_refs),
     ("publish", unpublished_crates),
@@ -67,7 +72,7 @@ impl Tree {
 
 fn read_by_a_rule(path: &str) -> bool {
     !path.starts_with("vendor/")
-        && (["crates/", "apps/", "packaging/", ".github/workflows/"].iter().any(|d| path.starts_with(d))
+        && (["crates/", "apps/", "packaging/", ".github/", "xtask/src/"].iter().any(|d| path.starts_with(d))
             || path.ends_with("Cargo.toml")
             || path == COLOUR_BASELINE)
 }
@@ -125,23 +130,76 @@ fn app_code(tree: &Tree) -> impl Iterator<Item = (&str, &str)> {
 fn artcraft_names(tree: &Tree) -> Vec<String> {
     let mut out: Vec<String> =
         tree.paths.iter().filter(|p| p.to_ascii_lowercase().contains("artcraft")).map(|p| format!("{p}: the path names ArtCraft")).collect();
-    let scanned =
-        tree.text.iter().filter(|(p, _)| ((p.starts_with("crates/") || p.starts_with("apps/")) && !is_test(p)) || p.starts_with("packaging/"));
+    let scanned = tree.text.iter().filter(|(p, _)| {
+        let code = ["crates/", "apps/", "xtask/src/"].iter().any(|d| p.starts_with(d)) && !is_test(p) && *p != THIS_FILE;
+        code || p.starts_with("packaging/") || p.starts_with(".github/")
+    });
     for (path, text) in scanned {
-        for (n, line) in text.lines().enumerate() {
+        let rust = path.ends_with(".rs");
+        let lines = if rust { lines_outside_test_mods(text) } else { text.lines().enumerate().map(|(i, l)| (i + 1, l)).collect() };
+        for (n, line) in lines {
             let line = if path.ends_with(".tsv") {
                 catalogue_source(line)
-            } else if path.ends_with(".rs") && is_rust_comment(line) {
+            } else if rust && is_rust_comment(line) {
                 continue;
             } else {
                 line
             };
             if names_artcraft(line) {
-                out.push(format!("{path}:{}: {}", n + 1, excerpt(line)));
+                out.push(format!("{path}:{n}: {}", excerpt(line)));
             }
         }
     }
     out
+}
+
+/// Each line of Rust source with its number from 1, leaving out `#[cfg(test)]` modules.
+fn lines_outside_test_mods(text: &str) -> Vec<(usize, &str)> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        match test_mod_end(&lines, i) {
+            Some(end) => i = end + 1,
+            None => {
+                out.push((i + 1, lines[i]));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// The last line of the `#[cfg(test)]` module whose attribute is line `i`, if it is one.
+// shortcut: braces are counted without reading strings, characters or comments. A stray brace in
+// a test module ends it early or makes it unbalanced, and then its lines are read like any other,
+// which shows up as a false failure rather than a miss. Parse with `syn` if that happens.
+fn test_mod_end(lines: &[&str], i: usize) -> Option<usize> {
+    if lines[i].trim() != "#[cfg(test)]" {
+        return None;
+    }
+    let item = i + 1 + lines[i + 1..].iter().take_while(|l| l.trim_start().starts_with("#[")).count();
+    let head = lines.get(item)?.trim_start();
+    if !["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "].iter().any(|m| head.starts_with(m)) {
+        return None;
+    }
+    let (mut depth, mut opened) = (0i32, false);
+    for (k, line) in lines.iter().enumerate().skip(item) {
+        if !opened && line.trim_end().ends_with(';') {
+            return Some(k);
+        }
+        for c in line.chars() {
+            match c {
+                '{' => (depth, opened) = (depth + 1, true),
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        if opened && depth <= 0 {
+            return Some(k);
+        }
+    }
+    None
 }
 
 /// A catalogue row's context and English source: a translation of an allowed source is allowed.
@@ -157,15 +215,25 @@ fn names_artcraft(line: &str) -> bool {
 
 fn upstream_links(tree: &Tree) -> Vec<String> {
     let mut out = Vec::new();
-    for (path, text) in app_code(tree) {
+    for (path, text) in app_code(tree).chain(tree.under("packaging/")) {
         for (n, line) in text.lines().enumerate() {
             let credit = line.trim_start().starts_with("pub const UPSTREAM");
-            if !credit && !is_rust_comment(line) && line.to_ascii_lowercase().contains("github.com/storytold/pdfcraft") {
+            if !credit && !is_rust_comment(line) && line.to_ascii_lowercase().contains("storytold/pdfcraft") {
                 out.push(format!("{path}:{}: {} (point it at this fork)", n + 1, excerpt(line)));
             }
         }
     }
     out
+}
+
+/// Upstream's `UPDATE_APP` takes its repository from `craft_update::suite::PDFCRAFT`, so a merge
+/// that drops the fork's `repo` line reads and downloads upstream's releases.
+fn update_source(tree: &Tree) -> Vec<String> {
+    match tree.get(UPDATE_APP_FILE) {
+        Some(text) if text.lines().any(|l| l.trim() == "repo: \"yungSNAT/PlutarchPages\",") => Vec::new(),
+        Some(_) => vec![format!("{UPDATE_APP_FILE}: `UPDATE_APP` lacks `repo: \"yungSNAT/PlutarchPages\"`, so updates would come from upstream")],
+        None => vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")],
+    }
 }
 
 /// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant.
@@ -176,11 +244,10 @@ fn colour_lines(tree: &Tree) -> Vec<(&str, usize, &str)> {
         if !path.ends_with(".rs") || path == "crates/ui-egui/src/theme.rs" || path.contains("tests") {
             continue;
         }
-        let code = text.split("#[cfg(test)]").next().unwrap_or_default();
-        for (n, line) in code.lines().enumerate() {
+        for (n, line) in lines_outside_test_mods(text) {
             let named = line.match_indices("Color32::").any(|(i, m)| line[i + m.len()..].starts_with(|c: char| c.is_ascii_uppercase()));
             if named {
-                out.push((path, n + 1, line.trim()));
+                out.push((path, n, line.trim()));
             }
         }
     }
@@ -387,10 +454,16 @@ mod tests {
             ("crates/ui-egui/src/platform/updates.rs", "/// An updater that ignores ArtCraft Launcher's version choices."),
             ("crates/ui-egui/src/i18n/de.tsv", "\tBased on PdfCraft by the ArtCraft team.\tBasiert auf PdfCraft des ArtCraft-Teams."),
             ("crates/ui-egui/tests/it/links.rs", "assert_eq!(h.query_all_by_label(\"ArtCraft\").count(), 0);"),
+            ("xtask/src/assets.rs", "fn f() {}\n#[cfg(test)]\nmod tests {\n    const MARK: &str = \"docs/brand/artcraft-mark.svg\";\n}\n"),
+            (THIS_FILE, "if lower.contains(\"xdg-data/artcraft\") {}"),
         ];
         passes(artcraft_names, &credit);
         for (path, text) in [
             ("crates/ui-egui/src/home.rs", "widgets::artcraft_mark(ui, 28.0);"),
+            ("crates/ui-egui/src/home.rs", "#[cfg(test)]\nmod tests {}\nfn f() { widgets::artcraft_mark(ui, 28.0); }"),
+            ("crates/ui-egui/src/home.rs", "#[cfg(test)]\nuse crate::Harness;\nfn f() { widgets::artcraft_mark(ui, 28.0); }"),
+            ("xtask/src/brand.rs", "const MARK: &str = \"docs/brand/artcraft-mark.svg\";"),
+            (".github/workflows/release.yml", "      - run: echo \"Building ArtCraft PdfCraft\""),
             ("crates/engine/src/links.rs", "pub const DISCORD: &str = \"https://discord.gg/artcraft\";"),
             ("crates/engine/src/links.rs", "pub const WEBSITE: &str = \"https://getartcraft.com\";"),
             ("crates/ui-egui/src/i18n/de.tsv", "\tJoin the ArtCraft community\tTritt der ArtCraft-Community bei"),
@@ -415,17 +488,37 @@ mod tests {
         merged
             .push(("crates/ui-egui/src/platform/updates.rs", "pub const RELEASES_PAGE: &str = \"https://github.com/storytold/pdfcraft/releases\";"));
         fails(upstream_links, &merged, "updates.rs:1");
+        for (path, text) in [
+            ("crates/ui-egui/src/lib.rs", "    repo: \"storytold/pdfcraft\","),
+            ("packaging/linux/flatpak/io.github.Example.PlutarchPages.yml", "image: ghcr.io/storytold/pdfcraft:latest"),
+        ] {
+            let mut files = ok.to_vec();
+            files.push((path, text));
+            fails(upstream_links, &files, path);
+        }
+    }
+
+    #[test]
+    fn updates_come_from_this_fork() {
+        let app =
+            "pub const UPDATE_APP: App = App {\n    name: \"PlutarchPages\",\n    repo: \"yungSNAT/PlutarchPages\",\n    ..suite::PDFCRAFT\n};\n";
+        passes(update_source, &[(UPDATE_APP_FILE, app)]);
+        let merged = app.replace("    repo: \"yungSNAT/PlutarchPages\",\n", "");
+        fails(update_source, &[(UPDATE_APP_FILE, merged.as_str())], "lacks `repo");
+        fails(update_source, &[], "is missing");
     }
 
     #[test]
     fn a_named_colour_must_be_in_the_baseline() {
-        let canvas = "fn page() {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n#[cfg(test)]\nlet c = Color32::RED;\n";
+        // A test module's colours aren't listed; a colour after a test-only `use` is.
+        let canvas = "#[cfg(test)]\nuse crate::Harness;\nfn page() {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n#[cfg(test)]\nmod tests {\n    fn f() { let c = Color32::RED; }\n}\n";
         let others =
             [("crates/ui-egui/src/theme.rs", "pub const PAGE: Color32 = Color32::WHITE;"), ("crates/ui-egui/src/theme/tests.rs", "Color32::BLACK")];
         let mut files = vec![("crates/ui-egui/src/canvas.rs", canvas)];
         files.extend(others);
         let baseline = colour_baseline(&tree(&files));
         assert!(baseline.ends_with("crates/ui-egui/src/canvas.rs\tpainter.rect_filled(r, 0.0, Color32::WHITE);\n"), "{baseline}");
+        assert!(!baseline.contains("Color32::RED"), "{baseline}");
         files.push((COLOUR_BASELINE, baseline.as_str()));
         passes(named_colours, &files);
 
@@ -437,7 +530,13 @@ mod tests {
         let again = format!("fn border() {{\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}}\n{canvas}");
         let mut f = files.clone();
         f[0].1 = again.as_str();
-        fails(named_colours, &f, "canvas.rs:6");
+        fails(named_colours, &f, "canvas.rs:7");
+
+        // Code after a test module is still read.
+        let after = format!("{canvas}fn border() {{\n    painter.rect_filled(r, 0.0, Color32::BLACK);\n}}\n");
+        let mut f = files.clone();
+        f[0].1 = after.as_str();
+        fails(named_colours, &f, "canvas.rs:11");
 
         let mut f = files.clone();
         f.push(("crates/ui-egui/src/chrome.rs", "ui.label(RichText::new(name).color(egui::Color32::GRAY));"));
