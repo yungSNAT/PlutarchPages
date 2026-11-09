@@ -345,9 +345,17 @@ jobs:
         with:
           name: release-linux-${{ matrix.arch }}
           path: dist/linux
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
       - name: Build the package in an Arch container
         run: |
-          docker run --rm -e PDFCRAFT_VERSION -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "$ARCH_IMAGE" \
+          # The helper runs on the container host architecture for both packages.
+          rustc --edition=2024 -D warnings -C target-feature=+crt-static packaging/linux/arch-package.rs \
+            -o "$RUNNER_TEMP/plutarch-arch-package"
+          docker run --rm -e PDFCRAFT_VERSION -e PDFCRAFT_ARCH_HELPER=/opt/plutarch-arch-package \
+            -v "$RUNNER_TEMP/plutarch-arch-package:/opt/plutarch-arch-package:ro" \
+            -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "$ARCH_IMAGE" \
             bash packaging/linux/arch-package.sh "$TARGET_ARCH" "dist/linux/pdfcraft-$VERSION-linux-$TARGET_ARCH.tar.gz"
       # Arch publishes no arm64 image, and arch-package.sh has already checked the aarch64 package's contents.
       - name: Install it on Arch and run it
