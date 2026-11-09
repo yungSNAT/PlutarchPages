@@ -62,11 +62,12 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   that commit.
 - Flatpak manifests don't carry upstream's `--filesystem=xdg-data/ArtCraft/versions:ro` grant, which
   lets an upstream launcher's version choices reach the app.
-- Shared CI: workflows from `storytold/craft-common-actions` are pinned to a commit, and SonarCloud
-  receives only `SONAR_TOKEN`. Upstream merges restore `@main` and `secrets: inherit`, so reapply both.
-  `.github/workflows/house-rules.yml` isn't carried: it runs craft-common-actions at `@main` and
-  checks `AGENTS.md` against craft-contrib's, which this fork's departs from on purpose. Delete it
-  when a merge brings it back.
+- Shared CI: workflows from `storytold/craft-common-actions` are pinned to a commit. Upstream merges
+  restore `@main`, so reapply the pins. `.github/workflows/house-rules.yml` isn't carried: it runs
+  craft-common-actions at `@main` and checks `AGENTS.md` against craft-contrib's, which this fork's
+  departs from on purpose. Nor is `.github/workflows/sonarcloud.yml`: SonarQube Cloud analyses this
+  fork automatically (`.sonarcloud.properties`), so the workflow's scan was always skipped. Delete
+  either when a merge brings it back.
 - Releases: `.github/workflows/release.yml` is this fork's own and uses nothing from
   `craft-common-actions`. It builds unsigned packages, tests an installed MSI and an upgrade from the
   latest published release with `packaging/windows/test-install.ps1`, and only drafts the release. Keep it over
