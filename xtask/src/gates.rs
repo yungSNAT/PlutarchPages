@@ -136,13 +136,14 @@ pub fn ci(_: &[String]) -> anyhow::Result<()> {
 /// passes: a missing string shows in English. `--workspace` runs the test from the workspace
 /// test build, which `xtask ci` has just made; without it only the UI crate is built.
 pub fn i18n_report(args: &[String]) -> anyhow::Result<()> {
-    const TEST: &str = "i18n::tests::translation_gaps_report";
+    let test =
+        if args.iter().any(|a| a == "--fork") { "i18n::fork_tests::fork_translation_gaps_report" } else { "i18n::tests::translation_gaps_report" };
     const START: &str = "=== translation gaps ===";
     const END: &str = "=== end of translation gaps ===";
     let scope: &[&str] = if args.iter().any(|a| a == "--workspace") { &["--workspace"] } else { &["-p", "pdfcraft-ui-egui"] };
     let mut c = cargo();
-    c.arg("test").args(scope).args(["--lib", "--quiet", "--", TEST, "--exact", "--nocapture"]).stderr(std::process::Stdio::inherit());
-    eprintln!("$ cargo test {} --lib --quiet -- {TEST} --exact --nocapture", scope.join(" "));
+    c.arg("test").args(scope).args(["--lib", "--quiet", "--", test, "--exact", "--nocapture"]).stderr(std::process::Stdio::inherit());
+    eprintln!("$ cargo test {} --lib --quiet -- {test} --exact --nocapture", scope.join(" "));
     let out = match c.output() {
         Ok(out) => out,
         Err(e) => {
