@@ -79,11 +79,17 @@ Upstream announced the legacy RTEN download URLs' brownout in [ocrs #282](https:
 Runtime discovery prefers a complete ONNX detection/recognition pair within each directory, then a complete legacy `text-detection.rten` / `text-recognition.rten` pair.
 An incomplete ONNX update can therefore use an intact RTEN pair in the same directory.
 Discovery never combines model formats or files from different directories.
-Directory precedence stays the same: `$PDFCRAFT_MODELS`, the release-package locations beside the executable, then the source tree's `assets/models/`.
+Discovery tries an explicit `$PDFCRAFT_MODELS` override first, then the release-package
+locations beside the executable. Debug builds also try the source tree's `assets/models/`.
 The first directory with a complete supported pair wins, even if an earlier legacy pair precedes a later ONNX pair.
 
 The release-package locations are `models\` beside `pdfcraft.exe` (MSI, portable zip), `PlutarchPages.app/Contents/Resources/models` (macOS), and `share/pdfcraft/models` beside `bin/` (deb, rpm, tar.gz, AppImage, Flatpak, FreeBSD).
 The web build does not include these models, and OCR remains limited to the Latin alphabet without accents.
+
+A model entry may name a second HTTPS location in `mirror_url` for the exact same bytes.
+The downloader uses it if the primary download fails and verifies the same SHA-256.
+A hash mismatch stops packaging. The current model pair has no verified byte-identical
+mirror configured.
 
 ### macOS
 

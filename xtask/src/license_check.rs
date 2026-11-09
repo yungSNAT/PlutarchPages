@@ -387,6 +387,7 @@ mod tests {
         m.fetched.push(assets::Fetched {
             file: "synthetic.rten".into(),
             url: "https://example.org/model".into(),
+            mirror_url: None,
             title: "test model".into(),
             author: "test".into(),
             source: "https://example.org/card".into(),

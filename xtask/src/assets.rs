@@ -127,6 +127,9 @@ pub struct Bundled {
 pub struct Fetched {
     pub file: String,
     pub url: String,
+    /// Optional second location for the same pinned bytes.
+    #[serde(default)]
+    pub mirror_url: Option<String>,
     pub title: String,
     pub author: String,
     pub source: String,
@@ -292,6 +295,9 @@ pub fn check(root: &Path, m: &Manifest, repo_files: &[String], lock: &BTreeSet<(
         }
     }
     for f in &m.fetched {
+        if !download_name(&f.file) {
+            problems.push(format!("invalid fetched asset filename: {:?}", f.file));
+        }
         licence_ok(&f.file, &f.licence, &mut problems);
         if visual(&f.kind) && !ofl_font(&f.kind, &f.licence) && (mentions_adobe(&f.author) || mentions_adobe(&f.source) || mentions_adobe(&f.title)) {
             problems.push(format!("{}: {} from Adobe is forbidden (AGENTS.md §1.1)", f.file, f.kind));
@@ -301,6 +307,9 @@ pub fn check(root: &Path, m: &Manifest, repo_files: &[String], lock: &BTreeSet<(
         }
         if !f.url.starts_with("https://") || !f.licence_url.starts_with("https://") {
             problems.push(format!("{}: URLs must be https", f.file));
+        }
+        if f.mirror_url.as_ref().is_some_and(|url| !url.starts_with("https://") || url == &f.url) {
+            problems.push(format!("{}: mirror_url must be a distinct HTTPS URL", f.file));
         }
     }
     for b in &m.build_input {
@@ -321,32 +330,143 @@ pub fn fetch_all(m: &Manifest, dir: &Path, kind: &str) -> Result<Vec<PathBuf>> {
     std::fs::create_dir_all(dir)?;
     let mut out = Vec::new();
     for f in m.fetched.iter().filter(|f| f.kind == kind) {
+        if !download_name(&f.file) {
+            bail!("invalid fetched asset filename: {:?}", f.file);
+        }
         let path = dir.join(&f.file);
-        fetch_verified(&f.url, &path, &f.sha256)?;
+        fetch_verified(&f.url, f.mirror_url.as_deref(), &path, &f.sha256, download)?;
         let licence = dir.join(format!("{}.LICENCE.txt", f.file));
-        fetch_verified(&f.licence_url, &licence, &f.licence_sha256)?;
+        fetch_verified(&f.licence_url, None, &licence, &f.licence_sha256, download)?;
         out.push(path);
     }
     Ok(out)
 }
 
-fn fetch_verified(url: &str, path: &Path, sha256: &str) -> Result<()> {
+fn download_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.ends_with('.')
+        && name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-' | b'[' | b']' | b','))
+}
+
+fn download(url: &str, target: &Path) -> Result<()> {
+    println!("assets: fetching {url}");
+    let status = Command::new("curl")
+        .args(["--disable", "--globoff", "-sSfL", "--proto", "=https", "--proto-redir", "=https", "--retry", "3"])
+        .arg("--output")
+        .arg(target)
+        .args(["--", url])
+        .status()
+        .context("running curl")?;
+    if !status.success() {
+        bail!("download failed: {url} ({status})");
+    }
+    Ok(())
+}
+
+fn fetch_verified(url: &str, mirror: Option<&str>, path: &Path, sha256: &str, mut download: impl FnMut(&str, &Path) -> Result<()>) -> Result<()> {
+    if path.is_symlink() {
+        bail!("refusing to use a symlink as an asset destination: {}", path.display());
+    }
     if std::fs::read(path).is_ok_and(|b| sha256_hex(&b) == sha256) {
         return Ok(());
     }
-    println!("assets: fetching {url}");
-    let tmp = path.with_extension("part");
-    let status = Command::new("curl").args(["-sSfL", "--retry", "3", "-o"]).arg(&tmp).arg(url).status().context("running curl")?;
-    if !status.success() {
-        bail!("download failed: {url}");
+    let tmp = path.with_extension(format!("{}.part", std::process::id()));
+    // Reserve a private directory before curl opens its output. Curl can then truncate a
+    // failed attempt before retrying, which it cannot do with redirected stdout.
+    #[cfg(unix)]
+    let created = {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new().mode(0o700).create(&tmp)
+    };
+    #[cfg(not(unix))]
+    let created = std::fs::create_dir(&tmp);
+    created.context("create temporary download directory")?;
+    let file = tmp.join("download");
+    let result = (|| {
+        let source = match download(url, &file) {
+            Ok(()) => url,
+            Err(error) => {
+                let Some(mirror) = mirror else { return Err(error) };
+                if file.exists() {
+                    std::fs::remove_file(&file)?;
+                }
+                download(mirror, &file).with_context(|| format!("primary source failed: {error:#}"))?;
+                mirror
+            }
+        };
+        let bytes = std::fs::read(&file)?;
+        if sha256_hex(&bytes) != sha256 {
+            bail!("{source}: SHA-256 mismatch (expected {sha256}); refusing to use it");
+        }
+        Ok(())
+    })();
+    let result = result.and_then(|()| std::fs::rename(&file, path).context("install verified download"));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&file);
     }
-    let bytes = std::fs::read(&tmp)?;
-    if sha256_hex(&bytes) != sha256 {
-        let _ = std::fs::remove_file(&tmp);
-        bail!("{url}: SHA-256 mismatch (expected {sha256}); refusing to use it");
+    let _ = std::fs::remove_dir(&tmp);
+    result
+}
+
+#[cfg(test)]
+mod mirror_tests {
+    use super::*;
+
+    #[test]
+    fn fetched_asset_names_are_single_portable_components() {
+        for invalid in ["", ".", "..", "../model.onnx", "dir/model.onnx", "dir\\model.onnx", "model.onnx:alt", "/model.onnx"] {
+            assert!(!download_name(invalid), "{invalid:?}");
+        }
+        for asset in load(&root()).unwrap().fetched {
+            assert!(download_name(&asset.file), "{}", asset.file);
+        }
     }
-    std::fs::rename(&tmp, path)?;
-    Ok(())
+
+    #[test]
+    fn a_failed_primary_uses_only_a_hash_verified_mirror() {
+        let dir = std::env::temp_dir().join(format!("plutarch-ocr-mirror-{}", std::process::id()));
+        std::fs::create_dir(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        let sha = sha256_hex(b"verified");
+        let mut attempts = Vec::new();
+        let download = |url: &str, file: &Path| {
+            attempts.push(url.to_owned());
+            if url == "primary" {
+                std::fs::write(file, b"truncated")?;
+                bail!("primary unavailable");
+            }
+            assert!(!file.exists(), "partial primary was left behind");
+            std::fs::write(file, b"verified")?;
+            Ok(())
+        };
+        fetch_verified("primary", Some("mirror"), &path, &sha, download).unwrap();
+        assert_eq!(attempts, ["primary", "mirror"]);
+        assert_eq!(std::fs::read(&path).unwrap(), b"verified");
+
+        let expected = sha256_hex(b"new verified bytes");
+        let error = fetch_verified("primary", Some("mirror"), &path, &expected, |url, file| {
+            if url == "primary" {
+                bail!("primary unavailable");
+            }
+            std::fs::write(file, b"wrong")?;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("mirror: SHA-256 mismatch"), "{error:#}");
+
+        let error = fetch_verified("primary", Some("mirror"), &path, &expected, |url, file| {
+            assert_eq!(url, "primary", "a hash mismatch must never use the mirror");
+            std::fs::write(file, b"wrong")?;
+            Ok(())
+        })
+        .unwrap_err();
+        assert!(error.to_string().contains("primary: SHA-256 mismatch"), "{error:#}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"verified");
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "temporary file left behind");
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
 }
 
 /// `cargo xtask models [DIR]`: fetch the OCR models (`kind = "model"`) into `assets/models/` (git-ignored),
