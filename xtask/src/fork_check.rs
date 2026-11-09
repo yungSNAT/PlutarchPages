@@ -757,7 +757,7 @@ fn release_i18n(tree: &Tree) -> Vec<String> {
     for i in fonts {
         let block = block_around(&lines, i);
         let dir = block.iter().any(|l| set_to(l, "CRAFT_I18N_DIR").is_some_and(|v| !v.is_empty()));
-        let required = block.iter().any(|l| set_to(l, "CRAFT_I18N_REQUIRED") == Some("1"));
+        let required = block.iter().any(|l| set_to(l, "CRAFT_I18N_REQUIRED").is_some_and(|value| value.trim() == "1"));
         if !(dir && required) {
             out.push(format!("{RELEASE}:{}: CRAFT_FONTS_DIR is set without CRAFT_I18N_DIR and CRAFT_I18N_REQUIRED=1 beside it", i + 1));
         }
@@ -765,27 +765,52 @@ fn release_i18n(tree: &Tree) -> Vec<String> {
     out
 }
 
-/// The value a line gives `var` (`VAR: "x"` in YAML, `VAR=x` in a script), unquoted, up to a space.
+/// The value in a release YAML env entry, shell export or leading shell assignment.
 fn set_to<'a>(line: &'a str, var: &str) -> Option<&'a str> {
-    let line = before_comment(line);
-    line.match_indices(var).find_map(|(i, _)| {
-        if i > 0 && !line[..i].ends_with(char::is_whitespace) {
-            return None;
+    let line = line.trim_start();
+    if let Some(value) = line.strip_prefix(var).and_then(|rest| rest.strip_prefix(':')) {
+        let end = unquoted_end(value, |i, c| c == '#' && (i == 0 || value[..i].ends_with(char::is_whitespace)));
+        return unquote(value[..end].trim());
+    }
+
+    let export = line.strip_prefix("export").filter(|args| args.starts_with(char::is_whitespace));
+    let mut args = export.unwrap_or(line).trim_start();
+    while !args.is_empty() && !args.starts_with('#') {
+        let end = unquoted_end(args, |_, c| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')' | '<' | '>'));
+        let (word, rest) = args.split_at(end);
+        match word.split_once('=') {
+            Some((name, value)) if name == var => return unquote(value),
+            Some((name, _)) if shell_name(name) => {}
+            None if export.is_some() && shell_name(word) => {}
+            _ => break,
         }
-        let value = line[i + var.len()..].strip_prefix([':', '='])?.trim_start().trim_start_matches(['"', '\'']);
-        value.split(|c: char| c == '"' || c == '\'' || c.is_whitespace()).next()
-    })
+        if !rest.starts_with(char::is_whitespace) {
+            break;
+        }
+        args = rest.trim_start();
+    }
+    None
 }
 
-/// Ignore comments at the start of a word whilst keeping a literal `#` in a quoted value.
-fn before_comment(line: &str) -> &str {
-    let shell = line.trim_start().strip_prefix("export").is_some_and(|rest| rest.starts_with(char::is_whitespace));
+fn shell_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes.next().is_some_and(|b| b.is_ascii_alphabetic() || b == b'_') && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn unquote(value: &str) -> Option<&str> {
+    match value.chars().next() {
+        Some(quote @ ('"' | '\'')) => value.strip_prefix(quote)?.strip_suffix(quote),
+        _ => Some(value),
+    }
+}
+
+/// End of a simple YAML value or shell word, skipping quoted delimiters.
+fn unquoted_end(text: &str, stop: impl Fn(usize, char) -> bool) -> usize {
     let mut quote = None;
-    let mut at_word_start = true;
-    let mut chars = line.char_indices();
+    let mut chars = text.char_indices();
     while let Some((i, c)) = chars.next() {
         match (quote, c) {
-            (None, '#') if at_word_start => return &line[..i],
+            (None, _) if stop(i, c) => return i,
             (None, '"' | '\'') => quote = Some(c),
             (Some(open), close) if open == close => quote = None,
             (None | Some('"'), '\\') => {
@@ -793,9 +818,8 @@ fn before_comment(line: &str) -> &str {
             }
             _ => {}
         }
-        at_word_start = c.is_whitespace() || (shell && matches!(c, ';' | '|' | '&' | '(' | ')' | '<' | '>'));
     }
-    line
+    text.len()
 }
 
 /// The lines around `i` indented at least as far: its `env:` map, or the rest of its script.
@@ -1023,6 +1047,8 @@ mod tests {
         fails(release_i18n, &[build, (RELEASE, without.as_str())], "release.yml:5");
         let optional = with.replace("CRAFT_I18N_REQUIRED: \"1\"", "CRAFT_I18N_REQUIRED: \"0\"");
         fails(release_i18n, &[build, (RELEASE, optional.as_str())], "release.yml:5");
+        let incorrect_value = with.replace("CRAFT_I18N_REQUIRED: \"1\"", "CRAFT_I18N_REQUIRED: \"1 # required\"");
+        fails(release_i18n, &[build, (RELEASE, incorrect_value.as_str())], "release.yml:5");
         let commented = with.replace("      CRAFT_I18N_", "      # CRAFT_I18N_");
         fails(release_i18n, &[build, (RELEASE, commented.as_str())], "release.yml:5");
         let empty_dir = with.replace("${{ github.workspace }}/craft-i18n", "# checkouts belong here");
@@ -1045,6 +1071,11 @@ mod tests {
         fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{after_operator}").as_str())], "release.yml:14");
         let quoted_hash = both.replace("$PWD/craft-fonts", "$PWD/craft # fonts");
         passes(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{quoted_hash}").as_str())]);
+        let message = script.replace("          bash", "          echo \" Set CRAFT_I18N_DIR=translations CRAFT_I18N_REQUIRED=1\"\n          bash");
+        fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{message}").as_str())], "release.yml:14");
+        let inline_env = |s: &str| s.replace("export ", "").replace("\n          bash", " bash");
+        passes(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{}", inline_env(&both)).as_str())]);
+        fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{}", inline_env(script)).as_str())], "release.yml:14");
         fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{script}").as_str())], "release.yml:14");
         fails(release_i18n, &[build, (RELEASE, "jobs: {}\n")], "nothing sets CRAFT_FONTS_DIR");
     }
