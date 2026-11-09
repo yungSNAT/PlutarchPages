@@ -260,6 +260,16 @@ impl Document {
         self.editor.as_ref().and_then(|e| e.text_blocks(page).ok()).map(|b| b.as_ref().clone()).unwrap_or_default()
     }
 
+    /// The lines on `page` (0-based) and the paragraphs grouped from them, from one cached reading
+    /// of the page: each paragraph's `lines` index the returned lines.
+    pub fn text_lines_and_blocks(&self, page: usize) -> (Vec<pdfcraft_edit::TextLine>, Vec<pdfcraft_edit::TextBlock>) {
+        self.editor
+            .as_ref()
+            .and_then(|e| e.page_text(page).ok())
+            .map(|(lines, blocks)| (lines.as_ref().clone(), blocks.as_ref().clone()))
+            .unwrap_or_default()
+    }
+
     /// Saved measurement annotations, calculated from their geometry and PDF scales, plus
     /// the ones that couldn't be read (unsupported formats are skipped, not fatal).
     pub fn measurements(&self) -> Result<measure::Listing, String> {
@@ -306,7 +316,7 @@ impl Document {
 
     /// Edit a PDF ▸ Edit text: the lines of existing text on `page` (0-based).
     pub fn text_lines(&self, page: usize) -> Vec<pdfcraft_edit::TextLine> {
-        self.editor.as_ref().and_then(|e| pdfcraft_edit::text_lines(&e.cos, page).ok()).unwrap_or_default()
+        self.editor.as_ref().and_then(|e| e.page_text(page).ok()).map(|(lines, _)| lines.as_ref().clone()).unwrap_or_default()
     }
 
     /// The form's calculation order: its calculated fields in the order they calculate, what each
