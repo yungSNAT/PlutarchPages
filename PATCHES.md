@@ -6,6 +6,12 @@ upstream next.
 
 Last upstream merge: `5bb8bbf2` (8 November 2026).
 
+Upstream drift is checked every Monday at 04:43 UTC, and on demand through the
+**Upstream drift** workflow. It records the exact revisions, ahead/behind counts and merge-tree
+conflicts in the job summary and the standing **Upstream drift report** issue. It changes no branch.
+Run `cargo xtask upstream-drift` after fetching upstream to preview locally. A clean preview still
+needs `cargo xtask fork-check` and the normal checks before a reviewed merge.
+
 ## Stricter than upstream on purpose
 
 Upstream's tests for these were changed to assert the fork's behaviour. Keep them that way.

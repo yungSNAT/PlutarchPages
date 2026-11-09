@@ -14,6 +14,7 @@ mod macos_integration;
 mod netcheck;
 mod parity;
 mod screenshots;
+mod upstream_drift;
 mod version;
 
 type Command = fn(&[String]) -> anyhow::Result<()>;
@@ -31,6 +32,11 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ),
     ("test", "Workspace tests: cargo nextest (cargo test when it is missing), then doctests", gates::test),
     ("i18n-report", "Print the strings each interface language lacks (counts and a few keys); never fails", gates::i18n_report),
+    (
+        "upstream-drift",
+        "Report ahead/behind counts and merge conflicts against upstream/main (or REF), without changing the checkout",
+        upstream_drift::run,
+    ),
     ("license-check", "Offline source licence documents, attribution and metadata", license_check::run),
     ("assets", "Enforce the asset policy (AGENTS.md §1) against ATTRIBUTION.toml; --write regenerates ATTRIBUTION.md", assets::run),
     ("fork-check", "Fail when a merge undoes what PATCHES.md says the fork keeps; --write re-records the named-colour baseline", fork_check::run),
