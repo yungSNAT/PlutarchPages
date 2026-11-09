@@ -4,24 +4,26 @@ use super::{
     Arc, CliError, Command, Duration, Instant, PageRenderer, Path, PathBuf, RenderConfig, RenderRequest, RequestKind, Stdio, inspect, stdout_line,
 };
 
-/// Audit a document for faux redactions. Prints the findings as JSON; fails when any are
-/// found so scripts and CI can gate on it, and when the audit itself cannot run.
+/// Print redaction audit findings as JSON. Fail on covered text, unapplied marks or audit errors.
 pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
     validate_options("audit", args, AUDIT_OPTIONS)?;
     let path = *positional(args, AUDIT_OPTIONS).first().ok_or("audit: missing file")?;
     let bytes = read(path)?;
     let password = flag(args, "--password");
     let doc = pdfcraft_cos::Document::open_with_password(bytes.clone(), password).map_err(|e| format!("{path}: {e}"))?;
-    let findings = pdfcraft_audit::audit_redactions(&doc).map_err(|e| format!("{path}: {e}"))?;
+    let report = pdfcraft_audit::audit_document(&doc).map_err(|e| format!("{path}: {e}"))?;
     // Rectangles in points from the top-left of the displayed page, as `doc_audit_redactions`
     // reports them; the page geometry is read only when there is something to place.
-    let info = if findings.is_empty() {
+    let info = if report.page_findings.is_empty() {
         None
     } else {
         let render_password = pdfcraft_engine::render_password_for(bytes.clone(), password);
         Some(inspect(bytes, render_password.as_deref()).map_err(|e| format!("{path}: {e}"))?)
     };
-    let items: Vec<serde_json::Value> = findings
+    use pdfcraft_audit::FindingKind::{CoveredText, UnappliedMark};
+    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | UnappliedMark)).count();
+    let items: Vec<serde_json::Value> = report
+        .page_findings
         .into_iter()
         .map(|f| {
             let rect = f.rect.map(|v| v as f32);
@@ -33,8 +35,12 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
             })
         })
         .collect();
-    println!("{}", serde_json::json!({ "file": path, "findings": items, "count": items.len() }));
-    if items.is_empty() { Ok(()) } else { Err(format!("audit: {} faux redaction(s) found", items.len()).into()) }
+    let document: Vec<_> = report.document_findings.iter().map(|f| serde_json::json!({ "kind": f.kind, "count": f.count })).collect();
+    println!(
+        "{}",
+        serde_json::json!({ "file": path, "findings": items, "count": items.len(), "document_findings": document, "document_count": document.len() })
+    );
+    if failures == 0 { Ok(()) } else { Err(format!("audit: {failures} potential redaction leak finding(s)").into()) }
 }
 
 /// Child-process body for `check`: prints one JSON line.

@@ -503,6 +503,14 @@ pub(super) struct Carry {
     pub(super) ocr: Vec<bool>,
     /// Bytes of glyph text the rest of the page may still produce (see [`MAX_PAGE_TEXT`]).
     pub(super) text_left: usize,
+    pub(super) advance_gaps: Option<Vec<AdvanceGap>>,
+}
+
+/// A forward `TJ` displacement, from baseline start to baseline end in page user space.
+pub(super) struct AdvanceGap {
+    pub(super) op: usize,
+    pub(super) from: (f64, f64),
+    pub(super) to: (f64, f64),
 }
 
 /// The most glyph text one page's extraction produces, in bytes. A ToUnicode destination is
@@ -533,7 +541,7 @@ impl Carry {
             dash: (Vec::new(), 0.0),
             line_cap: 0,
         };
-        Carry { ts, stack: Vec::new(), marked: Vec::new(), layers: Vec::new(), ocr: Vec::new(), text_left: MAX_PAGE_TEXT }
+        Carry { ts, stack: Vec::new(), marked: Vec::new(), layers: Vec::new(), ocr: Vec::new(), text_left: MAX_PAGE_TEXT, advance_gaps: None }
     }
 }
 
@@ -718,6 +726,23 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
             }
             other => {
                 if let Some(n) = other.as_f64() {
+                    // Small forward corrections are ordinary kerning and tracking. Report
+                    // larger gaps only to callers that requested them for the redaction audit.
+                    let forward = -n * vertical.map_or(1.0, f64::signum);
+                    if forward > 250.0
+                        && let Some(gaps) = &mut carry.advance_gaps
+                    {
+                        if gaps.len() == 100_000 {
+                            return Err(EditError::Invalid("page has too many text advance gaps to audit".into()));
+                        }
+                        let from = trm0.apply(x_text, ts.rise + y_text);
+                        let to = if vertical.is_some() {
+                            trm0.apply(x_text, ts.rise + y_text - n / 1000.0 * ts.size)
+                        } else {
+                            trm0.apply(x_text - n / 1000.0 * ts.size * ts.scale, ts.rise + y_text)
+                        };
+                        gaps.push(AdvanceGap { op: i, from, to });
+                    }
                     if vertical.is_some() {
                         // Down by n/1000 em, not scaled by `Tz`.
                         let dy = -n / 1000.0 * ts.size;

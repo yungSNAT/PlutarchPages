@@ -517,7 +517,7 @@ fn incremental_saves_of_a_file_with_bytes_before_its_header_count_from_the_heade
 #[test]
 fn incremental_saves_of_a_file_whose_offsets_count_from_its_first_byte_keep_counting_so() {
     // The other convention: the same file, but its offsets include the bytes before the header.
-    let prefix = vec![b'#'; 128];
+    let prefix = vec![b'#'; 512];
     let mut input = [prefix.as_slice(), &classic_table()].concat();
     let xref = input.windows(6).rposition(|w| w == b"\nxref\n").unwrap() + 1;
     let table: String = String::from_utf8_lossy(&input[xref..])
@@ -540,6 +540,7 @@ fn incremental_saves_of_a_file_whose_offsets_count_from_its_first_byte_keep_coun
     let back = Document::open(Arc::new(saved.clone())).unwrap();
     assert!(back.repair_log().is_empty(), "{:?}", back.repair_log());
     assert_eq!(back.revisions().len(), 2);
+    assert_eq!(back.revision_ends(), [input.len(), saved.len()]);
     assert!(back.xref_entry_is_exact(1));
     // No qpdf check here: qpdf counts every offset from the header in a file with bytes before
     // it, so it already reconstructs this input before anything is appended.

@@ -575,12 +575,17 @@ impl Document {
         self.editor.as_ref().map(|e| pdfcraft_redact::sanitize::scan(&e.cos)).unwrap_or_default()
     }
 
-    /// Verification: faux redactions (opaque covers over extractable text) and redaction
-    /// marks that were never applied. Fails closed: any read error is returned, never an
-    /// empty list.
+    /// Verification: faux redactions and unapplied marks. Unreadable content is an error.
     pub fn audit_redactions(&self) -> Result<Vec<pdfcraft_audit::AuditFinding>, String> {
         let editor = self.editor.as_ref().ok_or("the document can't be read")?;
         pdfcraft_audit::audit_redactions(&editor.cos).map_err(|e| e.to_string())
+    }
+
+    /// Verification: faux redactions, unapplied marks, retained text advances and
+    /// document-wide exposure signals. Unreadable content is an error.
+    pub fn audit_document(&self) -> Result<pdfcraft_audit::AuditReport, String> {
+        let editor = self.editor.as_ref().ok_or("the document can't be read")?;
+        pdfcraft_audit::audit_document(&editor.cos).map_err(|e| e.to_string())
     }
 
     /// Every page's media, crop, bleed, trim and art boxes (user space), for Set Page Boxes.

@@ -72,7 +72,8 @@ impl Document {
         let d = &self.data[..];
         let mut ends: Vec<usize> = Vec::with_capacity(self.revisions.len());
         for r in self.revisions.iter() {
-            let from = (r.xref_offset as usize).saturating_add(self.header_offset).min(d.len());
+            let shift = if r.header_relative { self.header_offset } else { 0 };
+            let from = (r.xref_offset as usize).saturating_add(shift).min(d.len());
             let Some(at) = d[from..].windows(5).position(|w| w == b"%%EOF") else { continue };
             let mut end = from + at + 5;
             while end < d.len() && matches!(d[end], b'\r' | b'\n') && end - (from + at + 5) < 2 {
@@ -304,13 +305,19 @@ impl Document {
     /// Follow a reference if `o` is one; otherwise return `o` itself. An object can be nothing but
     /// a reference to another, which is followed too, up to [`MAX_REFERENCE_HOPS`] of them.
     pub fn resolve(&self, o: &Object) -> Arc<Object> {
-        let Object::Ref(r) = o else { return Arc::new(o.clone()) };
-        let mut held = self.get(*r);
+        self.try_resolve(o).unwrap_or_else(|_| Arc::new(Object::Null))
+    }
+
+    /// Resolve like [`Self::resolve`], preserving errors loading a referenced object.
+    /// Undefined references still resolve to null.
+    pub fn try_resolve(&self, o: &Object) -> Result<Arc<Object>, CosError> {
+        let Object::Ref(r) = o else { return Ok(Arc::new(o.clone())) };
+        let mut held = self.try_get_reference(*r)?;
         for _ in 0..MAX_REFERENCE_HOPS {
             let Object::Ref(r) = &*held else { break };
-            held = self.get(*r);
+            held = self.try_get_reference(*r)?;
         }
-        held
+        Ok(held)
     }
 
     /// `s` with the `/DecodeParms` its filters use made direct, so [`Stream::decoded`] reads them:

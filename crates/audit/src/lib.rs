@@ -1,8 +1,9 @@
-//! Verification tooling: audit a document for faux redactions.
+//! Verification tooling: audit a document for potential redaction leaks.
 //!
 //! [`audit_redactions`] finds *faux redactions* — opaque filled rectangles drawn over text
 //! that is still extractable underneath — and redaction annotations that were marked but
-//! never applied. A properly applied redaction removes the text, so it never flags.
+//! never applied. [`audit_document`] also reports covered numeric text gaps, earlier
+//! revisions and retained metadata. Those signals do not establish that text survived.
 //!
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
 //! overlaps, and only when it is dark enough against the text's color to make the text
@@ -24,8 +25,8 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
-use pdfcraft_cos::{Dict, Document};
-use pdfcraft_edit::TextLine;
+use pdfcraft_cos::{Dict, Document, Object};
+use pdfcraft_edit::{TextLine, text::GlyphAdvanceGap};
 
 mod cover;
 
@@ -39,6 +40,8 @@ pub enum FindingKind {
     CoveredText,
     /// A `/Redact` annotation was placed but never applied: the text is untouched.
     UnappliedMark,
+    /// An opaque cover aligns with a numeric text displacement whose width remains readable.
+    RetainedAdvance,
 }
 
 impl FindingKind {
@@ -51,6 +54,7 @@ impl FindingKind {
         match self {
             FindingKind::CoveredText => "covered-text",
             FindingKind::UnappliedMark => "unapplied-mark",
+            FindingKind::RetainedAdvance => "retained-advance",
         }
     }
 }
@@ -69,6 +73,17 @@ pub struct AuditFinding {
     pub covered_text: String,
 }
 
+/// One document-wide exposure signal. Reports counts without disclosing metadata values.
+pub struct DocumentFinding {
+    pub kind: &'static str,
+    pub count: usize,
+}
+
+pub struct AuditReport {
+    pub page_findings: Vec<AuditFinding>,
+    pub document_findings: Vec<DocumentFinding>,
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AuditError {
     #[error("page {0}: {1}")]
@@ -85,6 +100,8 @@ pub enum AuditError {
     TooManyComparisons,
     #[error("covered text exceeds the audit's report budget")]
     TooMuchOutput,
+    #[error("document metadata has an invalid {0} entry")]
+    BadMetadata(&'static str),
     #[error(transparent)]
     Cos(#[from] pdfcraft_cos::CosError),
     #[error(transparent)]
@@ -112,6 +129,39 @@ const TEXT_BYTES_PER_COMPARISON: usize = 16;
 /// would refuse.
 pub fn audit_redactions(doc: &Document) -> Result<Vec<AuditFinding>, AuditError> {
     audit(doc, Limits::DEFAULT)
+}
+
+/// Audit page contents, retained text advances, and document-wide exposure signals.
+pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
+    let mut document_findings = Vec::new();
+    // The xref chain can have multiple sections for one linearized revision. Reuse the
+    // byte boundaries, which collapse those sections, instead of counting xrefs.
+    let earlier = doc.revision_ends().len().saturating_sub(1);
+    if earlier > 0 {
+        document_findings.push(DocumentFinding { kind: "earlier-revisions", count: earlier });
+    }
+    if let Some(value) = metadata_entry(doc, doc.trailer(), b"Info")? {
+        let Object::Dict(info) = &*value else { return Err(AuditError::BadMetadata("Info")) };
+        if !info.is_empty() {
+            document_findings.push(DocumentFinding { kind: "document-info", count: info.len() });
+        }
+    }
+    let root = doc.root().ok_or(AuditError::BadMetadata("catalogue"))?;
+    let root = doc.get(root);
+    let Object::Dict(catalog) = &*root else { return Err(AuditError::BadMetadata("catalogue")) };
+    if let Some(value) = metadata_entry(doc, catalog, b"Metadata")? {
+        if !matches!(&*value, Object::Stream(_)) {
+            return Err(AuditError::BadMetadata("Metadata"));
+        }
+        document_findings.push(DocumentFinding { kind: "xmp-metadata", count: 1 });
+    }
+    Ok(AuditReport { page_findings: audit_pages(doc, Limits::DEFAULT, true)?, document_findings })
+}
+
+fn metadata_entry(doc: &Document, dict: &Dict, key: &[u8]) -> Result<Option<std::sync::Arc<Object>>, AuditError> {
+    let Some(entry) = dict.get(key) else { return Ok(None) };
+    let value = doc.try_resolve(entry)?;
+    Ok((!matches!(&*value, Object::Null)).then_some(value))
 }
 
 /// Work and output bounds for one audit.
@@ -209,19 +259,35 @@ impl Budget {
 }
 
 fn audit(doc: &Document, limits: Limits) -> Result<Vec<AuditFinding>, AuditError> {
+    audit_pages(doc, limits, false)
+}
+
+fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<Vec<AuditFinding>, AuditError> {
     let copying = doc.permissions().is_none_or(|p| p.copy());
     let mut budget = Budget { limits, comparisons: 0, page_cost: 0, covered_text: 0 };
     let mut out = Vec::new();
     for (n, page) in pdfcraft_model::pages(doc).iter().enumerate() {
         // The glyphs themselves: `/ActualText` is the file's own claim about them, and an empty
         // or substitute one must not hide text a cover sits on.
-        let lines = pdfcraft_edit::glyph_text_lines(doc, page).map_err(|e| AuditError::Text(n, e.to_string()))?;
+        let (lines, gaps) = if report_advances {
+            pdfcraft_edit::text::glyph_text_with_gaps(doc, page)
+        } else {
+            pdfcraft_edit::glyph_text_lines(doc, page).map(|lines| (lines, Vec::new()))
+        }
+        .map_err(|e| AuditError::Text(n, e.to_string()))?;
         budget.start_page(&lines);
         // 1. Opaque filled rectangles over extractable text.
         for r in cover::filled_rects(doc, &page.dict)? {
             if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |line| is_cover(&r, line))? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
+            }
+            if !gaps.is_empty() {
+                budget.spend(gaps.len())?;
+                if gaps.iter().any(|gap| gap.paint_pos < r.pos && covers_gap(&r.rect, gap)) {
+                    let covered_text = budget.report_text(String::new(), copying)?;
+                    out.push(AuditFinding { page: n, kind: FindingKind::RetainedAdvance, rect: r.rect, covered_text });
+                }
             }
         }
         // 2. Annotation covers over extractable text.
@@ -243,6 +309,14 @@ fn audit(doc: &Document, limits: Limits) -> Result<Vec<AuditFinding>, AuditError
         }
     }
     Ok(out)
+}
+
+fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
+    // Both endpoints inside the cover implies the whole displacement is covered, even for
+    // rotated text. A small tolerance accounts for independent rounding of path and glyphs.
+    let inside = |(x, y)| rect[0] - 0.05 <= x && x <= rect[2] + 0.05 && rect[1] - 0.05 <= y && y <= rect[3] + 0.05;
+    let width = (gap.to.0 - gap.from.0).hypot(gap.to.1 - gap.from.1);
+    width.is_finite() && width > 0.05 && inside(gap.from) && inside(gap.to)
 }
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
