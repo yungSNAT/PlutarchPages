@@ -4,7 +4,7 @@ name: Fuzz
 # are uploaded as an artifact; each real one becomes a synthetic regression test.
 on:
   schedule:
-    - cron: "17 3 * * *"
+    - cron: "18 3 * * *"
   workflow_dispatch:
 
 # The token is only used to check out the code: no job writes to the repository.

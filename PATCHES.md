@@ -103,6 +103,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   shipped, so they can't be installed alongside upstream's either.
 - `packaging/linux/nfpm.yaml` takes its glibc floors from `package.sh`, because riscv64 builds on Ubuntu
   24.04 and needs 2.39. Upstream hard-codes 2.35, which understates it there.
+- Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
+  stops it when that account can no longer run workflows. `fuzz.yml` runs at 03:18 UTC, a minute
+  after upstream's, so that this repository's account is its actor. Taking upstream's line in a
+  merge is fine: the merging account becomes the actor.
 - Windows registration: `PlutarchPages.*` names and its own context-menu component GUIDs, so it doesn't
   share registry state with an upstream install. `pdfcraft.exe` stays, so `App Paths\pdfcraft.exe` and
   `Applications\pdfcraft.exe` are still shared: installing it alongside upstream isn't supported.
