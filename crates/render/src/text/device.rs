@@ -147,10 +147,13 @@ impl TextDevice {
             self.glyphs.extend(drawn.into_iter().filter(|d| !d.2.text.chars().all(|c| c.is_control())));
             return;
         }
-        let Some(glyph) = merge(&drawn, text.clone()) else {
+        let Some(mut glyph) = merge(&drawn, text.clone()) else {
             self.glyphs.extend(drawn.into_iter().filter(|d| !d.2.text.chars().all(char::is_control)));
             return;
         };
+        if self.visibility.on && glyph.3.is_none() && ascii_replacement_differs(&text, &drawn) {
+            glyph.3 = Some(HiddenReason::ActualTextDiffers);
+        }
         let originals = drawn.iter().filter(|d| !d.2.text.chars().all(char::is_control)).map(|d| (d.2.text.clone(), d.2.rect)).collect();
         let at = if text.chars().all(char::is_control) {
             None
@@ -261,10 +264,32 @@ fn text_debug() -> bool {
     *DEBUG.get_or_init(|| std::env::var_os("PDFCRAFT_TEXT_DEBUG").is_some())
 }
 
+/// Compare only nonempty ASCII text, ignoring whitespace. Shaping, Unicode normalisation and
+/// legitimate replacements for glyphs with no Unicode need a separate visual comparison.
+fn ascii_replacement_differs(text: &str, drawn: &[Drawn]) -> bool {
+    let comparable = |c: char| c.is_ascii_graphic() || c.is_ascii_whitespace();
+    let originals = drawn.iter().flat_map(|d| d.2.text.chars());
+    text.chars().all(comparable)
+        && text.chars().any(|c| c.is_ascii_alphanumeric())
+        && drawn.iter().all(|d| !d.2.text.is_empty() && d.2.text.chars().all(comparable))
+        && originals.clone().any(|c| c.is_ascii_alphanumeric())
+        && !originals.filter(|c| !c.is_ascii_whitespace()).eq(text.chars().filter(|c| !c.is_ascii_whitespace()))
+}
+
 impl<'a> Device<'a> for TextDevice {
-    fn set_soft_mask(&mut self, _: Option<SoftMask<'a>>) {}
-    fn set_blend_mode(&mut self, _: BlendMode) {}
-    fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'a>, _: &PathDrawMode) {}
+    fn set_soft_mask(&mut self, mask: Option<SoftMask<'a>>) {
+        if mask.is_some() {
+            self.visibility.forget_backdrop();
+        }
+    }
+    fn set_blend_mode(&mut self, blend: BlendMode) {
+        if blend != BlendMode::Normal {
+            self.visibility.forget_backdrop();
+        }
+    }
+    fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'a>, _: &PathDrawMode) {
+        self.visibility.forget_backdrop();
+    }
     fn push_clip_path(&mut self, _: &ClipPath) {}
     fn push_transparency_group(&mut self, opacity: f32, _: Option<SoftMask<'a>>, _: BlendMode) {
         self.visibility.push_group(opacity);
@@ -281,6 +306,9 @@ impl<'a> Device<'a> for TextDevice {
             Some(hayro::hayro_interpret::hayro_cmap::BfString::String(s)) => s,
             None if replaced => String::new(),
             None => {
+                if matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_)) {
+                    self.visibility.forget_backdrop();
+                }
                 if text_debug() {
                     eprintln!(
                         "NOUNICODE {} {:?}",
@@ -292,6 +320,9 @@ impl<'a> Device<'a> for TextDevice {
             }
         };
         if !replaced && text.chars().all(char::is_control) {
+            if matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_)) {
+                self.visibility.forget_backdrop();
+            }
             return;
         }
         // Glyph space → view space. Glyph space uses 1000 units per em for outline glyphs; the em
@@ -348,19 +379,32 @@ impl<'a> Device<'a> for TextDevice {
         let em_height = matches!(glyph, Glyph::Outline(_)).then(|| 1000.0 * coefficients[2].hypot(coefficients[3]));
         // A glyph whose Unicode is several characters (a ligature such as "ffi") stays one glyph
         // with its own box: the PDF gives no position for the characters inside it.
+        let mut hidden = self.visibility.class(paint, mode, em_height, b);
+        if self.visibility.on
+            && hidden.is_none()
+            && matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_))
+            && let Glyph::Outline(outline) = glyph
+            && let Some(encoded) = outline.standard_encoding_char().filter(char::is_ascii_alphanumeric)
+            && let [decoded] = text.as_bytes()
+            && decoded.is_ascii_alphanumeric()
+            && char::from(*decoded) != encoded
+        {
+            hidden = Some(HiddenReason::FontMappingDiffers);
+        }
         let glyph = TextGlyph {
             text,
             rect: [b.x0 as f32, b.y0 as f32, b.x1 as f32, b.y1 as f32],
             quad: corners.map(|p| [p.x as f32, p.y as f32]),
             direction: direction.map(|d| d as f32),
         };
-        let hidden = self.visibility.class(paint, mode, em_height);
         match &mut self.actual {
             Some((_, _, drawn)) => drawn.push((dir, direction, glyph, hidden)),
             None => self.glyphs.push((dir, direction, glyph, hidden)),
         }
     }
-    fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {}
+    fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {
+        self.visibility.forget_backdrop();
+    }
     fn pop_clip_path(&mut self) {}
     fn pop_transparency_group(&mut self) {
         self.visibility.pop_group();
@@ -426,7 +470,9 @@ fn extract(
     let mut dev = TextDevice::new();
     dev.page = initial.transform_rect_bbox(Rect::new(c.x0, c.y0, c.x1, c.y1));
     dev.filter = filter;
-    dev.visibility.on = classify;
+    if classify {
+        dev.visibility.enable();
+    }
     interpret_page(p, &mut ctx, &mut dev);
     // A replacement the content never closed ends with the page.
     dev.finish();
@@ -524,6 +570,10 @@ fn extract(
     let mut text = PageText::default();
     let mut hidden = Vec::new();
     let mut emit = |text: &mut PageText, ids: &[usize], line_of: &[u32], space_before: &[bool], quarter: Option<u8>| {
+        // Quarter-turn flows are emitted one line at a time. Only inspect horizontal lines.
+        if classify && quarter == Some(0) {
+            mark_reversed_ascii_pairs(&mut slots, ids);
+        }
         let offset = text.line_of.last().map_or(0, |line| line.saturating_add(1));
         for ((&i, &line), &space) in ids.iter().zip(line_of).zip(space_before) {
             let Some((mut g, class)) = slots.get_mut(i).and_then(Option::take) else { continue };
@@ -553,4 +603,24 @@ fn extract(
         emit(&mut text, &f.ids, &f.line_of, &f.space_before, None);
     }
     Ok((text, hidden))
+}
+
+/// Mark one glyph at each source-order inversion on a visually ordered horizontal line. Skip
+/// overlaps, RTL, punctuation-only runs and any pair already classed as hidden.
+fn mark_reversed_ascii_pairs(slots: &mut [Option<(TextGlyph, Option<HiddenReason>)>], ids: &[usize]) {
+    for (&left, &right) in ids.iter().zip(ids.iter().skip(1)) {
+        if left <= right {
+            continue;
+        }
+        let Some(Some((a, None))) = slots.get(left) else { continue };
+        let Some(Some((b, None))) = slots.get(right) else { continue };
+        let comparable = |g: &TextGlyph| g.text.is_ascii() && g.text.bytes().any(|c| c.is_ascii_alphanumeric());
+        if comparable(a)
+            && comparable(b)
+            && a.rect[2] <= b.rect[0] + 0.1
+            && let Some(Some((_, reason))) = slots.get_mut(left)
+        {
+            *reason = Some(HiddenReason::SourceOrderDiffers);
+        }
+    }
 }
