@@ -57,7 +57,8 @@ impl Models {
     }
 
     /// Look for the models: `$PDFCRAFT_MODELS`, then `models/` beside the executable (and
-    /// `Resources/models` in a macOS bundle), then the source tree's `assets/models/`.
+    /// `Resources/models` in a macOS bundle). Debug builds also try the source tree's
+    /// `assets/models/`.
     pub fn find() -> Option<Models> {
         Self::search_dirs().iter().find_map(|d| Self::in_dir(d))
     }
@@ -71,6 +72,7 @@ impl Models {
         if let Some(exe) = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf)) {
             dirs.extend(Self::dirs_beside_exe(&exe));
         }
+        #[cfg(debug_assertions)]
         dirs.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models"));
         dirs
     }
@@ -247,5 +249,14 @@ mod tests {
             Models::in_dir(dir.path()),
             Some(Models { detection: dir.path().join("text-detection.rten"), recognition: dir.path().join("text-recognition.rten") })
         );
+    }
+
+    #[test]
+    fn release_model_discovery_excludes_the_source_checkout() {
+        let source_models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models");
+        let dirs = Models::search_dirs();
+        // An explicit override is still allowed in either profile.
+        let has_source = dirs.iter().skip(usize::from(std::env::var_os("PDFCRAFT_MODELS").is_some())).any(|dir| dir == &source_models);
+        assert_eq!(has_source, cfg!(debug_assertions), "{dirs:?}");
     }
 }
