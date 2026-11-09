@@ -37,16 +37,20 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Mermaid colour scheme: `crates/ui-egui/src/theme.rs` holds every interface colour, and
   `chrome_literals_stay_in_the_theme` fails when a merge brings a colour literal back. The catalogue
   hues in `crates/engine/src/catalog.rs`, the app icon and `UPDATE_APP`'s accent follow it. The test
-  only sees hexadecimal literals: decimal ones such as `from_rgb(230, 126, 34)` and named colours
-  such as `Color32::WHITE` on chrome need searching by hand when upstream moves or adds a control.
+  only sees hexadecimal literals: decimal ones such as `from_rgb(230, 126, 34)` on chrome need
+  searching by hand when upstream moves or adds a control. `cargo xtask fork-check` flags a line with
+  a named colour, such as `Color32::WHITE`, that `xtask/baselines/named-colours.txt` doesn't list; a
+  line it lists can still move onto chrome, so look at the controls upstream moves.
 - Brand: no ArtCraft name or logos (`AGENTS.md` section 1.2). Upstream merges add them back, in new
-  files too, so search for them after every merge.
+  files too. `cargo xtask fork-check` finds the name in paths, app code, packaging, `.github/` and
+  the xtask; trademark-licensed assets still need a search.
   `LICENSES.toml` has no `docs/brand/LICENSE-brand.txt` document, and its `NOTICE` hash is the
   fork's `NOTICE`.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
-  and binaries the updater installs.
+  and binaries the updater installs. `PDFCRAFT_NS` in `crates/xfdf/src/xfdf.rs` keeps upstream's
+  URL: it is the XFDF namespace of PdfCraft's own attributes, so XFDF files interchange with PdfCraft.
 - Update results: `crates/ui-egui/src/platform/updates.rs` keeps the fork's themed, translated dialog
   over `craft_update`'s `CheckResultDialog`, which is English only with its own colours. Upstream
   merges change `crates/ui-egui/tests/it/updates.rs`, so keep the fork's tests there. Its strings
@@ -157,8 +161,17 @@ hayro-jbig2 11, hayro-syntax 30 and 31, and hayro-interpret 73 aren't here.
 ## Merging upstream
 
 1. `git merge --no-ff` upstream's `main` on a `ryan/` branch. Never rewrite history.
-2. Search for ArtCraft names (packaging too), trademark-licensed assets, `storytold/pdfcraft` links in
-   app code and new colour literals, named colours included.
-3. Run `cargo xtask ci`. `cargo xtask assets --write` regenerates `ATTRIBUTION.md`.
+2. Run `cargo xtask fork-check`. It fails when the merge brings back an ArtCraft name, a
+   `storytold/pdfcraft` reference in app code or packaging (other than `links::UPSTREAM` and
+   `PDFCRAFT_NS`), an `UPDATE_APP` without the fork's
+   `repo`, a named colour the baseline doesn't list, `@main` or `secrets: inherit` in a workflow, a
+   crate without `publish = false`, a hash line without its `NOSONAR`, the Flatpak grant or an
+   `ai.storyteller` Flatpak manifest. Once a build script reads
+   `CRAFT_I18N_DIR`, it also fails when a `release.yml` build sets `CRAFT_FONTS_DIR` without
+   `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1` beside it. When a flagged named colour colours a page
+   rather than chrome, `cargo xtask fork-check --write` records it. Search by hand for
+   trademark-licensed assets.
+3. Run `cargo xtask ci`, which runs `fork-check` again. `cargo xtask assets --write` regenerates
+   `ATTRIBUTION.md`.
 4. A failure that also occurs on plain upstream isn't the merge's fault: check before patching it.
 5. Update the commit above.

@@ -179,7 +179,7 @@ PdfCraft opens files from strangers, and people trust it with their work. A malf
 - **Quality gates** before every commit: `cargo fmt --check`, clippy with `-D warnings`, the tests, `cargo xtask layers`, `cargo xtask assets`, and the wasm check. New workspace crates include `workspace = true` under `[lints]`. Scope `cargo clippy -p <crate> --all-targets -- -D warnings` and `cargo test -p <crate>` to the crates you touched; the workspace sweep is CI's job.
 - **Review at four zooms** as you go: the clause, the function, the module, and the project (layering, wasm, undo, save fidelity, a matching automation tool, an honest `parity/` entry). Prove a test fails before the fix by reverting the fix once.
 - `plan/` is an optional gitignored notebook. Do not ask for it and do not stop when it is absent. Public status is [`ROADMAP.md`](ROADMAP.md), [`docs/gaps.md`](docs/gaps.md) and [`docs/roadmap.md`](docs/roadmap.md). "Shipped" in `parity/` means exists and tested, not parity with Acrobat.
-- `cargo run -p pdfcraft -- <file.pdf>` opens the app. `pdfcraft-cli run` drives the engine headlessly. `cargo xtask fuzz` findings stay in `fuzz-out/` and become synthetic tests. For UI work, look at a screenshot from `--control` or the `shot` example.
+- `cargo run -p pdfcraft -- <file.pdf>` opens the app. `pdfcraft-cli run` drives the engine headlessly. `cargo xtask fuzz` findings stay in `fuzz-out/` and become synthetic tests. `cargo xtask fork-check [--write]` fails when an upstream merge undoes what `PATCHES.md` says the fork keeps; `--write` re-records `xtask/baselines/named-colours.txt`. `cargo xtask ci` runs it. For UI work, look at a screenshot from `--control` or the `shot` example.
 
 ## Contributor credits (About window)
 
