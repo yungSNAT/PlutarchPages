@@ -1,0 +1,56 @@
+name: Upstream drift
+
+on:
+  schedule:
+    - cron: "43 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: upstream-drift
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - name: Fetch upstream without checking it out
+        run: git fetch --no-tags https://github.com/storytold/pdfcraft.git main:refs/remotes/upstream/main
+      - name: Preview the merge
+        shell: bash
+        run: cargo xtask upstream-drift | tee "$RUNNER_TEMP/upstream-drift.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Update the standing report
+        if: github.repository == 'yungSNAT/PlutarchPages' && github.ref_name == github.event.repository.default_branch && github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title='Upstream drift report'
+          marker='<!-- plutarchpages-upstream-drift -->'
+          body="$RUNNER_TEMP/upstream-drift-issue.md"
+          printf '%s\n\n' "$marker" > "$body"
+          cat "$RUNNER_TEMP/upstream-drift.md" >> "$body"
+          number=$(gh api --paginate "repos/$GH_REPO/issues?state=all&per_page=100" \
+            --jq '.[] | select(.pull_request == null and .title == "Upstream drift report" and .user.login == "github-actions[bot]" and (.body // "" | startswith("<!-- plutarchpages-upstream-drift -->"))) | .number')
+          if [[ "$number" == *$'\n'* ]]; then
+            echo 'Multiple standing reports found; choose one before the next run.' >&2
+            exit 1
+          elif [[ -n "$number" ]]; then
+            gh api --method PATCH "repos/$GH_REPO/issues/$number" -F "body=@$body" --jq .html_url
+          else
+            gh api --method POST "repos/$GH_REPO/issues" -f "title=$title" -F "body=@$body" --jq .html_url
+          fi

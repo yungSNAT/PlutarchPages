@@ -14,6 +14,7 @@ mod macos_integration;
 mod netcheck;
 mod parity;
 mod screenshots;
+mod upstream_drift;
 mod version;
 
 type Command = fn(&[String]) -> anyhow::Result<()>;
@@ -34,6 +35,11 @@ const COMMANDS: &[(&str, &str, Command)] = &[
     ("license-check", "Offline source licence documents, attribution and metadata", license_check::run),
     ("assets", "Enforce the asset policy (AGENTS.md §1) against ATTRIBUTION.toml; --write regenerates ATTRIBUTION.md", assets::run),
     ("fork-check", "Fail when a merge undoes what PATCHES.md says the fork keeps; --write re-records the named-colour baseline", fork_check::run),
+    (
+        "upstream-drift",
+        "Report ahead/behind counts and merge conflicts against upstream/main (or REF), without changing the checkout",
+        upstream_drift::run,
+    ),
     ("corpus", "Fetch the pinned pdf.js test corpus into corpus/ (git-ignored) and verify it; --update-pin re-records the pin", gates::corpus),
     ("check", "Robustness sweep over corpus/ with pdfcraft-cli; fails on crashes or regressions vs xtask/baselines", gates::check),
     ("fuzz", "Mutation fuzzing of open/render/edit/save in child processes; findings in fuzz-out/ (--time 300)", fuzz::run),
