@@ -316,7 +316,7 @@ impl Document {
 
     /// Edit a PDF ▸ Edit text: the lines of existing text on `page` (0-based).
     pub fn text_lines(&self, page: usize) -> Vec<pdfcraft_edit::TextLine> {
-        self.editor.as_ref().and_then(|e| pdfcraft_edit::text_lines(&e.cos, page).ok()).unwrap_or_default()
+        self.editor.as_ref().and_then(|e| e.page_text(page).ok()).map(|(lines, _)| lines.as_ref().clone()).unwrap_or_default()
     }
 
     /// The form's calculation order: its calculated fields in the order they calculate, what each

@@ -149,7 +149,7 @@ pub(crate) type PageText = (Arc<Vec<pdfcraft_edit::TextLine>>, Arc<Vec<pdfcraft_
 
 impl Clone for PageTextCache {
     fn clone(&self) -> Self {
-        // A poisoned cache only loses the cached blocks.
+        // A poisoned cache only loses the cached text.
         Self(std::sync::Mutex::new(self.0.lock().ok().and_then(|c| c.clone())))
     }
 }
