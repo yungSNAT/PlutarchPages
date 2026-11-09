@@ -9061,11 +9061,17 @@ fn a_phone_photo_used_as_a_custom_stamp_is_embedded_upright() {
 }
 
 /// Opening a paragraph and applying its edit read the page's text blocks; after an edit they are
-/// still read once per document state, and undo and redo never get another state's blocks.
+/// still read once per document state, and undo and redo never get another state's blocks or lines.
 #[test]
 fn text_blocks_stay_cached_after_an_edit_and_follow_undo_and_redo() {
     let (mut session, id) = session_with(1);
     let blocks = |s: &Session| s.get(id).unwrap().editor.as_ref().unwrap().text_blocks(0).unwrap();
+    // The cached lines show `text`, and the page is read once for this state.
+    let lines_show = |s: &Session, text: &str| {
+        let lines = s.get(id).unwrap().editor.as_ref().unwrap().page_text(0).unwrap().0;
+        assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<String>(), text);
+        assert!(Arc::ptr_eq(&lines, &s.get(id).unwrap().editor.as_ref().unwrap().page_text(0).unwrap().0), "{text}: lines read once");
+    };
     let before = blocks(&session);
     assert_eq!(before[0].editor_text, "Page 1");
     let edit = Edit::EditTextBlock { page: 0, block: 0, text: "Edited".into(), style: pdfcraft_edit::BlockStyle::default() };
@@ -9073,12 +9079,38 @@ fn text_blocks_stay_cached_after_an_edit_and_follow_undo_and_redo() {
     let edited = blocks(&session);
     assert_eq!(edited[0].editor_text, "Edited");
     assert!(Arc::ptr_eq(&edited, &blocks(&session)), "the edited page is grouped once");
+    lines_show(&session, "Edited");
     session.undo(id).unwrap();
     assert_eq!(blocks(&session)[0].editor_text, "Page 1");
+    lines_show(&session, "Page 1");
     session.redo(id).unwrap();
     let redone = blocks(&session);
     assert_eq!(redone[0].editor_text, "Edited");
     assert!(Arc::ptr_eq(&redone, &blocks(&session)));
+    lines_show(&session, "Edited");
+}
+
+/// text_paragraphs takes a page's lines and blocks from one interpretation, and both are cached
+/// together, so the hidden-text classes describe the lines the blocks index.
+#[test]
+fn text_lines_and_blocks_come_from_one_cached_interpretation() {
+    let (session, id) = session_with(1);
+    let editor = session.get(id).unwrap().editor.as_ref().unwrap();
+    let blocks = editor.text_blocks(0).unwrap();
+    let (lines, cached_blocks) = editor.page_text(0).unwrap();
+    assert!(Arc::ptr_eq(&blocks, &cached_blocks), "the blocks come from the cache");
+    assert!(Arc::ptr_eq(&lines, &editor.page_text(0).unwrap().0), "the lines are cached with the blocks");
+    assert_eq!(blocks[0].lines.iter().map(|&i| lines[i].text.as_str()).collect::<String>(), "Page 1");
+}
+
+/// Document::text_lines gives the lines text_lines_and_blocks pairs with the blocks.
+#[test]
+fn document_text_lines_are_the_lines_paired_with_the_blocks() {
+    let (session, id) = session_with(1);
+    let doc = session.get(id).unwrap();
+    let lines = doc.text_lines(0);
+    assert!(!lines.is_empty());
+    assert_eq!(lines, doc.text_lines_and_blocks(0).0);
 }
 
 /// #4199, #3797: the spaces typed into a paragraph are all there after saving and reopening.
