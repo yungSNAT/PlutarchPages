@@ -252,8 +252,15 @@ pub fn block_overlapping(blocks: &[TextBlock], rect: [f64; 4]) -> Option<usize> 
 
 /// The paragraphs on a page (0-based).
 pub fn text_blocks(doc: &Document, page: usize) -> Result<Vec<TextBlock>, EditError> {
+    Ok(text_lines_and_blocks(doc, page)?.1)
+}
+
+/// The lines on a page (0-based) and the paragraphs grouped from them, from one reading of the
+/// page: each paragraph's `lines` index the returned lines.
+pub fn text_lines_and_blocks(doc: &Document, page: usize) -> Result<(Vec<TextLine>, Vec<TextBlock>), EditError> {
     let lines = text_lines(doc, page)?;
-    Ok(group_blocks(&lines))
+    let blocks = group_blocks(&lines);
+    Ok((lines, blocks))
 }
 
 /// Remove a paragraph's glyphs for a temporary editor background. Numeric TJ adjustments
