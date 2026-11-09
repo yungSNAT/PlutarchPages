@@ -57,19 +57,41 @@ const RULES: [(&str, Rule); 10] = [
 pub struct Tree {
     paths: Vec<String>,
     text: BTreeMap<String, String>,
+    workspace_manifests: Vec<String>,
 }
 
 impl Tree {
-    fn read(root: &Path, paths: Vec<String>) -> Result<Self> {
+    fn read(root: &Path, checkout: &Path, paths: Vec<String>) -> Result<Self> {
+        // Cargo diagnostics may quote manifest text, including from a symlink.
+        let metadata = crate::gates::metadata().map_err(|_| anyhow::anyhow!("cargo metadata failed; check the workspace manifests locally"))?;
+        // With --no-deps, Cargo reports only workspace members, including implicit path members.
+        let workspace_manifests = metadata["packages"]
+            .as_array()
+            .context("cargo metadata did not list workspace packages")?
+            .iter()
+            .map(|package| {
+                let manifest = package["manifest_path"].as_str().context("workspace package has no manifest path")?;
+                let relative =
+                    Path::new(manifest).strip_prefix(root).with_context(|| format!("workspace manifest is outside the repository: {manifest}"))?;
+                Ok(relative.to_str().context("workspace manifest path is not UTF-8")?.replace('\\', "/"))
+            })
+            .collect::<Result<Vec<_>>>()?;
         let mut text = BTreeMap::new();
-        for path in paths.iter().filter(|p| read_by_a_rule(p)) {
-            let bytes = std::fs::read(root.join(path)).with_context(|| format!("reading {path}"))?;
+        for path in paths.iter().filter(|p| read_by_a_rule(p)).chain(&workspace_manifests) {
+            if text.contains_key(path) {
+                continue;
+            }
+            let file = checkout.join(path).canonicalize().with_context(|| format!("locating {path}"))?;
+            if !file.starts_with(checkout) || !file.is_file() {
+                bail!("{path}: expected a regular file inside the repository");
+            }
+            let bytes = std::fs::read(file).with_context(|| format!("reading {path}"))?;
             // Icons and test PDFs aren't text, and no rule reads them.
             if let Ok(s) = String::from_utf8(bytes) {
                 text.insert(path.clone(), s);
             }
         }
-        Ok(Self { paths, text })
+        Ok(Self { paths, text, workspace_manifests })
     }
 
     fn get(&self, path: &str) -> Option<&str> {
@@ -95,10 +117,11 @@ fn is_build_script(path: &str) -> bool {
 
 pub fn run(args: &[String]) -> Result<()> {
     let root = crate::gates::root();
-    let mut tree = Tree::read(&root, crate::assets::repo_files(&root)?)?;
+    let checkout = root.canonicalize().context("locating the repository root")?;
+    let mut tree = Tree::read(&root, &checkout, crate::assets::repo_files(&root)?)?;
     if args.iter().any(|a| a == "--write") {
         let baseline = colour_baseline(&tree);
-        std::fs::write(root.join(COLOUR_BASELINE), &baseline)?;
+        write_baseline(&checkout, &baseline)?;
         println!("fork-check: wrote {COLOUR_BASELINE}");
         tree.text.insert(COLOUR_BASELINE.into(), baseline);
     }
@@ -112,6 +135,22 @@ pub fn run(args: &[String]) -> Result<()> {
         eprintln!("  ✗ {p}");
     }
     bail!("{} fork rule(s) broken; see PATCHES.md", problems.len())
+}
+
+fn write_baseline(checkout: &Path, baseline: &str) -> Result<()> {
+    let path = checkout.join(COLOUR_BASELINE);
+    let parent = path.parent().context("the colour baseline needs a parent directory")?.canonicalize()?;
+    if !parent.starts_with(checkout) {
+        bail!("{COLOUR_BASELINE}: expected a parent directory inside the repository");
+    }
+    let file = parent.join(path.file_name().context("the colour baseline needs a file name")?);
+    match file.symlink_metadata() {
+        Ok(metadata) if metadata.is_file() => {}
+        Ok(_) => bail!("{COLOUR_BASELINE}: expected a regular file"),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error).context(format!("checking {COLOUR_BASELINE}")),
+    }
+    std::fs::write(file, baseline).with_context(|| format!("writing {COLOUR_BASELINE}"))
 }
 
 fn check(tree: &Tree) -> Vec<String> {
@@ -138,7 +177,7 @@ fn declared_for_tests(tree: &Tree, path: &str) -> bool {
     for parent in parents {
         let Some(text) = tree.get(&parent) else { continue };
         let Some(lexed) = lex(text) else { return false };
-        let Some(level) = item_level(&lexed.code) else { return false };
+        let Some(level) = item_level(&lexed.code, true) else { return false };
         let code = lexed.code.as_str();
         let declares = |i: usize| {
             let after = code[i + "mod".len()..].trim_start_matches(is_space);
@@ -199,7 +238,7 @@ fn artcraft_names(tree: &Tree) -> Vec<String> {
 /// test modules too: a false failure rather than a miss.
 fn production(source: &str) -> Cow<'_, str> {
     let blanked = lex(source).and_then(|lexed| {
-        let tests = test_modules(&lexed.code, &item_level(&lexed.code)?);
+        let tests = test_modules(&lexed.code, &item_level(&lexed.code, true)?);
         let mut text = lexed.text.into_bytes();
         for t in tests {
             text[t].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
@@ -220,16 +259,17 @@ fn test_modules(code: &str, level: &[bool]) -> Vec<Range<usize>> {
         .collect()
 }
 
-/// For each byte of `code` ([`Lexed::code`]), whether it is at item level: in no bracket but the
-/// braces of a `mod`. In a function body or a macro's tokens, a `#[cfg(test)]` or a `const` may
-/// not be what it seems. `None` when the brackets don't pair up.
-fn item_level(code: &str) -> Option<Vec<bool>> {
+/// For each byte of `code` ([`Lexed::code`]), whether it is outside brackets. When
+/// `allow_modules` is set, the braces of a `mod` also contain items. In a function body or a
+/// macro's tokens, a `#[cfg(test)]` or a `const` may not be what it seems.
+/// `None` when the brackets don't pair up.
+fn item_level(code: &str, allow_modules: bool) -> Option<Vec<bool>> {
     let (mut open, mut others, mut level) = (Vec::new(), 0usize, Vec::with_capacity(code.len()));
     for (k, b) in code.bytes().enumerate() {
         match b {
             b'{' | b'(' | b'[' => {
                 level.push(others == 0);
-                let module = b == b'{' && opens_a_module(code, k);
+                let module = allow_modules && b == b'{' && opens_a_module(code, k);
                 others += usize::from(!module);
                 open.push((b, module));
             }
@@ -529,18 +569,21 @@ fn upstream_links(tree: &Tree) -> Vec<String> {
 
 /// Upstream's `UPDATE_APP` takes its repository from `craft_update::suite::PDFCRAFT`, so a merge
 /// that drops the fork's `repo` field reads and downloads upstream's releases. Each `UPDATE_APP`
-/// initialiser needs the field itself, and one must be a production item: at item level, outside
-/// test modules, with nothing before it that mentions `test`. One in a test module, a macro or a
-/// function doesn't count.
+/// initialiser needs the field itself. The updater reads a public item at the crate root, so only
+/// that declaration can satisfy the check, and its attributes must not mention `test`.
 fn update_source(tree: &Tree) -> Vec<String> {
     let Some(text) = tree.get(UPDATE_APP_FILE) else {
         return vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")];
     };
     if let Some(lexed) = lex(text)
-        && let Some(level) = item_level(&lexed.code)
+        && let Some(level) = item_level(&lexed.code, false)
     {
-        let tests = test_modules(&lexed.code, &level);
-        let production = |i: usize| level[i] && !tests.iter().any(|t| t.contains(&i)) && !mentions_test(&lexed.code, &level, i);
+        let production = |i: usize| {
+            let code = &lexed.code;
+            let public =
+                code[..i].trim_end_matches(is_space).strip_suffix("const").and_then(|prefix| prefix.trim_end_matches(is_space).strip_suffix("pub"));
+            level[i] && public.is_some_and(|prefix| found_at(code, prefix.len(), "pub")) && !mentions_test(code, &level, i)
+        };
         let repo = |body: &Option<Range<usize>>| body.clone().is_some_and(|b| field(&lexed, b, "repo") == Some(FORK_REPO));
         let declared = initialisers(&lexed, "UPDATE_APP");
         if declared.iter().any(|(i, _)| production(*i)) && declared.iter().all(|(_, body)| repo(body)) {
@@ -633,27 +676,9 @@ fn is_commit(reference: &str) -> bool {
 }
 
 fn unpublished_crates(tree: &Tree) -> Vec<String> {
-    let members = match tree.get("Cargo.toml").map(str::parse::<toml::Table>) {
-        None => return vec!["Cargo.toml is missing".into()],
-        Some(Err(e)) => return vec![format!("Cargo.toml: {e}")],
-        Some(Ok(t)) => t.get("workspace").and_then(|w| w.get("members")).and_then(toml::Value::as_array).cloned().unwrap_or_default(),
-    };
-    let mut manifests = Vec::new();
     let mut out = Vec::new();
-    for member in members.iter().filter_map(toml::Value::as_str) {
-        if let Some(dir) = member.strip_suffix("/*") {
-            let in_dir = |p: &&String| {
-                p.strip_prefix(dir).and_then(|r| r.strip_prefix('/')).and_then(|r| r.strip_suffix("/Cargo.toml")).is_some_and(|n| !n.contains('/'))
-            };
-            manifests.extend(tree.paths.iter().filter(in_dir).cloned());
-        } else if member.contains('*') {
-            out.push(format!("workspace member `{member}`: only `dir/*` patterns are understood"));
-        } else {
-            manifests.push(format!("{member}/Cargo.toml"));
-        }
-    }
-    for manifest in manifests {
-        let publish = tree.get(&manifest).and_then(|t| t.parse::<toml::Table>().ok()).and_then(|t| t.get("package")?.get("publish").cloned());
+    for manifest in &tree.workspace_manifests {
+        let publish = tree.get(manifest).and_then(|t| t.parse::<toml::Table>().ok()).and_then(|t| t.get("package")?.get("publish").cloned());
         if publish != Some(toml::Value::Boolean(false)) {
             out.push(format!("{manifest}: needs `publish = false` (crates.io names these crates for unrelated projects)"));
         }
@@ -742,16 +767,41 @@ fn release_i18n(tree: &Tree) -> Vec<String> {
 
 /// The value a line gives `var` (`VAR: "x"` in YAML, `VAR=x` in a script), unquoted, up to a space.
 fn set_to<'a>(line: &'a str, var: &str) -> Option<&'a str> {
+    let line = before_comment(line);
     line.match_indices(var).find_map(|(i, _)| {
+        if i > 0 && !line[..i].ends_with(char::is_whitespace) {
+            return None;
+        }
         let value = line[i + var.len()..].strip_prefix([':', '='])?.trim_start().trim_start_matches(['"', '\'']);
         value.split(|c: char| c == '"' || c == '\'' || c.is_whitespace()).next()
     })
 }
 
+/// Ignore comments at the start of a word whilst keeping a literal `#` in a quoted value.
+fn before_comment(line: &str) -> &str {
+    let shell = line.trim_start().strip_prefix("export").is_some_and(|rest| rest.starts_with(char::is_whitespace));
+    let mut quote = None;
+    let mut at_word_start = true;
+    let mut chars = line.char_indices();
+    while let Some((i, c)) = chars.next() {
+        match (quote, c) {
+            (None, '#') if at_word_start => return &line[..i],
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(open), close) if open == close => quote = None,
+            (None | Some('"'), '\\') => {
+                chars.next();
+            }
+            _ => {}
+        }
+        at_word_start = c.is_whitespace() || (shell && matches!(c, ';' | '|' | '&' | '(' | ')' | '<' | '>'));
+    }
+    line
+}
+
 /// The lines around `i` indented at least as far: its `env:` map, or the rest of its script.
 fn block_around<'a>(lines: &[&'a str], i: usize) -> Vec<&'a str> {
     let indent = |l: &str| l.len() - l.trim_start().len();
-    let inside = |l: &str| l.trim().is_empty() || indent(l) >= indent(lines[i]);
+    let inside = |l: &str| l.trim().is_empty() || l.trim_start().starts_with('#') || indent(l) >= indent(lines[i]);
     let start = i - lines[..i].iter().rev().take_while(|l| inside(l)).count();
     let end = i + lines[i + 1..].iter().take_while(|l| inside(l)).count();
     lines[start..=end].to_vec()
@@ -766,6 +816,7 @@ mod tests {
         Tree {
             paths: files.iter().map(|(p, _)| p.to_string()).collect(),
             text: files.iter().filter(|(p, _)| read_by_a_rule(p)).map(|(p, t)| (p.to_string(), t.to_string())).collect(),
+            workspace_manifests: Vec::new(),
         }
     }
 
@@ -901,22 +952,22 @@ mod tests {
 
     #[test]
     fn every_workspace_crate_says_publish_false() {
-        let workspace = "[workspace]\nmembers = [\"crates/*\", \"xtask\"]\nexclude = [\"vendor\"]\n";
         let unpublished = "[package]\nname = \"x\"\npublish = false\n";
-        let ok = [
-            ("Cargo.toml", workspace),
+        let mut workspace = tree(&[
             ("crates/cos/Cargo.toml", unpublished),
+            ("crates/cos/codec/Cargo.toml", unpublished),
             ("crates/cos/fuzz/Cargo.toml", "[package]\nname = \"not-a-member\"\n"),
             ("xtask/Cargo.toml", unpublished),
             ("vendor/lopdf/Cargo.toml", "[package]\nname = \"lopdf\"\n"),
-        ];
-        passes(unpublished_crates, &ok);
-        let mut added = ok.to_vec();
-        added.push(("crates/prc/Cargo.toml", "[package]\nname = \"pdfcraft-prc\"\n"));
-        fails(unpublished_crates, &added, "crates/prc/Cargo.toml");
-        let mut published = ok.to_vec();
-        published[3].1 = "[package]\nname = \"xtask\"\npublish = true\n";
-        fails(unpublished_crates, &published, "xtask/Cargo.toml");
+        ]);
+        workspace.workspace_manifests = ["crates/cos/Cargo.toml", "crates/cos/codec/Cargo.toml", "xtask/Cargo.toml"].map(str::to_owned).to_vec();
+        assert!(unpublished_crates(&workspace).is_empty());
+        workspace.text.insert("crates/cos/codec/Cargo.toml".into(), "[package]\nname = \"codec\"\n".into());
+        workspace.text.insert("xtask/Cargo.toml".into(), "[package]\nname = \"xtask\"\npublish = true\n".into());
+        let problems = unpublished_crates(&workspace);
+        assert_eq!(problems.len(), 2, "{problems:#?}");
+        assert!(problems[0].starts_with("crates/cos/codec/Cargo.toml:"));
+        assert!(problems[1].starts_with("xtask/Cargo.toml:"));
     }
 
     #[test]
@@ -972,10 +1023,28 @@ mod tests {
         fails(release_i18n, &[build, (RELEASE, without.as_str())], "release.yml:5");
         let optional = with.replace("CRAFT_I18N_REQUIRED: \"1\"", "CRAFT_I18N_REQUIRED: \"0\"");
         fails(release_i18n, &[build, (RELEASE, optional.as_str())], "release.yml:5");
+        let commented = with.replace("      CRAFT_I18N_", "      # CRAFT_I18N_");
+        fails(release_i18n, &[build, (RELEASE, commented.as_str())], "release.yml:5");
+        let empty_dir = with.replace("${{ github.workspace }}/craft-i18n", "# checkouts belong here");
+        fails(release_i18n, &[build, (RELEASE, empty_dir.as_str())], "release.yml:5");
+        let inline_comment =
+            without.replace("CRAFT_FONTS_REQUIRED: \"1\"", "CRAFT_FONTS_REQUIRED: \"1\" # CRAFT_I18N_DIR: fake CRAFT_I18N_REQUIRED: 1");
+        fails(release_i18n, &[build, (RELEASE, inline_comment.as_str())], "release.yml:5");
+        let dedented_comment = with.replace("      CRAFT_I18N_DIR:", "# checkout supplied by the workflow\n      CRAFT_I18N_DIR:");
+        passes(release_i18n, &[build, (RELEASE, dedented_comment.as_str())]);
 
         let script = "      - run: |\n          export CRAFT_FONTS_DIR=\"$PWD/craft-fonts\" CRAFT_FONTS_REQUIRED=1\n          bash package.sh\n";
         let both = script.replace("REQUIRED=1\n", "REQUIRED=1 CRAFT_I18N_DIR=\"$PWD/craft-i18n\" CRAFT_I18N_REQUIRED=1\n");
         passes(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{both}").as_str())]);
+        let commented =
+            script.replace("          bash", "          # export CRAFT_I18N_DIR=\"$PWD/craft-i18n\" CRAFT_I18N_REQUIRED=1\n          bash");
+        fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{commented}").as_str())], "release.yml:14");
+        let inline_comment = both.replace(" CRAFT_I18N_DIR=", " # CRAFT_I18N_DIR=");
+        fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{inline_comment}").as_str())], "release.yml:14");
+        let after_operator = both.replace(" CRAFT_I18N_DIR=", ";# CRAFT_I18N_DIR=");
+        fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{after_operator}").as_str())], "release.yml:14");
+        let quoted_hash = both.replace("$PWD/craft-fonts", "$PWD/craft # fonts");
+        passes(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{quoted_hash}").as_str())]);
         fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{script}").as_str())], "release.yml:14");
         fails(release_i18n, &[build, (RELEASE, "jobs: {}\n")], "nothing sets CRAFT_FONTS_DIR");
     }
@@ -1122,6 +1191,8 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         fails(update_source, &[(UPDATE_APP_FILE, format!("{merged}{tested}").as_str())], "lacks `repo");
         let missed: Vec<&str> = [
             ("a test module", tested.clone()),
+            ("a module gated by a compound test cfg", format!("#[cfg(all(test, not(target_arch = \"wasm32\")))]\nmod updater_tests {{\n{app}}}\n")),
+            ("a private item", app.replacen("pub const", "const", 1)),
             ("a macro_rules! body", format!("macro_rules! app {{\n    () => {{\n{app}    }};\n}}\n")),
             ("a macro item", format!("pub macro app() {{\n{app}}}\n")),
             ("a macro call", format!("app! {{\n{app}}}\n")),
