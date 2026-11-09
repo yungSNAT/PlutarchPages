@@ -186,8 +186,9 @@ impl Automation {
 
     pub(crate) fn doc_audit_redactions(&self, a: &Args) -> Result<Value> {
         let d = self.doc(a)?;
-        let findings = d.audit_redactions().map_err(ToolError::Failed)?;
-        let items: Vec<Value> = findings
+        let report = d.audit_document().map_err(ToolError::Failed)?;
+        let items: Vec<Value> = report
+            .page_findings
             .into_iter()
             .map(|f| {
                 json!({
@@ -199,7 +200,8 @@ impl Automation {
                 })
             })
             .collect();
-        Ok(json!({ "findings": items, "count": items.len() }))
+        let document: Vec<_> = report.document_findings.iter().map(|f| json!({ "kind": f.kind, "count": f.count })).collect();
+        Ok(json!({ "findings": items, "count": items.len(), "document_findings": document, "document_count": document.len() }))
     }
 
     pub(crate) fn doc_remove_hidden(&mut self, a: &Args) -> Result<Value> {

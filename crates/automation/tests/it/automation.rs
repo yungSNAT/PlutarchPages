@@ -5112,7 +5112,7 @@ fn auditing_faux_redactions_through_tools() {
 /// matrix jumps over and the redaction box: nothing is under the box any more, so the audit must
 /// not report the words beside it as covered. In the middle of a line it never did.
 #[test]
-fn an_applied_redaction_at_the_end_of_a_line_audits_clean() {
+fn an_applied_redaction_exposes_width_without_covered_text() {
     let dir = workdir("audit-applied-end-of-line");
     let body = "BT /F1 11 Tf 72 692 Td (Mail the team: someone@example.com) Tj ET\nBT /F1 11 Tf 72 662 Td (Account 0042-7788 is in the middle of this line.) Tj ET";
     std::fs::write(dir.join("mail.pdf"), helvetica_page(body)).unwrap();
@@ -5124,7 +5124,10 @@ fn an_applied_redaction_at_the_end_of_a_line_audits_clean() {
     let text = ok(&mut a, "text_extract", json!({ "doc": doc }))["pages"][0]["text"].as_str().unwrap().to_string();
     assert!(text.contains("Mail the team:") && !text.contains("someone") && !text.contains("0042"), "{text}");
     let r = ok(&mut a, "doc_audit_redactions", json!({ "doc": doc }));
-    assert_eq!(r["count"], 0, "{r}");
+    let findings = r["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 2, "{r}");
+    assert!(findings.iter().all(|f| f["kind"] == "retained-advance" && f["covered_text"] == ""), "{r}");
+    assert_eq!(r["document_findings"], json!([]), "{r}");
 }
 
 /// A long tagged document lists its tags a page at a time, and only the types, pages or depths

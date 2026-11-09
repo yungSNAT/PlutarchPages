@@ -61,6 +61,57 @@ impl Builder {
 
 const FONT: &str = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
 
+#[test]
+fn audit_reports_an_earlier_revision_and_metadata_counts() {
+    use pdfcraft_cos::{ObjRef, Object, PdfString, SaveOptions, write_incremental};
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R /Metadata 3 0 R >>");
+    b.add("<< /Type /Pages /Kids [] /Count 0 >>");
+    b.add_stream_with(b"<synthetic/>", "/Type /Metadata /Subtype /XML");
+    b.add("<< /Author (Synthetic Author) >>");
+    let mut doc = open(b.build());
+    assert!(crate::audit_document(&doc).unwrap().document_findings.iter().all(|f| f.kind != "earlier-revisions"));
+    doc.update_dict(ObjRef::new(1, 0), |d| d.set(b"Lang".to_vec(), Object::String(PdfString::literal("en")))).unwrap();
+    doc.trailer_mut().set(b"Info".to_vec(), Object::Ref(ObjRef::new(4, 0)));
+    let doc = open(write_incremental(&doc, &SaveOptions::default()).unwrap());
+    let report = crate::audit_document(&doc).unwrap();
+    assert!(report.page_findings.is_empty());
+    let kinds: Vec<_> = report.document_findings.iter().map(|f| (f.kind, f.count)).collect();
+    assert_eq!(kinds, [("earlier-revisions", 1), ("document-info", 1), ("xmp-metadata", 1)]);
+}
+
+#[test]
+fn null_metadata_does_not_suppress_page_findings() {
+    use pdfcraft_cos::Object;
+    let bytes = one_page(b"BT /F1 20 Tf 100 700 Td (SECRET) Tj ET\n0 g 95 690 120 30 re f", "");
+    for indirect in [false, true] {
+        let mut doc = open(bytes.clone());
+        let value = if indirect { Object::Ref(doc.add(Object::Null)) } else { Object::Null };
+        doc.trailer_mut().set(b"Info".to_vec(), value.clone());
+        let root = doc.root().unwrap();
+        doc.update_dict(root, |d| d.set(b"Metadata".to_vec(), value)).unwrap();
+
+        let report = crate::audit_document(&doc).unwrap();
+        assert!(report.document_findings.is_empty());
+        assert_eq!(report.page_findings.len(), 1);
+        assert_eq!(report.page_findings[0].kind, FindingKind::CoveredText);
+    }
+}
+
+#[test]
+fn audit_reports_a_covered_text_advance_only_after_the_displacement() {
+    let text = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";
+    let cover = "0 g 71 688 22 21 re f";
+    let bytes = format!("{text}\n{cover}");
+    let report = crate::audit_document(&open(one_page(bytes.as_bytes(), ""))).unwrap();
+    let kinds: Vec<_> = report.page_findings.iter().map(|f| f.kind.clone()).collect();
+    assert_eq!(kinds, [FindingKind::RetainedAdvance]);
+    assert!(report.page_findings[0].covered_text.is_empty());
+    let bytes = format!("{cover}\n{text}");
+    let report = crate::audit_document(&open(one_page(bytes.as_bytes(), ""))).unwrap();
+    assert!(report.page_findings.is_empty());
+}
+
 /// One page with `content` as its stream; `page_extra` is appended inside the page dict.
 fn one_page(content: &[u8], page_extra: &str) -> Vec<u8> {
     let mut b = Builder::new();

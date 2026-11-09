@@ -1,25 +1,33 @@
 # pdfcraft-audit
 
-Layer L4 (may use `edit`): verification tooling, the faux-redaction audit.
+Layer L4 (may use `edit`): check PDFs for potential redaction leaks.
 
 ```rust
-let findings: Vec<Finding> = audit_redactions(&doc)?;  // page, kind, rect, covered_text
+let report = audit_document(&doc)?; // page_findings and document_findings
 ```
 
-It reports two kinds of finding:
+The report checks for:
 
 - **faux redaction**: an opaque filled rectangle painted *after* text it overlaps, dark enough
   against the text's colour (WCAG contrast below 3) to hide it, while the text is still
   extractable underneath; opaque filled Square annotations count as covers too;
-- **unapplied mark**: a Redact annotation that was marked but never applied.
+- **unapplied mark**: a Redact annotation that was marked but never applied;
+- **retained advance**: a large forward `TJ` adjustment entirely under a later opaque
+  rectangle. An adjustment can preserve the removed text's exact width even after the
+  text has gone. Ordinary text positioning can produce the same signal;
+- **earlier revisions**: counts incremental revisions that a reader can inspect;
+- **document metadata**: counts entries in the document information dictionary and
+  reports an XMP metadata stream attached to the catalogue. The audit returns counts
+  only.
 
-A properly applied redaction removes the text, so it never flags. Page backgrounds, table
-shading and highlights don't either: they're painted before the text, or light against it.
+A properly applied redaction can still have a retained advance, earlier revision or
+metadata finding. Check those signals before sharing the file. Page backgrounds, table
+shading and highlights are excluded from the covered-text check.
 
 A rectangle covers a text line when it hides at least half of one of the line's words, at
 least 40% of the area of the words the line draws, or at least 40% of the line's box together
 with a positive-area intersection with one of its words. The gap an applied redaction leaves (a `TJ` adjustment where the text was) is in the line's box but
-holds no word, so a redaction box over it alone does not count.
+holds no word. A box over the gap alone can produce a retained-advance finding.
 
 Limits, by design and documented rather than hidden:
 
@@ -28,6 +36,9 @@ Limits, by design and documented rather than hidden:
   translucent one (`/ca` below 1) is not flagged;
 - covers inside form XObjects are found, but only text drawn directly in the page content is
   checked under them;
+- the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
+  it cannot establish which text originally occupied a gap or whether all redaction tools
+  leave one. The audit counts earlier revisions without reading their content;
 - annotation rectangles are compared in unrotated user space, so `/Rotate` pages may misalign;
 - a cover that hides less than half of every word it touches, less than 40% of a line's box and
   less than 40% of its words (a sliver of a long value) is not flagged.
@@ -40,6 +51,10 @@ findings".
 A document whose permissions withhold copying (Table 22, bit 5) still gets every finding, with
 an empty `covered_text`: the audit hands out no text that copying would refuse.
 
-Surfaces: the `doc_audit_redactions` automation tool and `pdfcraft-cli audit`. Both report each
-rectangle in points from the top-left of the page as displayed (y down, after `/Rotate`), like
-the other tools; `AuditFinding::rect` itself stays in PDF user space.
+`doc_audit_redactions` and `pdfcraft-cli audit` return `findings` and `count` for
+page findings, plus `document_findings` and `document_count`. The CLI exits with
+an error for covered text, unapplied marks or an audit failure. Retained advances
+and document-level findings are advisory. Rectangles are
+in points from the top-left of the displayed page (y down, after `/Rotate`).
+`AuditFinding::rect` stays in PDF user space. The library's `audit_redactions`
+entry point checks only covered text and unapplied marks.

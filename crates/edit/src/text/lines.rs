@@ -195,7 +195,7 @@ fn fill_color(fill: &[Op]) -> [f64; 3] {
 
 /// The lines of text on a page (0-based), in content order.
 pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, &page_dict(doc, page)?, true)
+    text_lines_in(doc, &page_dict(doc, page)?, true, None)
 }
 
 /// The lines `page`'s glyphs show, in content order, without `/ActualText` replacements: what the
@@ -203,21 +203,50 @@ pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditErro
 /// not trust that metadata (the redaction audit). Takes the page itself, so a caller going
 /// through every page doesn't walk the page tree again for each.
 pub fn glyph_text_lines(doc: &Document, page: &pdfcraft_model::Page) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, page, false)
+    text_lines_in(doc, page, false, None)
+}
+
+/// A forward text adjustment that painted no glyphs, in page user space.
+pub struct GlyphAdvanceGap {
+    pub paint_pos: (usize, usize),
+    pub from: (f64, f64),
+    pub to: (f64, f64),
+}
+
+/// Extract the drawn glyphs and their large numeric `TJ` adjustments for a redaction audit.
+pub fn glyph_text_with_gaps(doc: &Document, page: &pdfcraft_model::Page) -> Result<(Vec<TextLine>, Vec<GlyphAdvanceGap>), EditError> {
+    let mut gaps = Vec::new();
+    let lines = text_lines_in(doc, page, false, Some(&mut gaps))?;
+    Ok((lines, gaps))
 }
 
 /// [`text_lines`] of `p`; with `actual_text`, `/ActualText` replaces the glyphs it spans.
-fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, actual_text: bool) -> Result<Vec<TextLine>, EditError> {
+fn text_lines_in(
+    doc: &Document,
+    p: &pdfcraft_model::Page,
+    actual_text: bool,
+    gaps: Option<&mut Vec<GlyphAdvanceGap>>,
+) -> Result<Vec<TextLine>, EditError> {
     let res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut cache = HashMap::new();
     let mut lines: Vec<TextLine> = Vec::new();
     let mut carry = Carry::new();
+    if gaps.is_some() {
+        carry.advance_gaps = Some(Vec::new());
+    }
     // The streams are one stream in pieces (§7.8.2), split between any two tokens: parse them
     // joined, so an operator whose operands end one piece still has them.
     let pieces = Pieces::join(&content_streams(doc, &p.dict)?.into_iter().map(|(_, d)| d).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
     let properties = res.get(b"Properties").and_then(|o| doc.dict(o)).unwrap_or_default();
     let shown = interpret(doc, &ops, &res, &mut cache, &mut carry, None, actual_text.then_some(&properties))?;
+    if let (Some(gaps), Some(adjustments)) = (gaps, carry.advance_gaps) {
+        gaps.extend(adjustments.into_iter().map(|gap| GlyphAdvanceGap {
+            paint_pos: (ops.get(gap.op).map_or(0, |op| pieces.pieces_of(op).0), gap.op),
+            from: gap.from,
+            to: gap.to,
+        }));
+    }
     let mut last: Option<(usize, Pen)> = None; // the stream piece and where its last run ended
     for mut s in shown {
         // A single RTL glyph's ActualText (e.g. lam-alef) is an inline ligature, not a
@@ -602,14 +631,7 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
         let Some(form) = form_call(w.doc, resources, name, ts.ctm, &w.path, &mut w.budget) else { return Ok(()) };
         let ops = parse(&form.data).ops;
         // The form starts with the graphics state at its `Do`, its own matrix applied.
-        let mut carry = Carry {
-            ts: Ts { ctm: form.ctm, ..ts },
-            stack: Vec::new(),
-            marked: Vec::new(),
-            layers: Vec::new(),
-            ocr: Vec::new(),
-            text_left: *text_left,
-        };
+        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, ..Carry::new() };
         let stream = w.next_stream;
         w.next_stream = w.next_stream.saturating_add(1);
         if let Some(r) = form.obj {

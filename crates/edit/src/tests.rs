@@ -8494,6 +8494,16 @@ fn vertical_page(content: &str) -> Document {
 }
 
 #[test]
+fn vertical_advance_audit_records_forward_gaps() {
+    let doc = vertical_page("BT /V1 20 Tf 500 720 Td [<0041> 1000 <0042> -1000 <0043>] TJ ET");
+    let page = &pdfcraft_model::pages(&doc)[0];
+    let (_, gaps) = text::glyph_text_with_gaps(&doc, page).unwrap();
+    assert_eq!(gaps.len(), 1);
+    assert_eq!(gaps[0].from, (500.0, 700.0));
+    assert_eq!(gaps[0].to, (500.0, 680.0));
+}
+
+#[test]
 fn vertical_text_lines_are_columns_and_editing_one_keeps_its_neighbour() {
     let doc = vertical_columns_page();
     let lines = text::text_lines(&doc, 0).unwrap();
