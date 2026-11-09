@@ -4,9 +4,7 @@ use crate::context::Context;
 use crate::context::InterpreterCache;
 use crate::device::Device;
 use crate::font::cid::Type0Font;
-use crate::font::generated::{
-    glyph_names, mac_expert, mac_os_roman, mac_roman, standard, win_ansi,
-};
+use crate::font::generated::{glyph_names, mac_expert, mac_os_roman, mac_roman, standard, win_ansi};
 use crate::font::true_type::TrueTypeFont;
 use crate::font::type1::Type1Font;
 use crate::font::type3::Type3;
@@ -140,10 +138,7 @@ impl OutlineGlyph {
     /// Note that the `glyph_transform` attribute is not considered in the cache key of
     /// the identifier, only the glyph ID and the font.
     pub fn identifier(&self) -> GlyphIdentifier {
-        GlyphIdentifier {
-            id: self.id,
-            font: self.font.clone(),
-        }
+        GlyphIdentifier { id: self.id, font: self.font.clone() }
     }
 
     /// Returns the Unicode code point for this glyph, if available.
@@ -151,6 +146,12 @@ impl OutlineGlyph {
     /// See [`Glyph::as_unicode`] for details on the fallback chain used.
     pub fn as_unicode(&self) -> Option<BfString> {
         self.font.char_code_to_unicode(self.char_code)
+    }
+
+    /// PlutarchPages patch: compare a standard Type 1 outline's encoding with its extracted text.
+    pub fn standard_encoding_char(&self) -> Option<char> {
+        let OutlineFont::Type1(font) = &self.font else { return None };
+        font.standard_encoding_char(self.char_code)
     }
 
     /// Get raw font bytes and metadata for downstream use.
@@ -205,15 +206,8 @@ pub struct Type3Glyph<'a> {
 /// A glyph defined by PDF drawing instructions.
 impl<'a> Type3Glyph<'a> {
     /// Draw the type3 glyph to the given device.
-    pub fn interpret(
-        &self,
-        device: &mut impl Device<'a>,
-        transform: Affine,
-        glyph_transform: Affine,
-        paint: &Paint<'a>,
-    ) {
-        self.font
-            .render_glyph(self, transform, glyph_transform, paint, device);
+    pub fn interpret(&self, device: &mut impl Device<'a>, transform: Affine, glyph_transform: Affine, paint: &Paint<'a>) {
+        self.font.render_glyph(self, transform, glyph_transform, paint, device);
     }
 
     /// Returns the Unicode code point for this glyph, if available.
@@ -239,28 +233,15 @@ impl CacheKey for Type3Glyph<'_> {
 pub(crate) struct Font<'a>(u128, FontType<'a>);
 
 impl<'a> Font<'a> {
-    pub(crate) fn new(
-        dict: &Dict<'a>,
-        font_resolver: &FontResolverFn,
-        cmap_resolver: &CMapResolverFn,
-    ) -> Option<Self> {
+    pub(crate) fn new(dict: &Dict<'a>, font_resolver: &FontResolverFn, cmap_resolver: &CMapResolverFn) -> Option<Self> {
         let f_type = match dict.get::<Name<'_>>(SUBTYPE)?.deref() {
-            TYPE1 | MM_TYPE1 => {
-                FontType::Type1(Rc::new(Type1Font::new(dict, font_resolver, cmap_resolver)?))
-            }
+            TYPE1 | MM_TYPE1 => FontType::Type1(Rc::new(Type1Font::new(dict, font_resolver, cmap_resolver)?)),
             // PDFBOX-5463: PDF viewers seem to accept OpenType as well.
-            TRUE_TYPE | OPEN_TYPE => FontType::TrueType(Rc::new(TrueTypeFont::new(
-                dict,
-                font_resolver,
-                cmap_resolver,
-            )?)),
+            TRUE_TYPE | OPEN_TYPE => FontType::TrueType(Rc::new(TrueTypeFont::new(dict, font_resolver, cmap_resolver)?)),
             TYPE0 => FontType::Type0(Rc::new(Type0Font::new(dict, font_resolver, cmap_resolver)?)),
             TYPE3 => FontType::Type3(Rc::new(Type3::new(dict, cmap_resolver)?)),
             f => {
-                warn!(
-                    "unimplemented font type {:?}",
-                    std::str::from_utf8(f).unwrap_or("unknown type")
-                );
+                warn!("unimplemented font type {:?}", std::str::from_utf8(f).unwrap_or("unknown type"));
 
                 return None;
             }
@@ -271,10 +252,7 @@ impl<'a> Font<'a> {
         Some(Self(cache_key, f_type))
     }
 
-    pub(crate) fn new_standard(
-        standard_font: StandardFont,
-        font_resolver: &FontResolverFn,
-    ) -> Option<Self> {
+    pub(crate) fn new_standard(standard_font: StandardFont, font_resolver: &FontResolverFn) -> Option<Self> {
         let font = Type1Font::new_standard(standard_font, font_resolver)?;
 
         Some(Self(0, FontType::Type1(Rc::new(font))))
@@ -309,34 +287,21 @@ impl<'a> Font<'a> {
         resources: &Resources<'a>,
         origin_displacement: Vec2,
     ) -> (Glyph<'a>, Affine) {
-        let glyph_transform = ctx.get().text_state.full_transform()
-            * Affine::scale(1.0 / UNITS_PER_EM as f64)
-            * Affine::translate(origin_displacement);
+        let glyph_transform =
+            ctx.get().text_state.full_transform() * Affine::scale(1.0 / UNITS_PER_EM as f64) * Affine::translate(origin_displacement);
 
         let glyph = match &self.1 {
             FontType::Type1(t) => {
                 let font = OutlineFont::Type1(t.clone());
-                Glyph::Outline(OutlineGlyph {
-                    id: glyph,
-                    font,
-                    char_code,
-                })
+                Glyph::Outline(OutlineGlyph { id: glyph, font, char_code })
             }
             FontType::TrueType(t) => {
                 let font = OutlineFont::TrueType(t.clone());
-                Glyph::Outline(OutlineGlyph {
-                    id: glyph,
-                    font,
-                    char_code,
-                })
+                Glyph::Outline(OutlineGlyph { id: glyph, font, char_code })
             }
             FontType::Type0(t) => {
                 let font = OutlineFont::Type0(t.clone());
-                Glyph::Outline(OutlineGlyph {
-                    id: glyph,
-                    font,
-                    char_code,
-                })
+                Glyph::Outline(OutlineGlyph { id: glyph, font, char_code })
             }
             FontType::Type3(t) => {
                 let nesting_depth = ctx.nesting_depth() + 1;
@@ -571,47 +536,26 @@ impl FallbackFontQuery {
     /// `descriptor`. A Type 0 font has no font descriptor of its own; its descendant CIDFont
     /// has it (ISO 32000-2 §9.7.4.1, §9.7.6.1).
     pub(crate) fn with_descriptor(dict: &Dict<'_>, descriptor: Option<Dict<'_>>) -> Self {
-        let post_script_name = dict
-            .get::<Name<'_>>(BASE_FONT)
-            .map(|n| strip_subset_prefix(n.as_str()).to_string());
+        let post_script_name = dict.get::<Name<'_>>(BASE_FONT).map(|n| strip_subset_prefix(n.as_str()).to_string());
 
-        let mut data = Self {
-            post_script_name,
-            ..Default::default()
-        };
+        let mut data = Self { post_script_name, ..Default::default() };
 
         if let Some(descriptor) = descriptor {
-            data.font_name = dict
-                .get::<Name<'_>>(FONT_NAME)
-                .map(|n| strip_subset_prefix(n.as_str()).to_string());
-            data.font_family = descriptor
-                .get::<Name<'_>>(FONT_FAMILY)
-                .map(|n| n.as_str().to_string());
-            data.font_stretch = descriptor
-                .get::<Name<'_>>(FONT_STRETCH)
-                .map(|n| FontStretch::from_string(n.as_str()))
-                .unwrap_or(FontStretch::Normal);
+            data.font_name = dict.get::<Name<'_>>(FONT_NAME).map(|n| strip_subset_prefix(n.as_str()).to_string());
+            data.font_family = descriptor.get::<Name<'_>>(FONT_FAMILY).map(|n| n.as_str().to_string());
+            data.font_stretch = descriptor.get::<Name<'_>>(FONT_STRETCH).map(|n| FontStretch::from_string(n.as_str())).unwrap_or(FontStretch::Normal);
             data.font_weight = descriptor.get::<u32>(FONT_WEIGHT).unwrap_or(400);
 
-            if let Some(flags) = descriptor
-                .get::<u32>(FLAGS)
-                .map(FontFlags::from_bits_truncate)
-            {
+            if let Some(flags) = descriptor.get::<u32>(FLAGS).map(FontFlags::from_bits_truncate) {
                 data.is_serif = flags.contains(FontFlags::SERIF);
                 data.is_italic = flags.contains(FontFlags::ITALIC);
                 data.is_small_cap = flags.contains(FontFlags::SMALL_CAP);
             }
         }
 
-        data.is_italic |= data
-            .post_script_name
-            .as_ref()
-            .is_some_and(|s| s.contains("Italic"));
+        data.is_italic |= data.post_script_name.as_ref().is_some_and(|s| s.contains("Italic"));
 
-        data.is_bold |= data
-            .post_script_name
-            .as_ref()
-            .is_some_and(|s| s.contains("Bold"));
+        data.is_bold |= data.post_script_name.as_ref().is_some_and(|s| s.contains("Bold"));
 
         data
     }
@@ -692,22 +636,12 @@ pub(crate) fn glyph_name_to_text(name: &str) -> Option<BfString> {
     for part in base.split('_') {
         if let Some(s) = glyph_names::get(part) {
             text.push_str(s);
-        } else if let Some(digits) = part
-            .strip_prefix("uni")
-            .filter(|d| !d.is_empty() && d.len() % 4 == 0 && upper_hex(d))
-        {
+        } else if let Some(digits) = part.strip_prefix("uni").filter(|d| !d.is_empty() && d.len() % 4 == 0 && upper_hex(d)) {
             // All ASCII, so every fourth byte is a char boundary. A group that isn't a
             // character (a surrogate) makes the whole component map to nothing.
-            let chars: Option<String> = (0..digits.len())
-                .step_by(4)
-                .map(|at| digits.get(at..at + 4).and_then(hex))
-                .collect();
+            let chars: Option<String> = (0..digits.len()).step_by(4).map(|at| digits.get(at..at + 4).and_then(hex)).collect();
             text.extend(chars);
-        } else if let Some(c) = part
-            .strip_prefix('u')
-            .filter(|d| (4..=6).contains(&d.len()) && upper_hex(d))
-            .and_then(hex)
-        {
+        } else if let Some(c) = part.strip_prefix('u').filter(|d| (4..=6).contains(&d.len()) && upper_hex(d)).and_then(hex) {
             text.push(c);
         }
     }
@@ -724,10 +658,7 @@ pub(crate) fn unicode_from_name(name: &str) -> Option<char> {
 
     name.starts_with("uni")
         .then(|| name.get(3..).and_then(convert))
-        .or_else(|| {
-            name.starts_with("u")
-                .then(|| name.get(1..).and_then(convert))
-        })
+        .or_else(|| name.starts_with("u").then(|| name.get(1..).and_then(convert)))
         .flatten()
 }
 
@@ -737,9 +668,7 @@ pub(crate) fn read_to_unicode(dict: &Dict<'_>, cmap_resolver: &CMapResolverFn) -
         // See PDFJS-11915, where `Identity-H` is used for `ToUnicode`. I don't
         // believe it's valid, but at least mupdf seems to be able to deal with it.
         .or_else(|| {
-            dict.get::<Name<'_>>(TO_UNICODE)
-                .and_then(|name| (cmap_resolver)(CMapName::from_bytes(name.as_ref())))
-                .map(|d| Cow::Owned(d.to_vec()))
+            dict.get::<Name<'_>>(TO_UNICODE).and_then(|name| (cmap_resolver)(CMapName::from_bytes(name.as_ref()))).map(|d| Cow::Owned(d.to_vec()))
         })
         .and_then(|data| {
             let cmap_resolver = cmap_resolver.clone();

@@ -33,6 +33,14 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 
 ## Only here
 
+- Text extraction and search flag possible differences between a page's text and what it shows.
+  `near_background` covers near-white solid fills over an otherwise white backdrop, with bounded
+  checks for overlapping glyphs. Paths, images and complex paint leave the backdrop unknown.
+  `actual_text_differs` compares an ASCII replacement with the glyph text it replaces.
+  `font_mapping_differs` compares a standard Type 1 font's ASCII outline encoding with its
+  extraction mapping, using the fork's `OutlineGlyph::standard_encoding_char` accessor in hayro.
+  `source_order_differs` marks reversed content order within a simple horizontal ASCII line.
+  These are review signals. Accessible replacements and different writing orders can be intentional.
 - The PDF-XChange-style converters, speech, bookmark, optimiser, colour and Excel features.
 - Mermaid colour scheme: `crates/ui-egui/src/theme.rs` holds every interface colour, and
   `chrome_literals_stay_in_the_theme` fails when a merge brings a colour literal back. The catalogue

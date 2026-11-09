@@ -5,9 +5,9 @@
 //! agent can say so: text a document hides from its reader is a common route for prompt injection.
 
 use super::device::{Drawn, MAX_CELLS, MAX_REDRAW_WORK, cell, redraw_tolerance};
-use super::{GlyphDrawMode, HashMap, Paint};
+use super::{GlyphDrawMode, HashMap, Paint, Rect};
 
-/// Why a glyph returned with a page's text paints nothing.
+/// Why extracted text can be hidden or differ from what a reader sees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HiddenReason {
     /// Text rendering mode 3: neither filled nor stroked.
@@ -34,6 +34,14 @@ pub enum HiddenReason {
     /// A private-use character (U+E000 to U+F8FF, planes 15 and 16): its meaning is the font's.
     /// Icon and symbol fonts use them for visible glyphs too.
     PrivateUse,
+    /// A solid glyph fill close to white over a simple white page backdrop.
+    NearBackground,
+    /// An ASCII /ActualText span differs from its glyphs' own ASCII text.
+    ActualTextDiffers,
+    /// A standard font's ASCII encoding and its /ToUnicode ASCII text disagree.
+    FontMappingDiffers,
+    /// Left-to-right ASCII glyphs on one line occur out of visual order in the content stream.
+    SourceOrderDiffers,
 }
 
 impl HiddenReason {
@@ -48,6 +56,10 @@ impl HiddenReason {
             HiddenReason::ZeroWidth => "zero_width",
             HiddenReason::BidiControl => "bidi_control",
             HiddenReason::PrivateUse => "private_use",
+            HiddenReason::NearBackground => "near_background",
+            HiddenReason::ActualTextDiffers => "actual_text_differs",
+            HiddenReason::FontMappingDiffers => "font_mapping_differs",
+            HiddenReason::SourceOrderDiffers => "source_order_differs",
         }
     }
 }
@@ -95,9 +107,20 @@ pub(super) struct Visibility {
     ocr: Option<usize>,
     /// The opacity of each open transparency group, outermost first.
     groups: Vec<f32>,
+    /// Occupied boxes on a plain white page. Unknown after complex painting or the work limit.
+    white_backdrop: Option<Vec<Rect>>,
 }
 
 impl Visibility {
+    pub(super) fn enable(&mut self) {
+        self.on = true;
+        self.white_backdrop = Some(Vec::new());
+    }
+
+    pub(super) fn forget_backdrop(&mut self) {
+        self.white_backdrop = None;
+    }
+
     pub(super) fn begin_marked_content(&mut self, depth: usize, tag: &[u8]) {
         if self.ocr.is_none() && tag == b"OCR" {
             self.ocr = Some(depth);
@@ -113,6 +136,7 @@ impl Visibility {
     /// hayro pushes and pops groups in pairs, also for an image or a knockout pass, so the stack
     /// is never deeper than the content's nesting.
     pub(super) fn push_group(&mut self, opacity: f32) {
+        self.forget_backdrop();
         self.groups.push(opacity);
     }
 
@@ -124,7 +148,7 @@ impl Visibility {
     /// does not: `em` is the height of its em square in points, `None` when unknown (a Type 3
     /// glyph, whose glyph space its font sets). Clipping text (`7 Tr`) is not classed: what it
     /// shows is what is painted through it.
-    pub(super) fn class(&self, paint: &Paint<'_>, mode: &GlyphDrawMode, em: Option<f64>) -> Option<HiddenReason> {
+    pub(super) fn class(&mut self, paint: &Paint<'_>, mode: &GlyphDrawMode, em: Option<f64>, bounds: Rect) -> Option<HiddenReason> {
         if !self.on {
             return None;
         }
@@ -133,18 +157,49 @@ impl Visibility {
             GlyphDrawMode::Invisible => Some(HiddenReason::Invisible),
             GlyphDrawMode::Clip => None,
             GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_) => {
-                let alpha = match paint {
+                let rgba = match paint {
                     // The renderer's own alpha: 0 for a Separation /None, opaque for a colour it
                     // cannot convert (drawn in a fallback colour).
-                    Paint::Color(colour) => colour.to_rgba().components()[3],
+                    Paint::Color(colour) => Some(colour.to_rgba().components()),
                     // shortcut: a pattern's own opacity has no getter in hayro, so it counts as
                     // opaque; reading it needs an accessor patched into the vendored `Pattern`.
-                    Paint::Pattern(_) => 1.0,
+                    Paint::Pattern(_) => None,
                 };
+                let alpha = rgba.map_or(1.0, |channels| channels[3]);
                 let alpha = self.groups.iter().fold(alpha, |alpha, group| alpha * group);
-                if paints_nothing(f64::from(alpha)) { Some(HiddenReason::Transparent) } else { em.is_some_and(is_tiny).then_some(HiddenReason::Tiny) }
+                if paints_nothing(f64::from(alpha)) {
+                    return Some(HiddenReason::Transparent);
+                }
+                let near_background = match (mode, rgba, em) {
+                    (GlyphDrawMode::Fill, Some([r, g, b, _]), Some(_)) => self.near_white([r, g, b], bounds),
+                    _ => {
+                        self.forget_backdrop();
+                        false
+                    }
+                };
+                if em.is_some_and(is_tiny) { Some(HiddenReason::Tiny) } else { near_background.then_some(HiddenReason::NearBackground) }
             }
         }
+    }
+
+    fn near_white(&mut self, rgb: [f32; 3], bounds: Rect) -> bool {
+        const MAX_INK_BOXES: usize = 512;
+        const NEAR_WHITE: f32 = 8.0 / 255.0;
+        let Some(ink) = self.white_backdrop.as_mut() else { return false };
+        // shortcut: test only a plain white backdrop with bounded previous glyph boxes. Paths,
+        // images and complex compositing need a separate comparison with rendered pixels.
+        // Dark translucent glyphs can build up to visible ink when drawn repeatedly.
+        let near = rgb.iter().all(|c| (1.0 - c).abs() <= NEAR_WHITE);
+        let overlaps = |r: &Rect| r.x0 < bounds.x1 && bounds.x0 < r.x1 && r.y0 < bounds.y1 && bounds.y0 < r.y1;
+        if near && !ink.iter().any(overlaps) {
+            return true;
+        }
+        if ink.len() == MAX_INK_BOXES {
+            self.forget_backdrop();
+        } else {
+            ink.push(bounds);
+        }
+        false
     }
 }
 
