@@ -19,7 +19,9 @@ ids stay lowercase (`pdfcraft-<version>-<platform>-<arch>.<ext>`, `ai.storytelle
    ```
 
    Commit the change through the normal review flow (see the `Release: PdfCraft v0.2.1` PR).
-2. **Merge `main` into `release`** (or fast-forward it) and push. The workflow starts by itself.
+2. **Fast-forward `release` to `main`**: with your `main` up to date, run
+   `git push origin main:release`. The workflow starts by itself. It first checks that the commit
+   passed CI on `main`, so a merge commit made on `release` stops there.
 3. **Wait for the draft.** When every job has finished (notarization is the slow part), the
    Releases page has a draft `PdfCraft v0.3.0` targeting the pushed commit, with every artifact
    and `SHA256SUMS.txt`. The notes are generated from the merged PRs.
