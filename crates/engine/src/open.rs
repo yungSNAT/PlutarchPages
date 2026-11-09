@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use pdfcraft_cos::{SaveOptions, write_incremental};
 use pdfcraft_render::{DocInfo, OpenError, RenderConfig, RenderPool, inspect};
 
-use crate::history::{Editor, Keys, TextBlocksCache};
+use crate::history::{Editor, Keys, PageTextCache};
 use crate::{
     AppearanceCache, DocId, Document, Session, TrustStore, XFA_SCRIPTS_OFF, XfaLayout, display_bytes, display_config, guard, info_fields, js,
     note_warnings, recovered_render_password, render_threads, same_pages, signatures_of, xfa, xfa_layout, xfa_values_from_datasets,
@@ -291,7 +291,7 @@ impl Session {
                         keys,
                         appearances: AppearanceCache::default(),
                         field_appearances: pdfcraft_forms::FieldAppearanceCache::default(),
-                        text_blocks: TextBlocksCache::default(),
+                        page_text: PageTextCache::default(),
                     }),
                     None,
                 )

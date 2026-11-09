@@ -38,7 +38,7 @@ fn run(mut cmd: Command, what: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn metadata() -> anyhow::Result<serde_json::Value> {
+pub(crate) fn metadata() -> anyhow::Result<serde_json::Value> {
     let out = cargo().args(["metadata", "--format-version", "1", "--no-deps"]).output().context("cargo metadata")?;
     if !out.status.success() {
         bail!("cargo metadata failed:\n{}", String::from_utf8_lossy(&out.stderr));
@@ -117,6 +117,7 @@ pub fn ci(_: &[String]) -> anyhow::Result<()> {
         ("layers", Box::new(|| layers(&[]))),
         ("wasm", Box::new(|| wasm(&[]))),
         ("license-check", Box::new(|| crate::license_check::run(&[]))),
+        ("fork-check", Box::new(|| crate::fork_check::run(&[]))),
         ("deny", Box::new(|| deny(&[]))),
         ("parity", Box::new(|| crate::parity::run(&[]))),
     ];
