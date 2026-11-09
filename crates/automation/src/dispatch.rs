@@ -515,8 +515,8 @@ impl Automation {
                 let doc = self.doc_to_copy(&a)?;
                 let info = &doc.info.pages[page];
                 let r = |x: f32| (x as f64 * 100.0).round() / 100.0;
-                let current = doc.text_blocks(page);
-                let hidden = hidden_text::line_entries(&doc.text_lines(page), info);
+                let (lines, current) = doc.text_lines_and_blocks(page);
+                let hidden = hidden_text::line_entries(&lines, info);
                 let id = doc.id;
                 let blocks: Vec<Value> = current
                     .iter()
