@@ -24,6 +24,8 @@ fn harness_bytes(fixture: &[u8]) -> Harness<'static, PdfCraftApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
         let mut app = PdfCraftApp::new();
         app.set_option("language", "en").unwrap();
+        // Saves stamp /ModDate from the clock; pinned, two saves compare equal across a second.
+        app.session = std::mem::take(&mut app.session).with_clock(|| 1_700_000_000);
         app.open_bytes("form.pdf", None, fixture.clone()).unwrap();
         app.set_option("left", "closed").unwrap();
         app.set_option("zoom", "150").unwrap();
