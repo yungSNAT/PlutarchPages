@@ -1,0 +1,23 @@
+[package]
+name = "pdfcraft-prc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+libfuzzer-sys = "0.4"
+pdfcraft-prc = { path = ".." }
+
+[[bin]]
+name = "model"
+path = "fuzz_targets/model.rs"
+test = false
+doc = false
+bench = false

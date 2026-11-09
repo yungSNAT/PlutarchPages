@@ -1,12 +1,28 @@
 name: Coverage-guided fuzz
 
-# libFuzzer runs of the untrusted-input parsers, weekly and on demand: stream decoding, indirect
-# objects and content streams. fuzz.yml's mutation fuzzer drives whole documents; these targets
-# let coverage feedback reach the parsers' rarer branches. A crash's input is uploaded.
+# Longer runs weekly and on demand. Parser PRs get the same targets with a short budget: a Red
+# Queen's race, where every parser change runs again just to stay in the same place.
+# fuzz.yml's mutation fuzzer drives whole documents; these targets reach rarer parser branches.
 on:
   schedule:
     - cron: "29 4 * * 1"
   workflow_dispatch:
+  # The crates and vendored crates these targets build. Each fuzz workspace keeps its own
+  # lockfile, so the root Cargo.lock is not listed; Cargo.toml is, for inherited versions.
+  pull_request:
+    paths:
+      - '.github/workflows/cargo-fuzz.yml'
+      - 'Cargo.toml'
+      - 'crates/content/**'
+      - 'crates/cos/**'
+      - 'crates/crypt/**'
+      - 'crates/filters/**'
+      - 'crates/fonts/**'
+      - 'crates/js/**'
+      - 'crates/prc/**'
+      - 'crates/xfa/**'
+      - 'vendor/hayro-jbig2/**'
+      - 'vendor/hayro-syntax/**'
 
 # The token is only used to check out the code: no job writes to the repository.
 permissions:
@@ -18,7 +34,7 @@ concurrency:
 
 jobs:
   fuzz:
-    name: ${{ matrix.crate }} ${{ matrix.target }} (5 min)
+    name: ${{ matrix.crate }} ${{ matrix.target }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -27,6 +43,9 @@ jobs:
           - { crate: filters, target: decode }
           - { crate: cos, target: indirect }
           - { crate: content, target: round_trip }
+          - { crate: js, target: formcalc }
+          - { crate: xfa, target: packet }
+          - { crate: prc, target: model }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -36,13 +55,21 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           cargo +nightly install cargo-fuzz --locked --version 0.13.2
-      - name: Fuzz for 5 minutes
+      - name: Fuzz within the event budget
         working-directory: crates/${{ matrix.crate }}
         env:
           TARGET: ${{ matrix.target }}
+          SECONDS_PER_TARGET: ${{ github.event_name == 'pull_request' && '30' || '300' }}
         run: |
-          mkdir -p "fuzz/corpus/$TARGET"
-          cargo +nightly fuzz run "$TARGET" "fuzz/corpus/$TARGET" -- -max_total_time=300 -rss_limit_mb=4096
+          corpus="fuzz/corpus/$TARGET"
+          mkdir -p "$corpus"
+          case "$TARGET" in
+            formcalc) printf '%s\n' 'Sum(1, 2, 3)' 'if (total > 0) then total endif' > "$corpus/seed" ;;
+            packet) printf '%s\n' '<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form"><field name="total"><ui><numericEdit/></ui></field></subform></template><xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><form><total>12</total></form></xfa:data></xfa:datasets></xdp:xdp>' > "$corpus/seed" ;;
+            # Odd first byte: a container of five empty sections and an empty model file.
+            model) printf '\001\0\0\0\0\0\0\0\0\0\0' > "$corpus/seed" ;;
+          esac
+          cargo +nightly fuzz run "$TARGET" "$corpus" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=4096 -timeout=10
       - name: Keep the crashing input
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
