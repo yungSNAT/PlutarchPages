@@ -30,7 +30,7 @@ const COMMANDS: &[(&str, &str, Command)] = &[
         gates::ci,
     ),
     ("test", "Workspace tests: cargo nextest (cargo test when it is missing), then doctests", gates::test),
-    ("i18n-report", "Print the strings each interface language lacks (counts and a few keys); never fails", gates::i18n_report),
+    ("i18n-report", "Print missing interface translations (--fork for the fork's overlay keys only)", gates::i18n_report),
     ("license-check", "Offline source licence documents, attribution and metadata", license_check::run),
     ("assets", "Enforce the asset policy (AGENTS.md §1) against ATTRIBUTION.toml; --write regenerates ATTRIBUTION.md", assets::run),
     ("fork-check", "Fail when a merge undoes what PATCHES.md says the fork keeps; --write re-records the named-colour baseline", fork_check::run),
