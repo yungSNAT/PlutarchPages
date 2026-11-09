@@ -12,6 +12,11 @@ cargo-fuzz = true
 # from crates/filters/.
 [workspace]
 
+# A detached workspace skips the root [patch.crates-io], so repeat the vendored
+# crate this target reaches.
+[patch.crates-io]
+hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 pdfcraft-filters = { path = ".." }

@@ -12,6 +12,12 @@ cargo-fuzz = true
 # from crates/preflight/.
 [workspace]
 
+# A detached workspace skips the root [patch.crates-io], so repeat the vendored
+# crates this target reaches: the fuzzer then runs the code PdfCraft ships.
+[patch.crates-io]
+hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
+hayro-syntax = { path = "../../../vendor/hayro-syntax" }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 pdfcraft-cos = { path = "../../cos" }

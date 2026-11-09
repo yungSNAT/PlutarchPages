@@ -1,0 +1,27 @@
+[package]
+name = "pdfcraft-xfa-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+# A detached workspace skips the root [patch.crates-io], so repeat the vendored
+# crate this target reaches through pdfcraft-filters.
+[patch.crates-io]
+hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pdfcraft-xfa = { path = ".." }
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
+test = false
+doc = false
+bench = false

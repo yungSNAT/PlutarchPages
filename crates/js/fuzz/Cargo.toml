@@ -22,3 +22,10 @@ path = "fuzz_targets/run_script.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "formcalc"
+path = "fuzz_targets/formcalc.rs"
+test = false
+doc = false
+bench = false
