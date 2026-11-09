@@ -2,9 +2,18 @@
 # (GitHub has no FreeBSD runners). GPU tests skip themselves when the VM has no adapter.
 name: FreeBSD
 
+# Pushes to main take the pull request's paths (PATCHES.md): each run writes a cache of about
+# 3 GB keyed on the commit, which kept the repository over its 10 GB cache limit. The weekly run
+# catches FreeBSD breakage from changes outside those paths.
 on:
   push:
     branches: [main]
+    paths:
+      - Cargo.toml
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - .github/workflows/freebsd.yml
+      - packaging/freebsd/**
   pull_request:
     paths:
       - Cargo.toml
@@ -12,11 +21,15 @@ on:
       - "**/Cargo.toml"
       - .github/workflows/freebsd.yml
       - packaging/freebsd/**
+  schedule:
+    - cron: "23 5 * * 3" # weekly
   workflow_dispatch:
 
 concurrency:
   group: freebsd-${{ github.ref }}
-  cancel-in-progress: true
+  # Only pull request runs are cancelled: scheduled and push runs on main would
+  # otherwise cancel each other.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read

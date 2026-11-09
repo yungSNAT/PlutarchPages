@@ -100,6 +100,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   share registry state with an upstream install. `pdfcraft.exe` stays, so `App Paths\pdfcraft.exe` and
   `Applications\pdfcraft.exe` are still shared: installing it alongside upstream isn't supported.
 - CodeQL: `.github/codeql/codeql-config.yml` excludes tests and `vendor/`.
+- Post-merge CI: `freebsd.yml` and `windows-arm64.yml` run on a push to `main` only when it changes
+  their pull request paths, and each also runs weekly. Upstream runs both on every push, where
+  FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
+  `paths` and FreeBSD's `schedule` when a merge drops them.
 - SonarCloud: `.sonarcloud.properties` excludes `vendor/` for the automatic analysis, and 7 hash lines
   carry `NOSONAR` for rust:S4790: 6 MD5 lines in `crates/crypt/src/lib.rs` and the RIPEMD-160 line in
   `crates/sign/src/keys.rs`. A merge that changes those lines drops the marker, so add it back.
