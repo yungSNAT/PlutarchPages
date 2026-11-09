@@ -31,12 +31,27 @@ jobs:
     name: version
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      actions: read # Find ci.yml's runs for this commit.
+      contents: read
     outputs:
       version: ${{ steps.resolve.outputs.version }}
       date: ${{ steps.resolve.outputs.date }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       i18n: ${{ steps.resolve.outputs.i18n }}
     steps:
+      # A push to release builds and drafts only a commit whose ci.yml run on a push to main passed,
+      # so an untested commit can't reach a release. Every build job needs this one. Dry runs skip it.
+      - name: Require a passing ci.yml run on main for this commit
+        if: github.event_name == 'push' && github.ref == 'refs/heads/release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&head_sha=$GITHUB_SHA" --jq .total_count)
+          if [ "$passed" -lt 1 ]; then
+            echo "::error::$GITHUB_SHA has no passing ci.yml run on main. Push a commit from main once its CI passes, or rerun this workflow after it does."
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
