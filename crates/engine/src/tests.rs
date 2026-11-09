@@ -9081,6 +9081,19 @@ fn text_blocks_stay_cached_after_an_edit_and_follow_undo_and_redo() {
     assert!(Arc::ptr_eq(&redone, &blocks(&session)));
 }
 
+/// text_paragraphs takes a page's lines and blocks from one interpretation, and both are cached
+/// together, so the hidden-text classes describe the lines the blocks index.
+#[test]
+fn text_lines_and_blocks_come_from_one_cached_interpretation() {
+    let (session, id) = session_with(1);
+    let editor = session.get(id).unwrap().editor.as_ref().unwrap();
+    let blocks = editor.text_blocks(0).unwrap();
+    let (lines, cached_blocks) = editor.page_text(0).unwrap();
+    assert!(Arc::ptr_eq(&blocks, &cached_blocks), "the blocks come from the cache");
+    assert!(Arc::ptr_eq(&lines, &editor.page_text(0).unwrap().0), "the lines are cached with the blocks");
+    assert_eq!(blocks[0].lines.iter().map(|&i| lines[i].text.as_str()).collect::<String>(), "Page 1");
+}
+
 /// #4199, #3797: the spaces typed into a paragraph are all there after saving and reopening.
 #[test]
 fn edited_text_keeps_every_space_typed_through_save_and_reopen() {

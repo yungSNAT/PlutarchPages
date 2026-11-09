@@ -129,21 +129,25 @@ pub(crate) struct Editor {
     /// for each widget while the objects it was drawn from are unchanged; see
     /// [`pdfcraft_forms::FieldAppearanceCache`].
     pub(crate) field_appearances: pdfcraft_forms::FieldAppearanceCache,
-    /// The text blocks last computed for one page, reused while the document is unchanged.
-    pub(crate) text_blocks: TextBlocksCache,
+    /// The text lines and blocks last computed for one page, reused while the document is unchanged.
+    pub(crate) page_text: PageTextCache,
 }
 
-/// One page's text blocks ([`pdfcraft_edit::text_blocks`]) and the document state they were read
-/// from. Opening a paragraph and applying its edit both need them, and grouping a long page is not
-/// cheap. The state ([`pdfcraft_cos::ReadState`]) changes with every edit and save and returns
-/// with undo, so a stale entry never matches, also after the document has been edited.
+/// One page's text lines and the blocks grouped from them ([`pdfcraft_edit::text_lines_and_blocks`])
+/// and the document state they were read from. Opening a paragraph and applying its edit both need
+/// them, and grouping a long page is not cheap. The state ([`pdfcraft_cos::ReadState`]) changes with
+/// every edit and save and returns with undo, so a stale entry never matches, also after the
+/// document has been edited.
 #[derive(Default)]
-pub(crate) struct TextBlocksCache(std::sync::Mutex<Option<CachedTextBlocks>>);
+pub(crate) struct PageTextCache(std::sync::Mutex<Option<CachedPageText>>);
 
-/// The document state, the page (0-based) and its text blocks.
-type CachedTextBlocks = (pdfcraft_cos::ReadState, usize, Arc<Vec<pdfcraft_edit::TextBlock>>);
+/// The document state, the page (0-based) and its text.
+type CachedPageText = (pdfcraft_cos::ReadState, usize, PageText);
 
-impl Clone for TextBlocksCache {
+/// A page's text lines and the blocks grouped from them: each block's `lines` index the lines.
+pub(crate) type PageText = (Arc<Vec<pdfcraft_edit::TextLine>>, Arc<Vec<pdfcraft_edit::TextBlock>>);
+
+impl Clone for PageTextCache {
     fn clone(&self) -> Self {
         // A poisoned cache only loses the cached blocks.
         Self(std::sync::Mutex::new(self.0.lock().ok().and_then(|c| c.clone())))
@@ -151,20 +155,26 @@ impl Clone for TextBlocksCache {
 }
 
 impl Editor {
-    /// The text blocks on `page` (0-based), from the cache when the document hasn't changed.
-    pub(crate) fn text_blocks(&self, page: usize) -> Result<Arc<Vec<pdfcraft_edit::TextBlock>>, EditError> {
-        if let Ok(cache) = self.text_blocks.0.lock()
-            && let Some((state, p, blocks)) = cache.as_ref()
+    /// The text lines and blocks on `page` (0-based), from the cache when the document hasn't changed.
+    pub(crate) fn page_text(&self, page: usize) -> Result<PageText, EditError> {
+        if let Ok(cache) = self.page_text.0.lock()
+            && let Some((state, p, text)) = cache.as_ref()
             && *p == page
             && state.matches(&self.cos)
         {
-            return Ok(blocks.clone());
+            return Ok(text.clone());
         }
-        let blocks = Arc::new(pdfcraft_edit::text_blocks(&self.cos, page)?);
-        if let Ok(mut cache) = self.text_blocks.0.lock() {
-            *cache = Some((self.cos.read_state(), page, blocks.clone()));
+        let (lines, blocks) = pdfcraft_edit::text_lines_and_blocks(&self.cos, page)?;
+        let text = (Arc::new(lines), Arc::new(blocks));
+        if let Ok(mut cache) = self.page_text.0.lock() {
+            *cache = Some((self.cos.read_state(), page, text.clone()));
         }
-        Ok(blocks)
+        Ok(text)
+    }
+
+    /// The text blocks on `page` (0-based), from the cache when the document hasn't changed.
+    pub(crate) fn text_blocks(&self, page: usize) -> Result<Arc<Vec<pdfcraft_edit::TextBlock>>, EditError> {
+        Ok(self.page_text(page)?.1)
     }
 }
 
