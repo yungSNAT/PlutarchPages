@@ -373,7 +373,7 @@ impl Automation {
                 let info = &doc.info.pages[page];
                 let r = |x: f32| (x as f64 * 100.0).round() / 100.0;
                 let text_lines = doc.text_lines(page);
-                let mut hidden = hidden_text::line_entries(&text_lines, info).into_iter();
+                let mut hidden = hidden_text::line_entries(&text_lines, info, &doc.hidden_layer_runs(&text_lines)).into_iter();
                 let lines: Vec<Value> = text_lines
                     .iter()
                     .enumerate()
@@ -516,7 +516,7 @@ impl Automation {
                 let info = &doc.info.pages[page];
                 let r = |x: f32| (x as f64 * 100.0).round() / 100.0;
                 let (lines, current) = doc.text_lines_and_blocks(page);
-                let hidden = hidden_text::line_entries(&lines, info);
+                let hidden = hidden_text::line_entries(&lines, info, &doc.hidden_layer_runs(&lines));
                 let id = doc.id;
                 let blocks: Vec<Value> = current
                     .iter()

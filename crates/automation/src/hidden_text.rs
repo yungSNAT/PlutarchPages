@@ -6,8 +6,11 @@
 //!
 //! Each engine classes its own text. `text_extract` and `text_find` read the renderer's glyphs,
 //! classed as it draws them; `text_lines` and `text_paragraphs` read the editor's runs, classed
-//! by their rendering mode and opacity. The two engines split and order text differently, so
-//! neither one's classes describe the other's text.
+//! by their rendering mode, opacity and layers. The two engines split and order text differently,
+//! so neither one's classes describe the other's text. The editor does not follow clipping, so
+//! only the renderer's text can be `clipped`; the renderer leaves out text outside the crop box
+//! or in a layer hidden as the file opens (`layer_set` does not change it), so only the editor's
+//! can be `hidden_layer` or `outside_crop_box`.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -181,13 +184,22 @@ fn outside(crop: [f64; 4], ink: &[[f64; 4]]) -> bool {
     !ink.is_empty() && ink.iter().all(away)
 }
 
-/// The units of `lines`, classed, on a page whose crop box is `crop` (user space).
-fn units(lines: &[TextLine], crop: [f64; 4]) -> Vec<Unit<'_>> {
+/// The units of `lines`, classed, on a page whose crop box is `crop` (user space); `layered` says
+/// which runs of each line are in a hidden layer.
+fn units<'l>(lines: &'l [TextLine], crop: [f64; 4], layered: &[Vec<bool>]) -> Vec<Unit<'l>> {
     let mut units = Vec::new();
     for (line, l) in lines.iter().enumerate() {
         // Every run of a line has its size, to a hundredth of a point.
         let tiny = is_tiny(l.size.abs()).then_some(HiddenReason::Tiny);
-        let classes: Vec<_> = l.run_modes().map(|(mode, ocr)| run_class(mode, ocr, l.opacity()).or(tiny.filter(|_| mode != 7))).collect();
+        let layers = layered.get(line).map_or(&[][..], Vec::as_slice);
+        let classes: Vec<_> = l
+            .run_modes()
+            .enumerate()
+            .map(|(k, (mode, ocr))| {
+                let layer = layers.get(k).copied().unwrap_or(false).then_some(HiddenReason::HiddenLayer);
+                layer.or_else(|| run_class(mode, ocr, l.opacity())).or(tiny.filter(|_| mode != 7))
+            })
+            .collect();
         let before = units.len();
         let cropped = |class: Option<HiddenReason>, ink: &[[f64; 4]]| class.or_else(|| outside(crop, ink).then_some(HiddenReason::OutsideCropBox));
         units.extend(l.runs().zip(&classes).map(|((text, ink, spaced), &class)| Unit {
@@ -243,8 +255,9 @@ fn view_rect(info: &PageInfo, b: [f64; 4]) -> [f64; 4] {
 }
 
 /// Each line's hidden text: one entry for each run of consecutive runs hidden for one reason.
-pub(crate) fn line_entries(lines: &[TextLine], info: &PageInfo) -> Vec<Entries> {
-    let units = units(lines, info.crop.map(f64::from));
+/// `layered` says which runs of each line are in a hidden layer (`Document::hidden_layer_runs`).
+pub(crate) fn line_entries(lines: &[TextLine], info: &PageInfo, layered: &[Vec<bool>]) -> Vec<Entries> {
+    let units = units(lines, info.crop.map(f64::from), layered);
     let covered = covered(&units);
     let hidden = |k: usize| units.get(k).and_then(|u| u.class).filter(|_| !covered.get(k).copied().unwrap_or(false));
     let mut out = vec![(Vec::new(), 0); lines.len()];
@@ -554,6 +567,106 @@ mod tests {
     }
 
     #[test]
+    fn clipped_text_is_reported_where_its_engine_tracks_the_clip() {
+        // The clip shows the top half of the page: "Clipped away" lies wholly below it.
+        let content = format!("q 0 200 400 200 re W n {}{}Q {}", line(300, 0, "Shown"), line(100, 0, "Clipped away"), line(50, 0, "After"));
+        // The edit engine does not track clipping, so it lists the text without a class.
+        assert_eq!(reported(&content), (of("clipped", "Clipped away"), vec![]));
+    }
+
+    #[test]
+    fn text_in_a_hidden_layer_is_reported_by_the_editor() {
+        // Layer 6 is off as the file opens and layer 7 is on. /Any shows when either is on, /All
+        // only when both are, and /Expr when 6 is on or 7 off, whatever its /OCGs. The renderer
+        // reads optional content from a sequence of any tag, and from an inline property list,
+        // but not from a membership dictionary written directly in /Properties. It hides group
+        // 11, which /OFF names but /OCGs does not list, and reads /P for /Fallback, whose /VE is
+        // malformed, over the one group its /OCGs refers to.
+        let content = [
+            ("/OC /Off", "Off layer"),
+            ("/OC /On", "On layer"),
+            ("/OC /Any", "Any layer on"),
+            ("/OC /All", "All layers on"),
+            ("/OC /Expr", "Expression hides"),
+            ("/Span /Off", "Span tag"),
+            ("/Span << /OC 6 0 R >>", "Inline list"),
+            ("/OC /Direct", "Direct dictionary"),
+            ("/OC /Unlisted", "Unlisted group"),
+            ("/OC /Fallback", "Fallback policy"),
+        ]
+        .iter()
+        .zip((100..=550).rev().step_by(50))
+        .map(|(&(tag, text), y)| format!("{tag} BDC {}EMC\n", line(y, 0, text)))
+        .collect::<String>();
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R 7 0 R] /D << /OFF [6 0 R 11 0 R] >> >> >>")
+            .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+            .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .obj(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 600] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> \
+                 /Properties << /Off 6 0 R /On 7 0 R /Any 8 0 R /All 9 0 R /Expr 10 0 R /Unlisted 11 0 R /Fallback 12 0 R \
+                 /Direct << /Type /OCMD /OCGs [6 0 R] >> >> >> >>",
+            )
+            .stream("", &content)
+            .obj("<< /Type /OCG /Name (Hidden) >>")
+            .obj("<< /Type /OCG /Name (Shown) >>")
+            .obj("<< /Type /OCMD /OCGs [6 0 R 7 0 R] >>")
+            .obj("<< /Type /OCMD /OCGs [6 0 R 7 0 R] /P /AllOn >>")
+            .obj("<< /Type /OCMD /OCGs [7 0 R] /VE [/Or 6 0 R [/Not 7 0 R]] >>")
+            .obj("<< /Type /OCG /Name (Unlisted) >>")
+            .obj("<< /Type 13 0 R /OCGs [null 6 0 R] /VE [/Xor 7 0 R] >>")
+            .obj("/OCMD")
+            .build();
+        let mut a = Automation::new();
+        let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
+        let editor = |a: &mut Automation| {
+            let lines = call(a, "text_lines", json!({ "doc": doc, "page": 1 }));
+            let paragraphs = call(a, "text_paragraphs", json!({ "doc": doc, "page": 1 }));
+            let (mut by_line, mut by_paragraph) = (pairs(lines["lines"].as_array().unwrap()), pairs(paragraphs["paragraphs"].as_array().unwrap()));
+            by_line.sort();
+            by_paragraph.sort();
+            assert_eq!(by_paragraph, by_line, "text_paragraphs reports what text_lines does for its lines");
+            by_line
+        };
+        let hidden = |texts: &[&str]| -> Pairs { texts.iter().map(|t| ("hidden_layer".to_owned(), (*t).to_owned())).collect() };
+        let off = ["All layers on", "Expression hides", "Fallback policy", "Inline list", "Off layer", "Span tag", "Unlisted group"];
+        assert_eq!(editor(&mut a), hidden(&off));
+        // The renderer leaves a hidden layer's text out, so its tools have nothing to report.
+        let page = &call(&mut a, "text_extract", json!({ "doc": doc }))["pages"][0];
+        assert_eq!(page["text"], "On layer\nAny layer on\nDirect dictionary", "{page}");
+        assert_eq!(page["hidden_text_count"], 0, "{page}");
+        // Once the view shows layer 6, only the group the view does not list stays hidden.
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Hidden", "visible": true }));
+        assert_eq!(editor(&mut a), hidden(&["Unlisted group"]));
+    }
+
+    #[test]
+    fn actual_text_is_hidden_only_if_all_its_glyphs_are_in_hidden_layers() {
+        let content = "/Span << /ActualText (Replacement) >> BDC \
+                       BT /F1 20 Tf 1 0 0 1 50 200 Tm \
+                       /Span << /OC 6 0 R >> BDC (a) Tj EMC \
+                       /Span << /OC 7 0 R >> BDC (b) Tj EMC ET EMC";
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R 7 0 R] /D << /OFF [6 0 R] >> >> >>")
+            .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+            .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .obj("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>")
+            .stream("", content)
+            .obj("<< /Type /OCG /Name (First) >>")
+            .obj("<< /Type /OCG /Name (Second) >>")
+            .build();
+        let mut a = Automation::new();
+        let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
+        let result = call(&mut a, "text_lines", json!({ "doc": doc, "page": 1 }));
+        assert_eq!(result["lines"][0]["text"], "Replacement");
+        assert_eq!(result["lines"][0]["hidden_text_count"], 0);
+
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Second", "visible": false }));
+        let result = call(&mut a, "text_lines", json!({ "doc": doc, "page": 1 }));
+        assert_eq!(pairs(result["lines"].as_array().unwrap()), of("hidden_layer", "Replacement"));
+    }
+
+    #[test]
     fn actual_text_over_invisible_glyphs_is_reported_as_its_replacement() {
         let hidden = of("invisible", "Real words");
         assert_eq!(reported(&format!("/Span <</ActualText (Real words)>> BDC {}EMC", line(200, 3, "xyz"))), (hidden.clone(), hidden));
@@ -587,6 +700,41 @@ mod tests {
         let long = lines["lines"].as_array().unwrap().iter().find(|l| l["text"].as_str().is_some_and(|t| t.starts_with("xxx"))).unwrap();
         assert_eq!(long["hidden_text"][0]["text"].as_str().map(str::len), Some(200));
         assert_eq!(long["hidden_text"][0]["text_truncated"], true);
+    }
+
+    #[test]
+    fn each_text_tool_names_every_reason() {
+        use pdfcraft_render::HiddenReason::{self, *};
+        let all = [
+            Invisible,
+            InvisibleOcrLayer,
+            Transparent,
+            Clipped,
+            Tiny,
+            OutsideCropBox,
+            HiddenLayer,
+            ZeroWidth,
+            BidiControl,
+            PrivateUse,
+            NearBackground,
+            ActualTextDiffers,
+            FontMappingDiffers,
+            SourceOrderDiffers,
+        ];
+        // Exhaustive, so a new reason does not build until this match names it; add it to `all` as well.
+        let _ = |r: HiddenReason| match r {
+            Invisible | InvisibleOcrLayer | Transparent | Clipped | Tiny | OutsideCropBox | HiddenLayer | ZeroWidth | BidiControl | PrivateUse
+            | NearBackground | ActualTextDiffers | FontMappingDiffers | SourceOrderDiffers => (),
+        };
+        let names = ["text_extract", "text_find", "text_lines", "text_paragraphs"];
+        let tools: Vec<_> = crate::tools().into_iter().filter(|t| names.contains(&t.name)).collect();
+        assert_eq!(tools.len(), names.len());
+        for tool in tools {
+            let words: Vec<&str> = tool.description.split(|c: char| !(c.is_ascii_lowercase() || c == '_')).collect();
+            for reason in all {
+                assert!(words.contains(&reason.id()), "{} does not name {}", tool.name, reason.id());
+            }
+        }
     }
 
     /// The tools' output with the fields this module adds taken out.

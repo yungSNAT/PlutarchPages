@@ -19,12 +19,21 @@ pub enum HiddenReason {
     /// Every fill and stroke of it has an effective opacity (its colour's, times that of every
     /// enclosing transparency group) that rounds to 0 in an 8-bit raster.
     Transparent,
+    /// Its em box and any stroke bounds lie wholly outside the intersection of the bounding boxes
+    /// of the clips in force. Not detected: text a clip path hides inside its bounding box, and
+    /// text a soft mask or later painting covers.
+    /// Only the renderer's text has it: the editor does not follow clipping.
+    Clipped,
     /// Under 1 point: the em square of its font, as drawn, is less than 1 point high across the
     /// baseline. Its box is not the measure: a turned glyph's box is as high as it is wide.
     Tiny,
     /// Wholly outside the page's crop box, so never shown. Only the editor's text has it: the
     /// renderer leaves such glyphs out of the text it returns.
     OutsideCropBox,
+    /// In optional content (a layer) the view hides: one that is off, or a membership dictionary
+    /// whose visibility expression or `/P` policy its layers fail. Only the editor's text has it:
+    /// the renderer leaves such text out of the text it returns.
+    HiddenLayer,
     /// A character with no width or ink of its own (U+200B to U+200D, U+2060 to U+2064, U+FEFF,
     /// U+180E) or a tag character (U+E0000 to U+E007F), which can spell out text no one sees.
     ZeroWidth,
@@ -51,8 +60,10 @@ impl HiddenReason {
             HiddenReason::Invisible => "invisible",
             HiddenReason::InvisibleOcrLayer => "invisible_ocr_layer",
             HiddenReason::Transparent => "transparent",
+            HiddenReason::Clipped => "clipped",
             HiddenReason::Tiny => "tiny",
             HiddenReason::OutsideCropBox => "outside_crop_box",
+            HiddenReason::HiddenLayer => "hidden_layer",
             HiddenReason::ZeroWidth => "zero_width",
             HiddenReason::BidiControl => "bidi_control",
             HiddenReason::PrivateUse => "private_use",
@@ -62,6 +73,12 @@ impl HiddenReason {
             HiddenReason::SourceOrderDiffers => "source_order_differs",
         }
     }
+}
+
+/// Whether `b` lies wholly outside `area`: touching its edge is outside. A NaN edge of `area` is
+/// not evidence and leaves `b` inside.
+pub(super) fn apart(b: &Rect, area: &Rect) -> bool {
+    b.x0.max(area.x0) >= b.x1.min(area.x1) || b.y0.max(area.y0) >= b.y1.min(area.y1)
 }
 
 /// Whether paint at `opacity` leaves nothing in an 8-bit raster: it rounds to an alpha of 0.
@@ -107,6 +124,8 @@ pub(super) struct Visibility {
     ocr: Option<usize>,
     /// The opacity of each open transparency group, outermost first.
     groups: Vec<f32>,
+    /// For each clip in force, outermost first: its path's bounding box within the ones before it.
+    clips: Vec<Rect>,
     /// Occupied boxes on a plain white page. Unknown after complex painting or the work limit.
     white_backdrop: Option<Vec<Rect>>,
 }
@@ -144,11 +163,30 @@ impl Visibility {
         self.groups.pop();
     }
 
+    /// `path` is in view space. hayro pops each clip it pushes when the graphics state, form or
+    /// stream that set it ends, so the top is always the intersection of the bounding boxes of the
+    /// clips in force.
+    pub(super) fn push_clip(&mut self, path: Rect) {
+        let clip = self.clips.last().map_or(path, |outer| outer.intersect(path));
+        self.clips.push(clip);
+    }
+
+    pub(super) fn pop_clip(&mut self) {
+        self.clips.pop();
+    }
+
     /// Why one drawing of a glyph in `mode` with `paint` shows nothing a reader can see, if it
     /// does not: `em` is the height of its em square in points, `None` when unknown (a Type 3
-    /// glyph, whose glyph space its font sets). Clipping text (`7 Tr`) is not classed: what it
-    /// shows is what is painted through it.
-    pub(super) fn class(&mut self, paint: &Paint<'_>, mode: &GlyphDrawMode, em: Option<f64>, bounds: Rect) -> Option<HiddenReason> {
+    /// glyph, whose glyph space its font sets), and `bounds` its em box in view space. Clipping
+    /// text (`7 Tr`) is not classed: what it shows is what is painted through it.
+    pub(super) fn class(
+        &mut self,
+        paint: &Paint<'_>,
+        mode: &GlyphDrawMode,
+        em: Option<f64>,
+        bounds: Rect,
+        stroke_bounds: impl FnOnce() -> Option<Rect>,
+    ) -> Option<HiddenReason> {
         if !self.on {
             return None;
         }
@@ -157,6 +195,11 @@ impl Visibility {
             GlyphDrawMode::Invisible => Some(HiddenReason::Invisible),
             GlyphDrawMode::Clip => None,
             GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_) => {
+                if self.clips.last().is_some_and(|clip| {
+                    apart(&bounds, clip) && (matches!(mode, GlyphDrawMode::Fill) || stroke_bounds().is_some_and(|stroke| apart(&stroke, clip)))
+                }) {
+                    return Some(HiddenReason::Clipped);
+                }
                 let rgba = match paint {
                     // The renderer's own alpha: 0 for a Separation /None, opaque for a colour it
                     // cannot convert (drawn in a fallback colour).
@@ -260,20 +303,22 @@ pub(super) fn cover_redrawn(glyphs: &mut [Drawn]) {
 
 #[cfg(test)]
 mod tests {
-    use super::HiddenReason::{self, Invisible, InvisibleOcrLayer, Tiny, Transparent};
+    use super::HiddenReason::{self, Clipped, Invisible, InvisibleOcrLayer, Tiny, Transparent};
     use crate::text::{InterpreterSettings, Pdf, extract_page, extract_page_hidden};
 
     /// A 400 × 400 page drawing `content`, with Helvetica as /F1, /GS0 (fill opacity 0), /GS3
-    /// (fill and stroke opacity 0), a grey 1 × 1 image /Im0 and a transparency group /Fm0 that
-    /// shows "Inside the group".
+    /// (fill and stroke opacity 0), a grey 1 × 1 image /Im0, a transparency group /Fm0 that
+    /// shows "Inside the group" and a form /Fm1 whose 100 × 100 /BBox leaves out the
+    /// "Outside the box" it draws at y = 200.
     fn page(content: &str) -> Pdf {
         let group = "BT /F1 20 Tf 1 0 0 1 50 200 Tm (Inside the group) Tj ET";
+        let boxed = "BT /F1 20 Tf 1 0 0 1 50 200 Tm (Outside the box) Tj ET";
         let objects = [
             "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
             "<< /Type /Pages /Kids [4 0 R] /Count 1 >>".to_string(),
             "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_string(),
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> \
-             /ExtGState << /GS0 << /ca 0 >> /GS3 << /ca 0 /CA 0 >> >> /XObject << /Im0 6 0 R /Fm0 7 0 R >> >> >>"
+             /ExtGState << /GS0 << /ca 0 >> /GS3 << /ca 0 /CA 0 >> >> /XObject << /Im0 6 0 R /Fm0 7 0 R /Fm1 8 0 R >> >> >>"
                 .to_string(),
             format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
             "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 \
@@ -283,6 +328,10 @@ mod tests {
                 "<< /Type /XObject /Subtype /Form /BBox [0 0 400 400] /Group << /S /Transparency >> \
                  /Resources << /Font << /F1 3 0 R >> >> /Length {} >>\nstream\n{group}\nendstream",
                 group.len()
+            ),
+            format!(
+                "<< /Type /XObject /Subtype /Form /BBox [0 0 100 100] /Resources << /Font << /F1 3 0 R >> >> /Length {} >>\nstream\n{boxed}\nendstream",
+                boxed.len()
             ),
         ];
         let mut bytes = b"%PDF-1.7\n".to_vec();
@@ -463,6 +512,44 @@ mod tests {
         ] {
             assert_eq!(character_reason(c), reason, "U+{:04X}", u32::from(c));
         }
+    }
+
+    #[test]
+    fn text_wholly_outside_the_clip_is_clipped() {
+        let content = [
+            // The clip shows the page from y = 200 up.
+            "q 0 200 400 200 re W n\n".to_owned(),
+            line(300, 0, "Inside"),
+            // A clip with no area shows nothing.
+            format!("q 0 0 0 0 re W n {}Q\n", line(250, 0, "Zero")),
+            // Its em box spans y = 191 to 211, so its top shows.
+            line(195, 0, "Across"),
+            line(100, 0, "Below"),
+            // Inside this clip but not the one around it: together they show nothing.
+            format!("q 0 0 100 100 re W n {}Q\n", line(60, 0, "Nested")),
+            "Q\n".to_owned(),
+            line(20, 0, "Restored"),
+        ]
+        .concat();
+        let glyphs = classified(&content);
+        assert_eq!(flagged(&glyphs, Clipped), "ZeroBelowNested", "{glyphs:?}");
+        assert_eq!(glyphs.iter().filter(|(_, r)| r.is_some()).count(), "ZeroBelowNested".len(), "{glyphs:?}");
+    }
+
+    #[test]
+    fn stroke_outside_the_clip_can_still_paint_inside_it() {
+        let glyphs = classified(&format!("q 0 200 400 200 re W n 80 w {}1 w {}Q", line(180, 1, "Ink"), line(100, 1, "Outside")));
+        assert_eq!(flagged(&glyphs, Clipped), "Outside", "{glyphs:?}");
+        let visible: String = glyphs.iter().filter(|(_, reason)| reason.is_none()).map(|(text, _)| text.trim()).collect();
+        assert_eq!(visible, "Ink");
+    }
+
+    #[test]
+    fn a_form_clips_text_outside_its_box_until_it_ends() {
+        let glyphs = classified(&format!("q /Fm1 Do Q {}", line(300, 0, "After")));
+        assert_eq!(flagged(&glyphs, Clipped), "Outsidethebox", "{glyphs:?}");
+        let shown: String = glyphs.iter().filter(|(_, r)| r.is_none()).map(|(t, _)| t.trim()).collect();
+        assert_eq!(shown, "After", "{glyphs:?}");
     }
 
     #[test]

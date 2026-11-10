@@ -10881,6 +10881,27 @@ fn review_inside_scope_group_move_matches_direct_transform_under_outer_scale() {
 }
 
 #[test]
+fn nested_optional_content_is_evaluated_once_for_all_runs() {
+    let depth = 256;
+    let mut content = "/Span << /OC 100 0 R >> BDC ".repeat(depth);
+    content.push_str("BT /F1 20 Tf 1 0 0 1 20 200 Tm ");
+    content.push_str(&"(x) Tj ".repeat(depth / 2));
+    content.push_str("1 0 0 1 20 150 Tm ");
+    content.push_str(&"(x) Tj ".repeat(depth / 2));
+    content.push_str("ET ");
+    content.push_str(&"EMC ".repeat(depth));
+    let lines = text_lines(&text_page(&content), 0).unwrap();
+
+    let mut visited = 0;
+    let hidden = TextLine::hidden_layer_runs(&lines, |_| {
+        visited += 1;
+        false
+    });
+    assert_eq!(visited, depth);
+    assert_eq!(hidden, [vec![false; depth / 2], vec![false; depth / 2]]);
+}
+
+#[test]
 fn text_lines_keep_each_runs_rendering_mode_and_one_opacity_per_line() {
     // A line joins runs in an invisible mode to visible ones, so the mode is kept for each run.
     let doc = text_page("BT /F1 20 Tf 1 0 0 1 20 200 Tm (Hello ) Tj /OCR BMC 3 Tr (secret) Tj EMC 0 Tr ( world) Tj ET");

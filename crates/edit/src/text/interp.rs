@@ -1,6 +1,6 @@
 use super::fallback::is_type3_fallback;
 use super::rewrite::vertical_advance;
-use super::{Dict, Document, EditError, HashMap, Matrix, Metrics, Object, Op, Rc};
+use super::{Dict, Document, EditError, HashMap, Matrix, Metrics, ObjRef, Object, Op, Rc};
 
 /// Text and graphics state captured for rewriting.
 #[derive(Clone, Debug, PartialEq)]
@@ -358,6 +358,9 @@ pub(super) struct Shown {
     pub(super) paint: Paint,
     /// Whether it is drawn inside an `/OCR` marked-content sequence, the layer Scan & OCR writes.
     pub(super) ocr_layer: bool,
+    /// The optional content the open marked-content sequences name, outermost first (see
+    /// [`TextLine::hidden_layer_runs`](super::TextLine::hidden_layer_runs)).
+    pub(super) oc: usize,
     pub(super) logical_order: bool,
     pub(super) actual_text: bool,
     /// Set when a `/PCSoft` or `/PCHard` marker was seen since the previous text line.
@@ -497,10 +500,13 @@ pub(super) struct Carry {
     /// errata, issue 368), as the renderer does.
     pub(super) stack: Vec<(Ts, Matrix, Matrix)>,
     pub(super) marked: Vec<Option<usize>>,
-    /// For each open marked-content sequence, its optional content group when it is `/OC`.
-    pub(super) layers: Vec<Option<Vec<u8>>>,
+    /// The depth and name of each open `/OC` marked-content sequence.
+    pub(super) layers: Vec<(usize, Vec<u8>)>,
     /// For each open marked-content sequence, whether it is or is inside an `/OCR` sequence.
     pub(super) ocr: Vec<bool>,
+    /// The optional-content scope at each marked-content depth.
+    pub(super) oc: Vec<usize>,
+    pub(super) layer_scopes: Vec<LayerScope>,
     /// Bytes of glyph text the rest of the page may still produce (see [`MAX_PAGE_TEXT`]).
     pub(super) text_left: usize,
     pub(super) advance_gaps: Option<Vec<AdvanceGap>>,
@@ -541,7 +547,17 @@ impl Carry {
             dash: (Vec::new(), 0.0),
             line_cap: 0,
         };
-        Carry { ts, stack: Vec::new(), marked: Vec::new(), layers: Vec::new(), ocr: Vec::new(), text_left: MAX_PAGE_TEXT, advance_gaps: None }
+        Carry {
+            ts,
+            stack: Vec::new(),
+            marked: Vec::new(),
+            layers: Vec::new(),
+            ocr: Vec::new(),
+            oc: Vec::new(),
+            layer_scopes: Vec::new(),
+            text_left: MAX_PAGE_TEXT,
+            advance_gaps: None,
+        }
     }
 }
 
@@ -555,9 +571,19 @@ type Invocation = (usize, Vec<u8>, Ts);
 #[derive(Default)]
 struct MarkedContent {
     regions: Vec<Option<usize>>,
-    layers: Vec<Option<Vec<u8>>>,
+    layers: Vec<(usize, Vec<u8>)>,
     ocr: Vec<bool>,
+    oc: Vec<usize>,
+    layer_scopes: Vec<LayerScope>,
     actual_text: Vec<Option<(usize, usize, String)>>,
+}
+
+/// One optional-content condition. Scope 0 is always visible. A node's inputs
+/// precede it, so a view can evaluate the conditions once without a recursive walk.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum LayerScope {
+    Nested { parent: usize, layer: ObjRef },
+    Replaced { first: usize, other: usize },
 }
 
 impl MarkedContent {
@@ -567,10 +593,26 @@ impl MarkedContent {
         let region = matches!(op.name(0), Some(b"P" | b"H" | b"H1" | b"H2" | b"H3" | b"H4" | b"H5" | b"H6" | b"LI" | b"TD" | b"TH"));
         self.regions.push(if region { Some(index) } else { self.regions.last().copied().flatten() });
         // A layer named in the resources is told apart by its name, an inline one by where it opens.
-        let layer = op.is("BDC") && op.name(0) == Some(b"OC".as_slice());
-        self.layers
-            .push(layer.then(|| op.operands.get(1).and_then(Object::as_name).map_or_else(|| format!("@{index}").into_bytes(), <[u8]>::to_vec)));
+        if op.is("BDC") && op.name(0) == Some(b"OC".as_slice()) {
+            let name = op.operands.get(1).and_then(Object::as_name).map_or_else(|| format!("@{index}").into_bytes(), <[u8]>::to_vec);
+            self.layers.push((self.regions.len(), name));
+        }
         self.ocr.push(op.name(0) == Some(b"OCR".as_slice()) || self.ocr.last().copied().unwrap_or(false));
+        // The renderer hides what a sequence of any tag marks by the optional content it names
+        // (`vendor/hayro-interpret/src/interpret/mod.rs`): a reference its name has in the
+        // `/Properties`, or the `/OC` reference of a property list written inline.
+        let layer = match op.operands.get(1).filter(|_| op.is("BDC")) {
+            Some(Object::Name(name)) => logical_text.and_then(|properties| properties.get(name)).and_then(Object::as_ref),
+            Some(Object::Dict(list)) => list.get(b"OC").and_then(Object::as_ref),
+            _ => None,
+        };
+        let parent = self.oc.last().copied().unwrap_or_default();
+        if let Some(layer) = layer {
+            self.layer_scopes.push(LayerScope::Nested { parent, layer });
+            self.oc.push(self.layer_scopes.len());
+        } else {
+            self.oc.push(parent);
+        }
         // The property list is inline or named in the resources' /Properties (§14.6.2).
         let list = logical_text.and_then(|properties| match op.operands.get(1) {
             Some(Object::Name(name)) => properties.get(name).and_then(|object| doc.dict(object)),
@@ -585,13 +627,24 @@ impl MarkedContent {
 
     fn end(&mut self, index: usize, shown: &mut Vec<Shown>) {
         self.regions.pop();
-        self.layers.pop();
+        if self.layers.last().is_some_and(|(depth, _)| *depth > self.regions.len()) {
+            self.layers.pop();
+        }
         self.ocr.pop();
+        self.oc.pop();
         if let Some(Some((start, open, logical))) = self.actual_text.pop() {
             let tail = shown.split_off(start.min(shown.len()));
             let mut items = tail.into_iter();
             if let Some(mut first) = items.next() {
                 for item in items {
+                    if first.oc != item.oc {
+                        if first.oc == 0 || item.oc == 0 {
+                            first.oc = 0;
+                        } else {
+                            self.layer_scopes.push(LayerScope::Replaced { first: first.oc, other: item.oc });
+                            first.oc = self.layer_scopes.len();
+                        }
+                    }
                     first.glyph_count = first.glyph_count.saturating_add(item.glyph_count);
                     first.extra_ops.push(item.op);
                     first.extra_ops.extend(item.extra_ops);
@@ -842,8 +895,9 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
         visual_order: m.visual_order,
         decodable,
         scope: marked.regions.last().copied().flatten(),
-        paint: Paint { layers: marked.layers.iter().flatten().cloned().collect(), gs: ts.gs.clone() },
+        paint: Paint { layers: marked.layers.iter().map(|(_, name)| name.clone()).collect(), gs: ts.gs.clone() },
         ocr_layer: marked.ocr.last().copied().unwrap_or(false),
+        oc: marked.oc.last().copied().unwrap_or_default(),
         logical_order: false,
         actual_text: false,
         soft_break: state.soft_break,
@@ -860,7 +914,8 @@ pub(super) fn interpret(
     cache: &mut HashMap<Vec<u8>, CachedFont>,
     carry: &mut Carry,
     mut invoked: Option<&mut Vec<Invocation>>,
-    // `Some(properties)`: read `/ActualText`, looking named property lists up in `properties`.
+    // `Some(properties)`: read `/ActualText` and the optional content sequences name, looking
+    // named property lists up in `properties`.
     logical_text: Option<&Dict>,
 ) -> Result<Vec<Shown>, EditError> {
     let (mut held_fonts, mut held_states, none) = (None, None, Dict::new());
@@ -876,6 +931,8 @@ pub(super) fn interpret(
         regions: std::mem::take(&mut carry.marked),
         layers: std::mem::take(&mut carry.layers),
         ocr: std::mem::take(&mut carry.ocr),
+        oc: std::mem::take(&mut carry.oc),
+        layer_scopes: std::mem::take(&mut carry.layer_scopes),
         ..MarkedContent::default()
     };
     // A rewrite names a wrap (`/PCSoft`) or a break it kept (`/PCHard`) in an empty marker
@@ -1051,6 +1108,8 @@ pub(super) fn interpret(
     carry.marked = marked.regions;
     carry.layers = marked.layers;
     carry.ocr = marked.ocr;
+    carry.oc = marked.oc;
+    carry.layer_scopes = marked.layer_scopes;
     positioned_tracking(&mut out);
     Ok(out)
 }
