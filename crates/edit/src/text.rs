@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use pdfcraft_content::{Matrix, Op, Pieces, parse, serialize_ops};
-use pdfcraft_cos::{DecodeBudget, Dict, Document, Object, PdfString, Stream};
+use pdfcraft_cos::{DecodeBudget, Dict, Document, ObjRef, Object, PdfString, Stream};
 use pdfcraft_fonts::pdf::Metrics;
 use pdfcraft_fonts::{CraftFont, GlyphError, japanese_glyph_from};
 
@@ -120,9 +120,10 @@ pub struct TextLine {
     /// `ink`, and whether joining put a space before it. Empty when the line's text was put
     /// into another order (see [`TextLine::runs`]).
     runs: Vec<(String, usize, bool)>,
-    /// Each run's text rendering mode (`Tr`) and whether it is in an `/OCR` marked-content
-    /// sequence, in content order. Kept when `runs` is emptied.
-    modes: Vec<(i64, bool)>,
+    /// Each run's text rendering mode (`Tr`), whether it is in an `/OCR` marked-content sequence
+    /// and the optional content it is drawn in (see [`TextLine::run_layers`]), in content order.
+    /// Kept when `runs` is emptied.
+    modes: Vec<(i64, bool, Vec<ObjRef>)>,
     /// This line continues the previous one because a rewrite wrapped it (`/PCSoft`).
     soft_break: bool,
     /// This line starts after a break a rewrite kept on purpose (`/PCHard`).

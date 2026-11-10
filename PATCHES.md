@@ -138,10 +138,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   (`crates/automation/src/hidden_text.rs`). The renderer classes the glyphs it returns when asked
   (`PageRenderer::text_with_hidden`, `crates/render/src/text/hidden.rs`): `extract_parallel` calls
   it instead of `render` with `RequestKind::Text`, and `TextCache` keeps the classes beside the
-  text. The editor's `TextLine` keeps each run's rendering mode and `/OCR` marker (`run_modes`) and
-  gives the line's opacity (`opacity`). A merge that changes `TextDevice`, `extract_parallel`,
-  `TextCache`, these 4 tools or where `TextLine` pushes runs must keep them; the tests in those 2
-  files fail when it doesn't.
+  text. `TextDevice` keeps the bounding box of each clip hayro pushes (`push_clip_path`) to class
+  `clipped` text. The editor's `TextLine` keeps each run's rendering mode and `/OCR` marker
+  (`run_modes`) and gives the line's opacity (`opacity`) and each run's optional content as hayro
+  reads it (`run_layers`), which `Document::hidden_layer_runs` resolves as hayro's `OcgState` does
+  for `hidden_layer`. A merge that changes `TextDevice`, `extract_parallel`, `TextCache`, these 4
+  tools or where `TextLine` pushes runs must keep them; the tests in those 2 files fail when it
+  doesn't.
   Both engines also report zero-width, bidirectional-control and private-use characters as
   readable `U+XXXX` tokens. Character warnings are independent of paint warnings and preserve
   mixed reasons within one replacement string. Tokens stay whole within the 200-character cap;

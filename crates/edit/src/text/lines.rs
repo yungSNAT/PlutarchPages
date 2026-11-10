@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::fallback::{same_font, same_paint};
 use super::interp::{Carry, Origin, Pen, Shown, TextState, Ts, direction, interpret, to_frame, union};
-use super::{DecodeBudget, Dict, Document, EditError, HashMap, Matrix, Object, Op, Pieces, Stream, TextLine, parse, serialize_ops};
+use super::{DecodeBudget, Dict, Document, EditError, HashMap, Matrix, ObjRef, Object, Op, Pieces, Stream, TextLine, parse, serialize_ops};
 
 impl TextLine {
     /// The baseline's height in user space.
@@ -37,7 +37,16 @@ impl TextLine {
     /// sequence, in content order: one per run of [`TextLine::runs`], also when the line was
     /// reordered and that lists none.
     pub fn run_modes(&self) -> impl Iterator<Item = (i64, bool)> + '_ {
-        self.modes.iter().copied()
+        self.modes.iter().map(|(mode, ocr, _)| (*mode, *ocr))
+    }
+
+    /// The optional content each run is drawn in, one list per run of [`TextLine::run_modes`]:
+    /// the reference each open marked-content sequence names, outermost first, as the renderer
+    /// reads it (a sequence of any tag whose name in the page's `/Properties` is a reference, or
+    /// whose inline property list has an `/OC` reference). Whether one hides the run depends on
+    /// the document's layer visibility.
+    pub fn run_layers(&self) -> impl Iterator<Item = &[ObjRef]> {
+        self.modes.iter().map(|(_, _, oc)| oc.as_slice())
     }
 
     /// The fill and stroke opacity (`ca` and `CA`) the line is drawn at: one for all its runs,
@@ -291,7 +300,7 @@ fn text_lines_in(
             l.frame = union(l.frame, s.frame);
             l.ink.extend(s.ink.iter().copied());
             l.runs.push((s.text.clone(), l.ink.len(), spaced));
-            l.modes.push((s.state.render_mode, s.ocr_layer));
+            l.modes.push((s.state.render_mode, s.ocr_layer, s.oc.clone()));
             l.ops.push(s.op);
             l.ops.extend(s.extra_ops.iter().copied());
             l.decodable &= s.decodable;
@@ -325,7 +334,7 @@ fn text_lines_in(
                 clips: s.state.render_mode >= 4,
                 unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
                 runs: vec![(s.text.clone(), s.ink.len(), false)],
-                modes: vec![(s.state.render_mode, s.ocr_layer)],
+                modes: vec![(s.state.render_mode, s.ocr_layer, s.oc.clone())],
                 soft_break: s.soft_break,
                 hard_break: s.hard_break,
                 soft_gap: s.soft_gap,
@@ -411,7 +420,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         l.frame = union(l.frame, s.frame);
         l.ink.extend(s.ink.iter().copied());
         l.runs.push((s.text.clone(), l.ink.len(), spaced));
-        l.modes.push((s.state.render_mode, s.ocr_layer));
+        l.modes.push((s.state.render_mode, s.ocr_layer, s.oc.clone()));
         l.ops.push(s.op);
         l.ops.extend(s.extra_ops.iter().copied());
         l.decodable &= s.decodable;
@@ -444,7 +453,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
             clips: s.state.render_mode >= 4,
             unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
             runs: vec![(s.text.clone(), s.ink.len(), false)],
-            modes: vec![(s.state.render_mode, s.ocr_layer)],
+            modes: vec![(s.state.render_mode, s.ocr_layer, s.oc.clone())],
             soft_break: s.soft_break,
             hard_break: s.hard_break,
             soft_gap: s.soft_gap,

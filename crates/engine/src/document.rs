@@ -319,6 +319,13 @@ impl Document {
         self.editor.as_ref().and_then(|e| e.page_text(page).ok()).map(|(lines, _)| lines.as_ref().clone()).unwrap_or_default()
     }
 
+    /// For each of `lines`, and each of its runs as [`pdfcraft_edit::TextLine::run_layers`] lists
+    /// them, whether the view hides it by its optional content, as the renderer decides.
+    pub fn hidden_layer_runs(&self, lines: &[pdfcraft_edit::TextLine]) -> Vec<Vec<bool>> {
+        let mut view = self.editor.as_ref().map(|e| crate::layers::ViewLayers::new(&e.cos, &self.info.layers));
+        lines.iter().map(|l| l.run_layers().map(|oc| view.as_mut().is_some_and(|v| oc.iter().any(|r| v.hides(*r)))).collect()).collect()
+    }
+
     /// The form's calculation order: its calculated fields in the order they calculate, what each
     /// formula reads, what is wrong with the order, and the order Fix order writes.
     pub fn calculation_order(&self) -> CalculationOrder {

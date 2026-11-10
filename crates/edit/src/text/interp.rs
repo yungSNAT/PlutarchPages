@@ -1,6 +1,6 @@
 use super::fallback::is_type3_fallback;
 use super::rewrite::vertical_advance;
-use super::{Dict, Document, EditError, HashMap, Matrix, Metrics, Object, Op, Rc};
+use super::{Dict, Document, EditError, HashMap, Matrix, Metrics, ObjRef, Object, Op, Rc};
 
 /// Text and graphics state captured for rewriting.
 #[derive(Clone, Debug, PartialEq)]
@@ -358,6 +358,9 @@ pub(super) struct Shown {
     pub(super) paint: Paint,
     /// Whether it is drawn inside an `/OCR` marked-content sequence, the layer Scan & OCR writes.
     pub(super) ocr_layer: bool,
+    /// The optional content the open marked-content sequences name, outermost first (see
+    /// [`TextLine::run_layers`](super::TextLine::run_layers)).
+    pub(super) oc: Vec<ObjRef>,
     pub(super) logical_order: bool,
     pub(super) actual_text: bool,
     /// Set when a `/PCSoft` or `/PCHard` marker was seen since the previous text line.
@@ -501,6 +504,8 @@ pub(super) struct Carry {
     pub(super) layers: Vec<Option<Vec<u8>>>,
     /// For each open marked-content sequence, whether it is or is inside an `/OCR` sequence.
     pub(super) ocr: Vec<bool>,
+    /// For each open marked-content sequence, the optional content it names.
+    pub(super) oc: Vec<Option<ObjRef>>,
     /// Bytes of glyph text the rest of the page may still produce (see [`MAX_PAGE_TEXT`]).
     pub(super) text_left: usize,
     pub(super) advance_gaps: Option<Vec<AdvanceGap>>,
@@ -541,7 +546,16 @@ impl Carry {
             dash: (Vec::new(), 0.0),
             line_cap: 0,
         };
-        Carry { ts, stack: Vec::new(), marked: Vec::new(), layers: Vec::new(), ocr: Vec::new(), text_left: MAX_PAGE_TEXT, advance_gaps: None }
+        Carry {
+            ts,
+            stack: Vec::new(),
+            marked: Vec::new(),
+            layers: Vec::new(),
+            ocr: Vec::new(),
+            oc: Vec::new(),
+            text_left: MAX_PAGE_TEXT,
+            advance_gaps: None,
+        }
     }
 }
 
@@ -557,6 +571,7 @@ struct MarkedContent {
     regions: Vec<Option<usize>>,
     layers: Vec<Option<Vec<u8>>>,
     ocr: Vec<bool>,
+    oc: Vec<Option<ObjRef>>,
     actual_text: Vec<Option<(usize, usize, String)>>,
 }
 
@@ -571,6 +586,14 @@ impl MarkedContent {
         self.layers
             .push(layer.then(|| op.operands.get(1).and_then(Object::as_name).map_or_else(|| format!("@{index}").into_bytes(), <[u8]>::to_vec)));
         self.ocr.push(op.name(0) == Some(b"OCR".as_slice()) || self.ocr.last().copied().unwrap_or(false));
+        // The renderer hides what a sequence of any tag marks by the optional content it names
+        // (`vendor/hayro-interpret/src/interpret/mod.rs`): a reference its name has in the
+        // `/Properties`, or the `/OC` reference of a property list written inline.
+        self.oc.push(match op.operands.get(1).filter(|_| op.is("BDC")) {
+            Some(Object::Name(name)) => logical_text.and_then(|properties| properties.get(name)).and_then(Object::as_ref),
+            Some(Object::Dict(list)) => list.get(b"OC").and_then(Object::as_ref),
+            _ => None,
+        });
         // The property list is inline or named in the resources' /Properties (§14.6.2).
         let list = logical_text.and_then(|properties| match op.operands.get(1) {
             Some(Object::Name(name)) => properties.get(name).and_then(|object| doc.dict(object)),
@@ -587,6 +610,7 @@ impl MarkedContent {
         self.regions.pop();
         self.layers.pop();
         self.ocr.pop();
+        self.oc.pop();
         if let Some(Some((start, open, logical))) = self.actual_text.pop() {
             let tail = shown.split_off(start.min(shown.len()));
             let mut items = tail.into_iter();
@@ -844,6 +868,7 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
         scope: marked.regions.last().copied().flatten(),
         paint: Paint { layers: marked.layers.iter().flatten().cloned().collect(), gs: ts.gs.clone() },
         ocr_layer: marked.ocr.last().copied().unwrap_or(false),
+        oc: marked.oc.iter().flatten().copied().collect(),
         logical_order: false,
         actual_text: false,
         soft_break: state.soft_break,
@@ -860,7 +885,8 @@ pub(super) fn interpret(
     cache: &mut HashMap<Vec<u8>, CachedFont>,
     carry: &mut Carry,
     mut invoked: Option<&mut Vec<Invocation>>,
-    // `Some(properties)`: read `/ActualText`, looking named property lists up in `properties`.
+    // `Some(properties)`: read `/ActualText` and the optional content sequences name, looking
+    // named property lists up in `properties`.
     logical_text: Option<&Dict>,
 ) -> Result<Vec<Shown>, EditError> {
     let (mut held_fonts, mut held_states, none) = (None, None, Dict::new());
@@ -876,6 +902,7 @@ pub(super) fn interpret(
         regions: std::mem::take(&mut carry.marked),
         layers: std::mem::take(&mut carry.layers),
         ocr: std::mem::take(&mut carry.ocr),
+        oc: std::mem::take(&mut carry.oc),
         ..MarkedContent::default()
     };
     // A rewrite names a wrap (`/PCSoft`) or a break it kept (`/PCHard`) in an empty marker
@@ -1051,6 +1078,7 @@ pub(super) fn interpret(
     carry.marked = marked.regions;
     carry.layers = marked.layers;
     carry.ocr = marked.ocr;
+    carry.oc = marked.oc;
     positioned_tracking(&mut out);
     Ok(out)
 }

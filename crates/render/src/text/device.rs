@@ -1,4 +1,4 @@
-use super::hidden::{HiddenReason, Visibility, combine, cover_redrawn};
+use super::hidden::{HiddenReason, Visibility, apart, combine, cover_redrawn};
 use super::layout::{Flow, along_baseline, arrange_flow, compatible, continues, from_upright, to_upright, unrolled};
 use super::{
     Affine, BezPath, BlendMode, ClipPath, Context, Device, Glyph, GlyphDrawMode, HashMap, Image, InterpreterCache, InterpreterSettings, PageText,
@@ -290,7 +290,9 @@ impl<'a> Device<'a> for TextDevice {
     fn draw_path(&mut self, _: &BezPath, _: Affine, _: &Paint<'a>, _: &PathDrawMode) {
         self.visibility.forget_backdrop();
     }
-    fn push_clip_path(&mut self, _: &ClipPath) {}
+    fn push_clip_path(&mut self, clip: &ClipPath) {
+        self.visibility.push_clip(clip.path.bounding_box());
+    }
     fn push_transparency_group(&mut self, opacity: f32, _: Option<SoftMask<'a>>, _: BlendMode) {
         self.visibility.push_group(opacity);
     }
@@ -364,7 +366,7 @@ impl<'a> Device<'a> for TextDevice {
         let b = corners.iter().fold(Rect::new(f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY), |b, p| {
             Rect::new(b.x0.min(p.x), b.y0.min(p.y), b.x1.max(p.x), b.y1.max(p.y))
         });
-        let outside_crop = b.x0.max(self.page.x0) >= b.x1.min(self.page.x1) || b.y0.max(self.page.y0) >= b.y1.min(self.page.y1);
+        let outside_crop = apart(&b, &self.page);
         if !(b.x0.is_finite() && b.y0.is_finite() && b.x1.is_finite() && b.y1.is_finite())
             || b.width() > 10_000.0
             || b.height() > 10_000.0
@@ -405,7 +407,9 @@ impl<'a> Device<'a> for TextDevice {
     fn draw_image(&mut self, _: Image<'a, '_>, _: Affine) {
         self.visibility.forget_backdrop();
     }
-    fn pop_clip_path(&mut self) {}
+    fn pop_clip_path(&mut self) {
+        self.visibility.pop_clip();
+    }
     fn pop_transparency_group(&mut self) {
         self.visibility.pop_group();
     }
