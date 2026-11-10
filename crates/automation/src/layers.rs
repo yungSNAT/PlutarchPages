@@ -1,7 +1,8 @@
 //! Layers (optional content groups) as a tool: the Layers panel's eye icon (#2986, AGENTS.md §3).
 //!
-//! A per-document view setting, like hidden comments: `page_render` draws with it, and the file
-//! itself never changes.
+//! A per-document view setting, like hidden comments: `page_render` draws with it and
+//! `text_extract`, `text_find` and `comment_add`'s `find` read the text it shows. The file itself
+//! never changes.
 
 use serde_json::{Value, json};
 
