@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::fallback::{same_font, same_paint};
-use super::interp::{Carry, Origin, Pen, Shown, TextState, Ts, direction, interpret, to_frame, union};
+use super::interp::{Carry, LayerScope, Origin, Pen, Shown, TextState, Ts, direction, interpret, to_frame, union};
 use super::{DecodeBudget, Dict, Document, EditError, HashMap, Matrix, ObjRef, Object, Op, Pieces, Stream, TextLine, parse, serialize_ops};
 
 impl TextLine {
@@ -40,13 +40,27 @@ impl TextLine {
         self.modes.iter().map(|(mode, ocr, _)| (*mode, *ocr))
     }
 
-    /// The optional content each run is drawn in, one list per run of [`TextLine::run_modes`]:
-    /// the reference each open marked-content sequence names, outermost first, as the renderer
-    /// reads it (a sequence of any tag whose name in the page's `/Properties` is a reference, or
-    /// whose inline property list has an `/OC` reference). Whether one hides the run depends on
-    /// the document's layer visibility.
-    pub fn run_layers(&self) -> impl Iterator<Item = &[ObjRef]> {
-        self.modes.iter().map(|(_, _, oc)| oc.as_slice())
+    /// For each line, whether optional content hides each run of [`TextLine::run_modes`].
+    /// Evaluate each content stream's shared scopes once for the caller's layer choices.
+    pub fn hidden_layer_runs(lines: &[Self], mut hides: impl FnMut(ObjRef) -> bool) -> Vec<Vec<bool>> {
+        let mut evaluated = HashMap::new();
+        lines
+            .iter()
+            .map(|line| {
+                let scopes = evaluated.entry(line.layer_scopes.as_ptr()).or_insert_with(|| {
+                    let mut hidden = Vec::with_capacity(line.layer_scopes.len() + 1);
+                    hidden.push(false);
+                    for scope in line.layer_scopes.iter() {
+                        hidden.push(match *scope {
+                            LayerScope::Nested { parent, layer } => hidden[parent] || hides(layer),
+                            LayerScope::Replaced { first, other } => hidden[first] && hidden[other],
+                        });
+                    }
+                    hidden
+                });
+                line.modes.iter().map(|(_, _, index)| scopes[*index]).collect()
+            })
+            .collect()
     }
 
     /// The fill and stroke opacity (`ca` and `CA`) the line is drawn at: one for all its runs,
@@ -249,6 +263,7 @@ fn text_lines_in(
     let ops = pieces.parse().ops;
     let properties = res.get(b"Properties").and_then(|o| doc.dict(o)).unwrap_or_default();
     let shown = interpret(doc, &ops, &res, &mut cache, &mut carry, None, actual_text.then_some(&properties))?;
+    let layer_scopes = Arc::<[LayerScope]>::from(carry.layer_scopes);
     if let (Some(gaps), Some(adjustments)) = (gaps, carry.advance_gaps) {
         gaps.extend(adjustments.into_iter().map(|gap| GlyphAdvanceGap {
             paint_pos: (ops.get(gap.op).map_or(0, |op| pieces.pieces_of(op).0), gap.op),
@@ -300,7 +315,7 @@ fn text_lines_in(
             l.frame = union(l.frame, s.frame);
             l.ink.extend(s.ink.iter().copied());
             l.runs.push((s.text.clone(), l.ink.len(), spaced));
-            l.modes.push((s.state.render_mode, s.ocr_layer, s.oc.clone()));
+            l.modes.push((s.state.render_mode, s.ocr_layer, s.oc));
             l.ops.push(s.op);
             l.ops.extend(s.extra_ops.iter().copied());
             l.decodable &= s.decodable;
@@ -334,7 +349,8 @@ fn text_lines_in(
                 clips: s.state.render_mode >= 4,
                 unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
                 runs: vec![(s.text.clone(), s.ink.len(), false)],
-                modes: vec![(s.state.render_mode, s.ocr_layer, s.oc.clone())],
+                modes: vec![(s.state.render_mode, s.ocr_layer, s.oc)],
+                layer_scopes: Arc::clone(&layer_scopes),
                 soft_break: s.soft_break,
                 hard_break: s.hard_break,
                 soft_gap: s.soft_gap,
@@ -393,7 +409,7 @@ fn compatible_word(line: &TextLine, shown: &Shown) -> bool {
 
 /// The line `s` continues, or a new one: `last` is the previous run of the same stream
 /// (`bt`, baseline, end x, size).
-fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize) {
+fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize, layer_scopes: &Arc<[LayerScope]>) {
     let joins = last.is_some_and(|pen| {
         let bt = pen.bt;
         lines.last().is_some_and(|l| l.scope == s.scope && l.paint == s.paint && l.logical_order == s.logical_order)
@@ -420,7 +436,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         l.frame = union(l.frame, s.frame);
         l.ink.extend(s.ink.iter().copied());
         l.runs.push((s.text.clone(), l.ink.len(), spaced));
-        l.modes.push((s.state.render_mode, s.ocr_layer, s.oc.clone()));
+        l.modes.push((s.state.render_mode, s.ocr_layer, s.oc));
         l.ops.push(s.op);
         l.ops.extend(s.extra_ops.iter().copied());
         l.decodable &= s.decodable;
@@ -453,7 +469,8 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
             clips: s.state.render_mode >= 4,
             unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
             runs: vec![(s.text.clone(), s.ink.len(), false)],
-            modes: vec![(s.state.render_mode, s.ocr_layer, s.oc.clone())],
+            modes: vec![(s.state.render_mode, s.ocr_layer, s.oc)],
+            layer_scopes: Arc::clone(layer_scopes),
             soft_break: s.soft_break,
             hard_break: s.hard_break,
             soft_gap: s.soft_gap,
@@ -614,6 +631,7 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
         let (mut held, none) = (None, Dict::new());
         let properties = resource_dict(w.doc, resources, b"Properties", &mut held).unwrap_or(&none);
         let shown = interpret(w.doc, ops, resources, &mut cache, carry, Some(&mut invoked), Some(properties))?;
+        let layer_scopes = Arc::<[LayerScope]>::from(std::mem::take(&mut carry.layer_scopes));
         let mut last = None;
         let mut last_stream = None;
         let mut forms = invoked.into_iter().peekable();
@@ -628,7 +646,7 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
             if last_stream.replace(si).is_some_and(|prev| prev != si) {
                 last = None;
             }
-            add_shown(&mut w.lines, &mut last, s, si);
+            add_shown(&mut w.lines, &mut last, s, si, &layer_scopes);
         }
         for (_, name, ts) in forms {
             enter(w, resources, &name, ts, &mut carry.text_left)?;

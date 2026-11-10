@@ -19,8 +19,9 @@ pub enum HiddenReason {
     /// Every fill and stroke of it has an effective opacity (its colour's, times that of every
     /// enclosing transparency group) that rounds to 0 in an 8-bit raster.
     Transparent,
-    /// Its em box lies wholly outside the bounding box of the clip in force. Not detected: text a
-    /// clip path hides inside its bounding box, and text a soft mask or later painting covers.
+    /// Its em box and any stroke bounds lie wholly outside the intersection of the bounding boxes
+    /// of the clips in force. Not detected: text a clip path hides inside its bounding box, and
+    /// text a soft mask or later painting covers.
     /// Only the renderer's text has it: the editor does not follow clipping.
     Clipped,
     /// Under 1 point: the em square of its font, as drawn, is less than 1 point high across the
@@ -162,9 +163,9 @@ impl Visibility {
         self.groups.pop();
     }
 
-    /// `path` is in view space. hayro pops every clip it pushes, with the graphics state or form
-    /// that set it, before the next glyph, so whenever a glyph is classed the top is the clip in
-    /// force.
+    /// `path` is in view space. hayro pops each clip it pushes when the graphics state, form or
+    /// stream that set it ends, so the top is always the intersection of the bounding boxes of the
+    /// clips in force.
     pub(super) fn push_clip(&mut self, path: Rect) {
         let clip = self.clips.last().map_or(path, |outer| outer.intersect(path));
         self.clips.push(clip);
@@ -178,7 +179,14 @@ impl Visibility {
     /// does not: `em` is the height of its em square in points, `None` when unknown (a Type 3
     /// glyph, whose glyph space its font sets), and `bounds` its em box in view space. Clipping
     /// text (`7 Tr`) is not classed: what it shows is what is painted through it.
-    pub(super) fn class(&mut self, paint: &Paint<'_>, mode: &GlyphDrawMode, em: Option<f64>, bounds: Rect) -> Option<HiddenReason> {
+    pub(super) fn class(
+        &mut self,
+        paint: &Paint<'_>,
+        mode: &GlyphDrawMode,
+        em: Option<f64>,
+        bounds: Rect,
+        stroke_bounds: impl FnOnce() -> Option<Rect>,
+    ) -> Option<HiddenReason> {
         if !self.on {
             return None;
         }
@@ -186,10 +194,12 @@ impl Visibility {
             GlyphDrawMode::Invisible if self.ocr.is_some() => Some(HiddenReason::InvisibleOcrLayer),
             GlyphDrawMode::Invisible => Some(HiddenReason::Invisible),
             GlyphDrawMode::Clip => None,
-            GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_) if self.clips.last().is_some_and(|clip| apart(&bounds, clip)) => {
-                Some(HiddenReason::Clipped)
-            }
             GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_) => {
+                if self.clips.last().is_some_and(|clip| {
+                    apart(&bounds, clip) && (matches!(mode, GlyphDrawMode::Fill) || stroke_bounds().is_some_and(|stroke| apart(&stroke, clip)))
+                }) {
+                    return Some(HiddenReason::Clipped);
+                }
                 let rgba = match paint {
                     // The renderer's own alpha: 0 for a Separation /None, opaque for a colour it
                     // cannot convert (drawn in a fallback colour).
@@ -524,6 +534,14 @@ mod tests {
         let glyphs = classified(&content);
         assert_eq!(flagged(&glyphs, Clipped), "ZeroBelowNested", "{glyphs:?}");
         assert_eq!(glyphs.iter().filter(|(_, r)| r.is_some()).count(), "ZeroBelowNested".len(), "{glyphs:?}");
+    }
+
+    #[test]
+    fn stroke_outside_the_clip_can_still_paint_inside_it() {
+        let glyphs = classified(&format!("q 0 200 400 200 re W n 80 w {}1 w {}Q", line(180, 1, "Ink"), line(100, 1, "Outside")));
+        assert_eq!(flagged(&glyphs, Clipped), "Outside", "{glyphs:?}");
+        let visible: String = glyphs.iter().filter(|(_, reason)| reason.is_none()).map(|(text, _)| text.trim()).collect();
+        assert_eq!(visible, "Ink");
     }
 
     #[test]

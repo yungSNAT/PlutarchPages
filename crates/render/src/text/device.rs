@@ -381,7 +381,23 @@ impl<'a> Device<'a> for TextDevice {
         let em_height = matches!(glyph, Glyph::Outline(_)).then(|| 1000.0 * coefficients[2].hypot(coefficients[3]));
         // A glyph whose Unicode is several characters (a ligature such as "ffi") stays one glyph
         // with its own box: the PDF gives no position for the characters inside it.
-        let mut hidden = self.visibility.class(paint, mode, em_height, b);
+        let stroke_bounds = || {
+            let (Glyph::Outline(outline), GlyphDrawMode::Stroke(stroke)) = (glyph, mode) else { return None };
+            let width = f64::from(stroke.line_width);
+            let miter = f64::from(stroke.miter_limit).abs();
+            if !width.is_finite() || !miter.is_finite() {
+                return None;
+            }
+            // Hayro strokes in user space after applying the glyph transform. Bound caps and
+            // joins as well as the minimum-width stroke used by the raster renderer.
+            let [a, b, c, d, _, _] = transform.as_coeffs();
+            let radius = width.max(0.01) / 2.0;
+            let reach = miter.max(std::f64::consts::SQRT_2);
+            let x = (radius * a.hypot(c)).max(0.5) * reach;
+            let y = (radius * b.hypot(d)).max(0.5) * reach;
+            (x.is_finite() && y.is_finite()).then(|| t.transform_rect_bbox(outline.outline().bounding_box()).inflate(x, y))
+        };
+        let mut hidden = self.visibility.class(paint, mode, em_height, b, stroke_bounds);
         if self.visibility.on
             && hidden.is_none()
             && matches!(mode, GlyphDrawMode::Fill | GlyphDrawMode::Stroke(_))

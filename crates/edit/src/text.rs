@@ -53,7 +53,7 @@ use fallback::{
 #[cfg(test)]
 use fallback::{add_type3_font, is_type3_fallback};
 pub(crate) use fallback::{glyph_path, type3_font_dict, unique_font_name};
-use interp::{Origin, Paint, union};
+use interp::{LayerScope, Origin, Paint, union};
 use lines::page_dict;
 pub(crate) use lines::{FormBudget, content_streams, content_streams_within, dict_in_place, form_call, resource_dict, rewritten_contents, splice};
 pub use lines::{GlyphAdvanceGap, MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text_lines, glyph_text_with_gaps, text_lines};
@@ -121,9 +121,10 @@ pub struct TextLine {
     /// into another order (see [`TextLine::runs`]).
     runs: Vec<(String, usize, bool)>,
     /// Each run's text rendering mode (`Tr`), whether it is in an `/OCR` marked-content sequence
-    /// and the optional content it is drawn in (see [`TextLine::run_layers`]), in content order.
+    /// and the index of its optional-content condition, in content order.
     /// Kept when `runs` is emptied.
-    modes: Vec<(i64, bool, Vec<ObjRef>)>,
+    modes: Vec<(i64, bool, usize)>,
+    layer_scopes: std::sync::Arc<[LayerScope]>,
     /// This line continues the previous one because a rewrite wrapped it (`/PCSoft`).
     soft_break: bool,
     /// This line starts after a break a rewrite kept on purpose (`/PCHard`).

@@ -8,8 +8,9 @@
 //! classed as it draws them; `text_lines` and `text_paragraphs` read the editor's runs, classed
 //! by their rendering mode, opacity and layers. The two engines split and order text differently,
 //! so neither one's classes describe the other's text. The editor does not follow clipping, so
-//! only the renderer's text can be `clipped`; the renderer leaves out text in a hidden layer or
-//! outside the crop box, so only the editor's can be `hidden_layer` or `outside_crop_box`.
+//! only the renderer's text can be `clipped`; the renderer leaves out text outside the crop box
+//! or in a layer hidden as the file opens (`layer_set` does not change it), so only the editor's
+//! can be `hidden_layer` or `outside_crop_box`.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -613,7 +614,8 @@ mod tests {
             .obj("<< /Type /OCMD /OCGs [6 0 R 7 0 R] /P /AllOn >>")
             .obj("<< /Type /OCMD /OCGs [7 0 R] /VE [/Or 6 0 R [/Not 7 0 R]] >>")
             .obj("<< /Type /OCG /Name (Unlisted) >>")
-            .obj("<< /Type /OCMD /OCGs [null 6 0 R] /VE [/Xor 7 0 R] >>")
+            .obj("<< /Type 13 0 R /OCGs [null 6 0 R] /VE [/Xor 7 0 R] >>")
+            .obj("/OCMD")
             .build();
         let mut a = Automation::new();
         let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
@@ -636,6 +638,32 @@ mod tests {
         // Once the view shows layer 6, only the group the view does not list stays hidden.
         call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Hidden", "visible": true }));
         assert_eq!(editor(&mut a), hidden(&["Unlisted group"]));
+    }
+
+    #[test]
+    fn actual_text_is_hidden_only_if_all_its_glyphs_are_in_hidden_layers() {
+        let content = "/Span << /ActualText (Replacement) >> BDC \
+                       BT /F1 20 Tf 1 0 0 1 50 200 Tm \
+                       /Span << /OC 6 0 R >> BDC (a) Tj EMC \
+                       /Span << /OC 7 0 R >> BDC (b) Tj EMC ET EMC";
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R 7 0 R] /D << /OFF [6 0 R] >> >> >>")
+            .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+            .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .obj("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 5 0 R /Resources << /Font << /F1 3 0 R >> >> >>")
+            .stream("", content)
+            .obj("<< /Type /OCG /Name (First) >>")
+            .obj("<< /Type /OCG /Name (Second) >>")
+            .build();
+        let mut a = Automation::new();
+        let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
+        let result = call(&mut a, "text_lines", json!({ "doc": doc, "page": 1 }));
+        assert_eq!(result["lines"][0]["text"], "Replacement");
+        assert_eq!(result["lines"][0]["hidden_text_count"], 0);
+
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Second", "visible": false }));
+        let result = call(&mut a, "text_lines", json!({ "doc": doc, "page": 1 }));
+        assert_eq!(pairs(result["lines"].as_array().unwrap()), of("hidden_layer", "Replacement"));
     }
 
     #[test]
@@ -693,7 +721,7 @@ mod tests {
             FontMappingDiffers,
             SourceOrderDiffers,
         ];
-        // Exhaustive, so a new reason does not build until it is in `all` too.
+        // Exhaustive, so a new reason does not build until this match names it; add it to `all` as well.
         let _ = |r: HiddenReason| match r {
             Invisible | InvisibleOcrLayer | Transparent | Clipped | Tiny | OutsideCropBox | HiddenLayer | ZeroWidth | BidiControl | PrivateUse
             | NearBackground | ActualTextDiffers | FontMappingDiffers | SourceOrderDiffers => (),

@@ -98,7 +98,7 @@ impl<'a> ViewLayers<'a> {
         let is_off = |o: &Object| o.as_ref().is_some_and(|r| self.off.contains(&(r.num, r.generation)));
         let resolved = self.cos.resolve(&Object::Ref(oc));
         let hidden = match resolved.as_dict() {
-            Some(d) if d.name(b"Type") == Some(b"OCMD") => {
+            Some(d) if d.get(b"Type").map(|ty| self.cos.resolve(ty)).as_deref().and_then(Object::as_name) == Some(b"OCMD") => {
                 match d.get(b"VE").and_then(|ve| self.cos.resolve(ve).as_array().and_then(|e| self.expression_shown(e, 0))) {
                     Some(shown) => !shown,
                     None => {
