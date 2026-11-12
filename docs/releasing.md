@@ -206,9 +206,9 @@ downloading only the changed blocks. `latest` is the newest published, non-pre-r
 otherwise; the release job checks both.
 
 **Flatpak:** the `flatpak` job turns each arch's tarball into a single-file bundle with
-`packaging/linux/flatpak-bundle.sh` and `flatpak/io.github.EquityBot.PlutarchPages.bundle.yml` (no Rust build;
+`packaging/linux/flatpak-bundle.sh` and `flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml` (no Rust build;
 the same binaries), then installs it and runs `pdfcraft-cli --version` in the sandbox.
-`flatpak/io.github.EquityBot.PlutarchPages.yml` is the from-source manifest for a later Flathub submission;
+`flatpak/io.github.yungSNAT.PlutarchPages.yml` is the from-source manifest for a later Flathub submission;
 packaging-lint keeps the runtime and sandbox permissions (`finish-args`) of the two identical.
 Printing is not available in the Flatpak yet: it runs `lp`, which the freedesktop runtime lacks
 (the job logs a note); it needs the print portal. Users install the bundle with `flatpak install --user pdfcraft-<v>-linux-<arch>.flatpak`; the

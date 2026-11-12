@@ -11,12 +11,12 @@
 # `appstreamcli compose`; the freedesktop runtime and SDK named in the manifest are
 # installed per-user from Flathub. Unless --no-test, the bundle is then installed per-user and
 # `pdfcraft-cli --version` is run inside the sandbox as a smoke test.
-# Manifest: packaging/linux/flatpak/io.github.EquityBot.PlutarchPages.bundle.yml.
+# Manifest: packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml.
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
 HERE="$ROOT/packaging/linux"
-APP_ID=io.github.EquityBot.PlutarchPages
+APP_ID=io.github.yungSNAT.PlutarchPages
 FLATHUB=https://dl.flathub.org/repo/flathub.flatpakrepo
 
 TEST=1
@@ -82,7 +82,7 @@ if [[ "$TEST" = 1 ]]; then
   exports="${XDG_DATA_HOME:-$HOME/.local/share}/flatpak/exports/share"
   [[ -f "$exports/applications/$APP_ID.desktop" ]]
   [[ -f "$exports/icons/hicolor/scalable/apps/$APP_ID.svg" ]]
-  flatpak run --command=sh "$APP_ID" -c 'ls /app/share/applications /app/share/metainfo /app/share/mime/packages /app/share/icons/hicolor/scalable/apps /app/share/pdfcraft/models'
+  flatpak run --command=sh "$APP_ID" -c "test -f /app/share/metainfo/$APP_ID.metainfo.xml && test -f /app/share/mime/packages/$APP_ID.xml && test -d /app/share/pdfcraft/models"
   # Informational: printing runs lp/lpstat, which the freedesktop runtime doesn't ship (see the
   # manifest's finish-args). Says so if a runtime update ever adds them.
   flatpak run --command=sh "$APP_ID" -c 'command -v lp lpstat' || echo "note: no lp/lpstat in the runtime, so printing is unavailable in the Flatpak"

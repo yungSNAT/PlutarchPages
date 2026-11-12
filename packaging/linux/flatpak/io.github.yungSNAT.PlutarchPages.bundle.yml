@@ -9,13 +9,13 @@
 # at runtime; the freedesktop runtime has all of them, and the GPU driver comes from its
 # org.freedesktop.Platform.GL extension.
 #
-# io.github.EquityBot.PlutarchPages.yml (same directory) is the from-source manifest for Flathub. Keep
+# io.github.yungSNAT.PlutarchPages.yml (same directory) is the from-source manifest for Flathub. Keep
 # runtime-version and finish-args identical in both (packaging-lint checks this).
 # Its own id, so it can sit beside upstream's ai.storyteller.pdfcraft and neither updates the other.
 # Flatpak exports only files named after the id, so the commands below rename the desktop entry,
 # MIME file, metainfo and icons from the id the other packages use. The binary sends this id as its Wayland app id
 # when FLATPAK_ID says it's in this sandbox (window_app_id in apps/pdfcraft/src/main.rs).
-id: io.github.EquityBot.PlutarchPages
+id: io.github.yungSNAT.PlutarchPages
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
 sdk: org.freedesktop.Sdk
@@ -110,17 +110,17 @@ modules:
     build-commands:
       - install -Dm755 bin/pdfcraft /app/bin/pdfcraft
       - install -Dm755 bin/pdfcraft-cli /app/bin/pdfcraft-cli
-      - install -Dm644 share/applications/ai.storyteller.pdfcraft.desktop /app/share/applications/io.github.EquityBot.PlutarchPages.desktop
-      - sed -i -e 's/^Icon=.*/Icon=io.github.EquityBot.PlutarchPages/' -e 's/^StartupWMClass=.*/StartupWMClass=io.github.EquityBot.PlutarchPages/' /app/share/applications/io.github.EquityBot.PlutarchPages.desktop
-      - install -Dm644 share/mime/packages/ai.storyteller.pdfcraft.xml /app/share/mime/packages/io.github.EquityBot.PlutarchPages.xml
+      - install -Dm644 share/applications/ai.storyteller.pdfcraft.desktop /app/share/applications/io.github.yungSNAT.PlutarchPages.desktop
+      - sed -i -e 's/^Icon=.*/Icon=io.github.yungSNAT.PlutarchPages/' -e 's/^StartupWMClass=.*/StartupWMClass=io.github.yungSNAT.PlutarchPages/' /app/share/applications/io.github.yungSNAT.PlutarchPages.desktop
+      - install -Dm644 share/mime/packages/ai.storyteller.pdfcraft.xml /app/share/mime/packages/io.github.yungSNAT.PlutarchPages.xml
       # Already has the release's version and date substituted by package.sh.
-      - install -Dm644 share/metainfo/ai.storyteller.pdfcraft.metainfo.xml /app/share/metainfo/io.github.EquityBot.PlutarchPages.metainfo.xml
-      - sed -i 's/ai\.storyteller\.pdfcraft/io.github.EquityBot.PlutarchPages/g' /app/share/metainfo/io.github.EquityBot.PlutarchPages.metainfo.xml
+      - install -Dm644 share/metainfo/ai.storyteller.pdfcraft.metainfo.xml /app/share/metainfo/io.github.yungSNAT.PlutarchPages.metainfo.xml
+      - sed -i 's/ai\.storyteller\.pdfcraft/io.github.yungSNAT.PlutarchPages/g' /app/share/metainfo/io.github.yungSNAT.PlutarchPages.metainfo.xml
       # OCR models (with their licences), found at /app/bin/../share/pdfcraft/models.
       - mkdir -p /app/share/pdfcraft && cp -R share/pdfcraft/models /app/share/pdfcraft/
       # Licences, including the embedded craft-fonts' OFL texts.
       - mkdir -p /app/share/icons /app/share/doc && cp -R share/icons/hicolor /app/share/icons/ && cp -R share/doc/pdfcraft /app/share/doc/
-      - for icon in /app/share/icons/hicolor/*/apps/ai.storyteller.pdfcraft.*; do mv "$icon" "${icon%/*}/io.github.EquityBot.PlutarchPages.${icon##*.}"; done
+      - for icon in /app/share/icons/hicolor/*/apps/ai.storyteller.pdfcraft.*; do mv "$icon" "${icon%/*}/io.github.yungSNAT.PlutarchPages.${icon##*.}"; done
     sources:
       - type: dir
         path: stage

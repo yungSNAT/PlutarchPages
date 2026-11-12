@@ -52,7 +52,7 @@ mod windows_manifest;
 const APP_ID: &str = "ai.storyteller.pdfcraft";
 
 /// The Flatpak's app id, which its desktop entry and icons are exported under.
-const FLATPAK_APP_ID: &str = "io.github.EquityBot.PlutarchPages";
+const FLATPAK_APP_ID: &str = "io.github.yungSNAT.PlutarchPages";
 
 /// The id the window carries, given the sandbox's `FLATPAK_ID`: it has to name the desktop entry.
 fn window_app_id(flatpak_id: Option<&str>) -> &'static str {
