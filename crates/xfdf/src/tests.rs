@@ -1146,7 +1146,7 @@ fn xfdf_keeps_callout_leader_inset_and_ending() {
 
 /// Cell text and how both CSV writers must write it: a cell a spreadsheet would run as a formula
 /// gets a leading `'`, before the usual quoting.
-const FORMULA_CELLS: [(&str, &str); 20] = [
+const FORMULA_CELLS: [(&str, &str); 26] = [
     ("=1+1", "'=1+1"),
     ("@SUM(A1)", "'@SUM(A1)"),
     ("+1+cmd", "'+1+cmd"),
@@ -1164,6 +1164,14 @@ const FORMULA_CELLS: [(&str, &str); 20] = [
     ("-12.50", "-12.50"),
     ("+3", "+3"),
     (" -4", " -4"),
+    // So do amounts with thousands separators or a dollar sign, which a spreadsheet reads as numbers.
+    ("-1,234.56", "\"-1,234.56\""),
+    ("-$50.00", "-$50.00"),
+    ("+$12345", "+$12345"),
+    // Anything else after the sign still runs as a formula.
+    ("-1,23", "\"'-1,23\""),
+    ("-$5+cmd", "'-$5+cmd"),
+    ("-$", "'-$"),
     // A genuine leading apostrophe is written as it is.
     ("'=1+1", "'=1+1"),
     ("'plain", "'plain"),

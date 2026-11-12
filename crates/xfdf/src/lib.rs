@@ -196,15 +196,29 @@ pub fn merge_csv(files: &[Vec<(String, Vec<String>)>]) -> String {
 }
 
 /// Whether a spreadsheet program may run CSV cell `s` as a formula: after any leading whitespace
-/// or byte order mark, it starts with `=` or `@`, or with `+` or `-` and is not a plain number (so
-/// `-12.5` and `+3` stay numbers).
+/// or byte order mark, it starts with `=` or `@`, or with `+` or `-` and is not a plain number or
+/// amount (so `-12.5`, `+3`, `-1,234.56` and `-$50.00` stay numbers).
 fn runs_as_formula(s: &str) -> bool {
     let t = s.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     match t.chars().next() {
         Some('=' | '@') => true,
-        Some('+' | '-') => !t.parse::<f64>().is_ok_and(f64::is_finite),
+        Some('+' | '-') => !(t.parse::<f64>().is_ok_and(f64::is_finite) || is_amount(&t[1..])),
         _ => false,
     }
+}
+
+/// Whether `s` is an amount and nothing else: an optional `$`, digits (with commas, 1 to 3 digits
+/// and then groups of 3), and an optional `.` with at least one digit.
+fn is_amount(s: &str) -> bool {
+    let s = s.strip_prefix('$').unwrap_or(s);
+    let (whole, fraction) = s.split_once('.').unwrap_or((s, "0"));
+    let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+    let whole_ok = match whole.split(',').collect::<Vec<_>>().as_slice() {
+        [only] => digits(only),
+        [first, rest @ ..] => first.len() <= 3 && digits(first) && rest.iter().all(|g| g.len() == 3 && digits(g)),
+        [] => false,
+    };
+    whole_ok && digits(fraction)
 }
 
 /// One CSV cell, as both CSV writers write it. Names and values come from other people's files,
