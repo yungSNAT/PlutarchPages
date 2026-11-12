@@ -38,3 +38,7 @@ reason = "upstream's unused lockfile; adler is not in the root Cargo.lock"
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0192"
 reason = "upstream's unused lockfile; ttf-parser is not in the root Cargo.lock"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0486"
+reason = "upstream's unused lockfile; the root Cargo.lock has rustix 1.1.6"
