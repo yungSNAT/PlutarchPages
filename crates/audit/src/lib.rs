@@ -140,20 +140,19 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
     if earlier > 0 {
         document_findings.push(DocumentFinding { kind: "earlier-revisions", count: earlier });
     }
-    if let Some(value) = metadata_entry(doc, doc.trailer(), b"Info")? {
-        let Object::Dict(info) = &*value else { return Err(AuditError::BadMetadata("Info")) };
-        if !info.is_empty() {
-            document_findings.push(DocumentFinding { kind: "document-info", count: info.len() });
-        }
+    // A metadata entry of the wrong type is reported, not an error, so the pages are still audited.
+    match metadata_entry(doc, doc.trailer(), b"Info")?.as_deref() {
+        Some(Object::Dict(info)) if !info.is_empty() => document_findings.push(DocumentFinding { kind: "document-info", count: info.len() }),
+        Some(Object::Dict(_)) | None => {}
+        Some(_) => document_findings.push(DocumentFinding { kind: "malformed-document-info", count: 1 }),
     }
     let root = doc.root().ok_or(AuditError::BadMetadata("catalogue"))?;
     let root = doc.get(root);
     let Object::Dict(catalog) = &*root else { return Err(AuditError::BadMetadata("catalogue")) };
-    if let Some(value) = metadata_entry(doc, catalog, b"Metadata")? {
-        if !matches!(&*value, Object::Stream(_)) {
-            return Err(AuditError::BadMetadata("Metadata"));
-        }
-        document_findings.push(DocumentFinding { kind: "xmp-metadata", count: 1 });
+    match metadata_entry(doc, catalog, b"Metadata")?.as_deref() {
+        Some(Object::Stream(_)) => document_findings.push(DocumentFinding { kind: "xmp-metadata", count: 1 }),
+        None => {}
+        Some(_) => document_findings.push(DocumentFinding { kind: "malformed-xmp-metadata", count: 1 }),
     }
     Ok(AuditReport { page_findings: audit_pages(doc, Limits::DEFAULT, true)?, document_findings })
 }
