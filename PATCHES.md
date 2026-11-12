@@ -96,8 +96,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   stages the payload and runs `makepkg` with `arch.PKGBUILD`. The release job builds the helper for
   the container host, independently of the package architecture. All are first included in the
   release after v0.15.0, and the `assets` job fails unless all 30 packages are there.
-- Linux identity: the Flatpak's id is `io.github.EquityBot.PlutarchPages` and the Arch package is `plutarchpages`, so
-  neither updates or replaces upstream's. If a merge brings back
+- Linux identity: the Flatpak's id is `io.github.yungSNAT.PlutarchPages` and the Arch package is `plutarchpages`, so
+  neither updates or replaces upstream's. The id names the repository's owner because Flathub verifies
+  `io.github.<owner>` ids against it; v0.16.1's bundle was `io.github.EquityBot.PlutarchPages`, from
+  before the account was renamed. If a merge brings back
   `packaging/linux/flatpak/ai.storyteller.pdfcraft*.yml`, move its changes across and delete it. The
   other packages still use `ai.storyteller.pdfcraft` and the `pdfcraft` package name, which v0.15.0
   shipped, so they can't be installed alongside upstream's either.

@@ -676,8 +676,8 @@ fn the_window_names_the_flatpak_desktop_entry_only_in_its_own_sandbox() {
 #[test]
 fn the_flatpak_desktop_entries_name_the_window_class() {
     for manifest in [
-        include_str!("../../../packaging/linux/flatpak/io.github.EquityBot.PlutarchPages.yml"),
-        include_str!("../../../packaging/linux/flatpak/io.github.EquityBot.PlutarchPages.bundle.yml"),
+        include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.yml"),
+        include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml"),
     ] {
         assert!(manifest.contains(&format!("s/^StartupWMClass=.*/StartupWMClass={}/", super::FLATPAK_APP_ID)));
     }
@@ -692,7 +692,7 @@ fn the_flatpak_manifests_pin_the_craft_i18n_rev() {
     let rev = std::fs::read_to_string(root.join("craft-i18n.rev")).unwrap();
     let rev = rev.trim();
     assert!(rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit()), "craft-i18n.rev holds one full SHA: {rev:?}");
-    for manifest in ["io.github.EquityBot.PlutarchPages.yml", "io.github.EquityBot.PlutarchPages.bundle.yml"] {
+    for manifest in ["io.github.yungSNAT.PlutarchPages.yml", "io.github.yungSNAT.PlutarchPages.bundle.yml"] {
         let text = std::fs::read_to_string(root.join("packaging/linux/flatpak").join(manifest)).unwrap();
         let source =
             text.split("url: https://github.com/storytold/craft-i18n").nth(1).unwrap_or_else(|| panic!("{manifest}: a craft-i18n git source"));
