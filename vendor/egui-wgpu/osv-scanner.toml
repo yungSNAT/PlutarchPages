@@ -10,3 +10,7 @@ reason = "upstream's unused lockfile; the root Cargo.lock has quick-xml 0.41.0 a
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0195"
 reason = "upstream's unused lockfile; the root Cargo.lock has quick-xml 0.41.0 and 0.42.0"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0486"
+reason = "upstream's unused lockfile; the root Cargo.lock has rustix 1.1.6"
