@@ -1,4 +1,5 @@
-//! Bounded, session-wide page-text reuse. Active tool results own their Arcs independently.
+//! Bounded, session-wide page-text reuse. Active tool results own their Arcs independently. A
+//! page's text is reused only for the same document bytes and the same layer choices.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Weak};
@@ -11,6 +12,10 @@ use super::hidden_text::Hidden;
 /// A page's text and the class of each of its glyphs.
 pub(super) type Extracted = (Arc<PageText>, Hidden);
 
+/// Layer choices as `RenderConfig::layers` holds them: (object number, generation, visible) for
+/// every layer once the view has changed any, and empty for the layers as the file opens them.
+pub(super) type Layers = Arc<Vec<(i32, i32, bool)>>;
+
 const BYTE_BUDGET: usize = 64 * 1024 * 1024;
 // Also bound bookkeeping for documents with thousands of empty pages.
 const PAGE_BUDGET: usize = 4096;
@@ -18,6 +23,8 @@ type Key = (DocId, usize);
 
 struct Cached {
     version: Weak<Vec<u8>>,
+    /// The layer choices the text was read with.
+    layers: Layers,
     text: Extracted,
     bytes: usize,
     stamp: u64,
@@ -77,16 +84,16 @@ impl TextCache {
         self.clock
     }
 
-    pub(super) fn get(&mut self, id: DocId, page: usize) -> Option<Extracted> {
+    pub(super) fn get(&mut self, id: DocId, page: usize, layers: &Layers) -> Option<Extracted> {
         let stamp = self.stamp();
-        let entry = self.pages.get_mut(&(id, page))?;
+        let entry = self.pages.get_mut(&(id, page)).filter(|entry| entry.layers == *layers)?;
         self.order.remove(&entry.stamp);
         entry.stamp = stamp;
         self.order.insert(stamp, (id, page));
         Some(entry.text.clone())
     }
 
-    pub(super) fn insert(&mut self, id: DocId, page: usize, version: &Arc<Vec<u8>>, text: Extracted) {
+    pub(super) fn insert(&mut self, id: DocId, page: usize, version: &Arc<Vec<u8>>, layers: &Layers, text: Extracted) {
         let bytes = retained_bytes(&text);
         self.remove_page((id, page));
         // An oversized page is usable by this call, but never retained by the cache.
@@ -98,7 +105,7 @@ impl TextCache {
             self.remove_page(*key);
         }
         let stamp = self.stamp();
-        self.pages.insert((id, page), Cached { version: Arc::downgrade(version), text, bytes, stamp });
+        self.pages.insert((id, page), Cached { version: Arc::downgrade(version), layers: layers.clone(), text, bytes, stamp });
         self.order.insert(stamp, (id, page));
         self.bytes += bytes;
     }
@@ -142,18 +149,19 @@ mod tests {
         let cost = retained_bytes(&text);
         assert!(cost >= 32 * std::mem::size_of::<TextGlyph>() + 48 * 4 + 64 + 1000 + 40 * std::mem::size_of::<Option<HiddenReason>>());
         let version = Arc::new(vec![1]);
+        let file = Layers::default();
         let mut cache = TextCache::new(cost * 2);
-        cache.insert(DocId(1), 0, &version, text.clone());
-        cache.insert(DocId(2), 0, &version, text.clone());
-        assert!(Arc::ptr_eq(&cache.get(DocId(1), 0).unwrap().0, &text.0));
-        cache.insert(DocId(3), 0, &version, text.clone());
-        assert!(cache.get(DocId(2), 0).is_none(), "least recently used page in another document is evicted");
+        cache.insert(DocId(1), 0, &version, &file, text.clone());
+        cache.insert(DocId(2), 0, &version, &file, text.clone());
+        assert!(Arc::ptr_eq(&cache.get(DocId(1), 0, &file).unwrap().0, &text.0));
+        cache.insert(DocId(3), 0, &version, &file, text.clone());
+        assert!(cache.get(DocId(2), 0, &file).is_none(), "least recently used page in another document is evicted");
         assert_eq!(cache.bytes, 2 * cost);
-        cache.insert(DocId(1), 0, &version, text.clone());
+        cache.insert(DocId(1), 0, &version, &file, text.clone());
         assert_eq!(cache.bytes, 2 * cost, "replacement does not double-count");
         let next_version = Arc::new(vec![1]);
         cache.prepare(DocId(1), &next_version);
-        assert!(cache.get(DocId(1), 0).is_none(), "equal bytes in a new Arc are a new version");
+        assert!(cache.get(DocId(1), 0, &file).is_none(), "equal bytes in a new Arc are a new version");
         assert_eq!(cache.bytes, cost);
         cache.remove(&DocId(3));
         assert_eq!((cache.bytes, cache.len(), cache.order.len()), (0, 0, 0));
@@ -164,20 +172,21 @@ mod tests {
     fn oversized_pages_bypass_cache_and_empty_pages_have_a_bookkeeping_limit() {
         let text: Extracted = (Arc::new(PageText::default()), Hidden::from([]));
         let version = Arc::new(vec![]);
+        let file = Layers::default();
         let cost = retained_bytes(&text);
         let mut tiny = TextCache::new(cost - 1);
-        tiny.insert(DocId(1), 0, &version, text.clone());
+        tiny.insert(DocId(1), 0, &version, &file, text.clone());
         assert_eq!((tiny.bytes, tiny.len()), (0, 0));
         let mut cache = TextCache::default();
         for page in 0..PAGE_BUDGET + 50 {
-            cache.insert(DocId(1), page, &version, text.clone());
+            cache.insert(DocId(1), page, &version, &file, text.clone());
         }
         assert_eq!(cache.len(), PAGE_BUDGET);
-        assert!(cache.get(DocId(1), 0).is_none());
-        assert!(cache.get(DocId(1), PAGE_BUDGET + 49).is_some());
+        assert!(cache.get(DocId(1), 0, &file).is_none());
+        assert!(cache.get(DocId(1), PAGE_BUDGET + 49, &file).is_some());
         assert_eq!(cache.bytes, PAGE_BUDGET * cost);
         cache.clock = u64::MAX;
-        cache.insert(DocId(2), 0, &version, text);
+        cache.insert(DocId(2), 0, &version, &file, text);
         assert_eq!((cache.bytes, cache.len()), (cost, 1), "recency counter rollover safely clears old state");
     }
 }

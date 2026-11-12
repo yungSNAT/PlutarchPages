@@ -2,7 +2,7 @@ use super::dispatch::Content;
 use super::error::{Result, ToolError, failed};
 use super::hidden_text::{Hidden, attach, glyph_entries};
 use super::json::{Args, one_based};
-use super::text_cache::Extracted;
+use super::text_cache::{Extracted, Layers};
 use super::{Arc, Automation, DocId, HashMap, PageRenderer, PageText, RenderConfig, RenderRequest, RequestKind, Value, commands, json, tools};
 
 /// Default and maximum resolution for `page_render`.
@@ -139,17 +139,28 @@ impl Automation {
         Ok(p as usize - 1)
     }
 
-    /// The text of `pages` (0-based), from the cache or extracted in parallel.
+    /// The text of `pages` (0-based) with the layers as the file opens them, whatever the view
+    /// shows, from the cache or extracted in parallel. Redaction search reads this text, as the
+    /// app's Search & Redact does: hiding a layer in the view never takes it out of a search, and
+    /// a layer hidden as the file opens is not searched even when the view shows it.
     pub(crate) fn page_texts(&mut self, id: DocId, pages: &[usize]) -> Result<Vec<Arc<PageText>>> {
-        Ok(self.classed_page_texts(id, pages)?.into_iter().map(|(text, _)| text).collect())
+        Ok(self.classed_page_texts(id, pages, &Layers::default())?.into_iter().map(|(text, _)| text).collect())
     }
 
-    /// [`Automation::page_texts`] with the class of each glyph that paints nothing.
-    pub(crate) fn classed_page_texts(&mut self, id: DocId, pages: &[usize]) -> Result<Vec<Extracted>> {
-        self.page_text_results(id, pages, &mut extract_parallel)?
+    /// The text of `pages` with the layer choices `layers`, and the class of each glyph that
+    /// paints nothing.
+    pub(crate) fn classed_page_texts(&mut self, id: DocId, pages: &[usize], layers: &Layers) -> Result<Vec<Extracted>> {
+        self.page_text_results(id, pages, layers, &mut extract_parallel)?
             .into_iter()
             .map(|(p, text)| text.map_err(|e| failed(format!("page {}: {e}", p + 1))))
             .collect()
+    }
+
+    /// The layer choices the view shows (`layer_set`), as page_render draws them, for the text
+    /// tools. Only the layers: reading colours change only how the page looks, and comments the
+    /// view hides (`comments_hide`) keep their text here.
+    pub(crate) fn view_layers(&self, id: DocId) -> Layers {
+        self.session.render_config(id).map(|c| c.layers).unwrap_or_default()
     }
 
     /// Keep per-page failures until the caller chooses strict or partial-result semantics.
@@ -157,7 +168,8 @@ impl Automation {
         &mut self,
         id: DocId,
         pages: &[usize],
-        extract: &mut impl FnMut(&Arc<Vec<u8>>, Option<Arc<str>>, &[usize]) -> PageTexts,
+        layers: &Layers,
+        extract: &mut impl FnMut(&Arc<Vec<u8>>, &RenderConfig, &[usize]) -> PageTexts,
     ) -> Result<PageTexts> {
         let doc = self.session.get(id).ok_or_else(|| failed("no such document"))?;
         // The document's security may forbid extracting text (Table 22, bit 5). Honour it unless
@@ -168,14 +180,14 @@ impl Automation {
             ));
         }
         let (bytes, n) = (doc.bytes.clone(), doc.info.pages.len());
-        let password: Option<Arc<str>> = doc.password.as_deref().map(Arc::from);
+        let config = RenderConfig { password: doc.password.as_deref().map(Arc::from), layers: layers.clone(), ..Default::default() };
         self.texts.prepare(id, &bytes);
         let mut results = HashMap::new();
         let mut missing = Vec::new();
         for &p in pages {
             if p >= n {
                 results.insert(p, Err("page is out of range".to_owned()));
-            } else if let Some(text) = self.texts.get(id, p) {
+            } else if let Some(text) = self.texts.get(id, p, layers) {
                 results.insert(p, Ok(text));
             } else {
                 missing.push(p);
@@ -184,9 +196,9 @@ impl Automation {
         missing.sort_unstable();
         missing.dedup();
         if !missing.is_empty() {
-            for (p, text) in extract(&bytes, password, &missing) {
+            for (p, text) in extract(&bytes, &config, &missing) {
                 if let Ok(text) = &text {
-                    self.texts.insert(id, p, &bytes, text.clone());
+                    self.texts.insert(id, p, &bytes, layers, text.clone());
                 }
                 results.insert(p, text);
             }
@@ -237,7 +249,8 @@ impl Automation {
         };
         // Column select (#740): only the text inside the rectangle, row by row.
         let rect = a.nums::<4>("rect")?.map(|r| r.map(|v| v as f32));
-        let texts = self.classed_page_texts(id, &pages)?;
+        let layers = self.view_layers(id);
+        let texts = self.classed_page_texts(id, &pages, &layers)?;
         let doc = self.doc(a)?;
         let mut out = Vec::with_capacity(pages.len());
         // `spent`: the budget ran out, so later pages get no HTML. `cut`: some page's HTML is
@@ -289,10 +302,11 @@ impl Automation {
     pub(crate) fn text_find_with(
         &mut self,
         a: &Args,
-        extract: &mut impl FnMut(&Arc<Vec<u8>>, Option<Arc<str>>, &[usize]) -> PageTexts,
+        extract: &mut impl FnMut(&Arc<Vec<u8>>, &RenderConfig, &[usize]) -> PageTexts,
     ) -> Result<Value> {
         let doc = self.doc(a)?;
         let (id, n) = (doc.id, doc.info.pages.len());
+        let layers = self.view_layers(id);
         let query = a.str("query")?;
         let limit = usize::try_from(a.opt_int("limit")?.unwrap_or(500).max(1)).unwrap_or(usize::MAX);
         let start = match a.opt_int("start_page")? {
@@ -309,7 +323,7 @@ impl Automation {
         'search: while first < n {
             let end = first.saturating_add(batch).min(n);
             let pages: Vec<usize> = (first..end).collect();
-            let texts = self.page_text_results(id, &pages, extract)?;
+            let texts = self.page_text_results(id, &pages, &layers, extract)?;
             for (p, text) in texts {
                 let (text, hidden) = match text {
                     Ok(text) => text,
@@ -411,13 +425,12 @@ fn render_warning_text(warning: pdfcraft_render::RenderWarning) -> &'static str 
 }
 
 /// Extract the text of `pages` (0-based) with one renderer per worker thread.
-pub(crate) fn extract_parallel(bytes: &Arc<Vec<u8>>, password: Option<Arc<str>>, pages: &[usize]) -> PageTexts {
+pub(crate) fn extract_parallel(bytes: &Arc<Vec<u8>>, config: &RenderConfig, pages: &[usize]) -> PageTexts {
     let extract = |r: &mut PageRenderer, p: usize| r.text_with_hidden(p).map(|(text, hidden)| (Arc::new(text), Hidden::from(hidden)));
-    let config = RenderConfig { password, ..Default::default() };
     let workers = if cfg!(target_arch = "wasm32") { 1 } else { std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get).min(8) };
     // Small jobs aren't worth a second parse of the document.
     if workers == 1 || pages.len() < 8 {
-        let mut r = PageRenderer::new(bytes.clone(), config);
+        let mut r = PageRenderer::new(bytes.clone(), config.clone());
         return pages.iter().map(|p| (*p, extract(&mut r, *p))).collect();
     }
     let next = std::sync::atomic::AtomicUsize::new(0);

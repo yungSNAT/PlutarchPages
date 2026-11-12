@@ -9,7 +9,7 @@
 //! by their rendering mode, opacity and layers. The two engines split and order text differently,
 //! so neither one's classes describe the other's text. The editor does not follow clipping, so
 //! only the renderer's text can be `clipped`; the renderer leaves out text outside the crop box
-//! or in a layer hidden as the file opens (`layer_set` does not change it), so only the editor's
+//! or in a layer the view hides (as the file opens, or after `layer_set`), so only the editor's
 //! can be `hidden_layer` or `outside_crop_box`.
 
 use std::collections::HashMap;
@@ -638,6 +638,51 @@ mod tests {
         // Once the view shows layer 6, only the group the view does not list stays hidden.
         call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Hidden", "visible": true }));
         assert_eq!(editor(&mut a), hidden(&["Unlisted group"]));
+    }
+
+    #[test]
+    fn text_extract_and_text_find_read_the_layers_the_view_shows() {
+        // "First" is on as the file opens and "Second" off.
+        let content = format!(
+            "/OC /First BDC {}EMC /OC /Second BDC {}EMC {}",
+            line(300, 0, "First layer"),
+            line(200, 0, "Second layer"),
+            line(100, 0, "No layer")
+        );
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R 7 0 R] /D << /OFF [7 0 R] >> >> >>")
+            .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+            .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .obj(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 5 0 R \
+                 /Resources << /Font << /F1 3 0 R >> /Properties << /First 6 0 R /Second 7 0 R >> >> >>",
+            )
+            .stream("", &content)
+            .obj("<< /Type /OCG /Name (First) >>")
+            .obj("<< /Type /OCG /Name (Second) >>")
+            .build();
+        let mut a = Automation::new();
+        let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
+        // The page's text from text_extract, and whether text_find finds each layer's line.
+        let read = |a: &mut Automation| {
+            let found = |a: &mut Automation, query: &str| call(a, "text_find", json!({ "doc": doc, "query": query }))["count"] == 1;
+            let (first, second) = (found(a, "First layer"), found(a, "Second layer"));
+            let page = &call(a, "text_extract", json!({ "doc": doc }))["pages"][0];
+            (page["text"].as_str().unwrap().to_owned(), first, second)
+        };
+        assert_eq!(read(&mut a), ("First layer\nNo layer".to_owned(), true, false));
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "First", "visible": false }));
+        assert_eq!(read(&mut a), ("No layer".to_owned(), false, false), "a layer turned off leaves both tools");
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Second", "visible": true }));
+        assert_eq!(read(&mut a), ("Second layer\nNo layer".to_owned(), false, true), "a layer off at open and turned on joins both");
+        // Markup marks the text the view shows.
+        let markup = |a: &mut Automation, find: &str| a.call("comment_add", &json!({ "doc": doc, "page": 1, "type": "highlight", "find": find }));
+        assert!(markup(&mut a, "Second layer").is_ok());
+        assert!(markup(&mut a, "First layer").is_err_and(|e| e.to_string().contains("was not found")), "markup over hidden text");
+        // Redaction search reads the layers as the file opens them, as the app's Search & Redact
+        // does, so a layer the view hides is still searched.
+        let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "find": "First layer" }));
+        assert_eq!(marked["marked"], 1, "{marked}");
     }
 
     #[test]

@@ -291,7 +291,9 @@ impl Automation {
             let quads = match (a.opt_str("find")?, a.get("quads")) {
                 (Some(needle), _) => {
                     let id = self.doc(a)?.id;
-                    let text = self.page_texts(id, &[page])?.remove(0);
+                    // The text the view shows, as text_find reads it: markup marks what a reader sees.
+                    let layers = self.view_layers(id);
+                    let text = self.classed_page_texts(id, &[page], &layers)?.remove(0).0;
                     let mut hits = text.find(needle);
                     if hits.is_empty() {
                         return Err(failed(format!("{needle:?} was not found on page {}", page + 1)));
