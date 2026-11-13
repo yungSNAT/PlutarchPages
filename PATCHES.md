@@ -105,8 +105,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   release after v0.15.0, and the `assets` job fails unless all 30 packages are there.
 - Linux identity: the Flatpak's id is `io.github.yungSNAT.PlutarchPages` and the Arch package is `plutarchpages`, so
   neither updates or replaces upstream's. The id names the repository's owner because Flathub verifies
-  `io.github.<owner>` ids against it; v0.16.1's bundle was `io.github.EquityBot.PlutarchPages`, from
-  before the account was renamed. If a merge brings back
+  `io.github.<owner>` ids against it; the v0.16.1 and v0.18.1 bundles were
+  `io.github.EquityBot.PlutarchPages`, from before the account was renamed, and README's Downloads
+  section tells their users how to move to the new id with their settings. If a merge brings back
   `packaging/linux/flatpak/ai.storyteller.pdfcraft*.yml`, move its changes across and delete it. The
   other packages still use `ai.storyteller.pdfcraft` and the `pdfcraft` package name, which v0.15.0
   shipped, so they can't be installed alongside upstream's either.
