@@ -306,7 +306,7 @@ impl PdfCraftApp {
         }
         let mut edits = Vec::new();
         let author = self.comment_prefs.author.clone();
-        // A word that finds the same text with both layer choices marks it once.
+        // A word that finds the same text with more than one layer choice marks it once.
         let mut seen = std::collections::HashSet::new();
         for layers in pdfcraft_engine::redaction_search_layers(&doc.info.layers) {
             let config = pdfcraft_render::RenderConfig { password: doc.password.as_deref().map(std::sync::Arc::from), layers, ..Default::default() };

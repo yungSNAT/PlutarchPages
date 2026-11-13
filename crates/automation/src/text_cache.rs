@@ -13,7 +13,8 @@ use super::hidden_text::Hidden;
 pub(super) type Extracted = (Arc<PageText>, Hidden);
 
 /// Layer choices as `RenderConfig::layers` holds them: (object number, generation, visible) for
-/// every layer once the view has changed any, and empty for the layers as the file opens them.
+/// every layer once the view has changed any or for a redaction search pass, and empty for the
+/// layers as the file opens them.
 pub(super) type Layers = Arc<Vec<(i32, i32, bool)>>;
 
 const BYTE_BUDGET: usize = 64 * 1024 * 1024;

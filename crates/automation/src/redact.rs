@@ -108,7 +108,7 @@ impl Automation {
             };
             matched_words = needles.iter().map(|w| (w.clone(), 0)).collect();
             let info = self.doc(a)?.info.clone();
-            // A word that finds the same text with both layer choices marks it once.
+            // A word that finds the same text with more than one layer choice marks it once.
             let mut seen = HashSet::new();
             for layers in redaction_search_layers(&info.layers) {
                 let texts = self.page_texts(id, &pages, &layers)?;
