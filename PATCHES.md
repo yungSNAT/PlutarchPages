@@ -48,6 +48,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `source_order_differs` marks reversed content order within a simple horizontal ASCII line.
   These are review signals. Accessible replacements and different writing orders can be intentional.
 - The PDF-XChange-style converters, speech, bookmark, optimiser, colour and Excel features.
+- `program_is_executable` in `crates/ocr/src/tesseract.rs` has no early `return false` before its
+  `cfg(not(unix))` block, so Clippy's `needless_bool` (from Rust 1.100) passes on Windows. Upstream's
+  copy, from #977, fails the Windows gate on it. Take upstream's version at the next merge only if
+  it has fixed this; otherwise keep this one.
 - Mermaid colour scheme: `crates/ui-egui/src/theme.rs` holds every interface colour, and
   `chrome_literals_stay_in_the_theme` fails when a merge brings a colour literal back. The catalogue
   hues in `crates/engine/src/catalog.rs`, the app icon and `UPDATE_APP`'s accent follow it. The test
