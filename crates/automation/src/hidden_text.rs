@@ -693,7 +693,16 @@ mod tests {
 
     #[test]
     fn redaction_removes_text_in_a_layer_off_as_the_file_opens() {
-        // "Second" is off as the file opens and never shown; /NotSecond shows only while it is off.
+        redaction_removes_layered_text("/D << /OFF [6 0 R] >>");
+    }
+
+    #[test]
+    fn redaction_removes_text_shown_only_while_a_layer_on_as_the_file_opens_is_off() {
+        redaction_removes_layered_text("/D << >>");
+    }
+
+    /// "Second" is off or on as the file opens (`config`); /NotSecond shows only while it is off.
+    fn redaction_removes_layered_text(config: &str) {
         let content = format!(
             "/OC /Second BDC {}EMC /OC /NotSecond BDC {}EMC {}",
             line(300, 0, "Secret layer"),
@@ -701,7 +710,7 @@ mod tests {
             line(100, 0, "Public line")
         );
         let bytes = Pdf::new()
-            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>")
+            .obj(&format!("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] {config} >> >>"))
             .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
             .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
             .obj(

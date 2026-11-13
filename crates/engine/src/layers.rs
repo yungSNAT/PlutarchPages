@@ -37,15 +37,19 @@ pub(crate) fn use_layer_choices(doc: &mut Document) {
 }
 
 /// The layer choices redaction search reads, as `RenderConfig::layers` takes them: the layers as
-/// the file opens them and, when one is off as it opens, every layer on. A search then finds text
-/// in a layer hidden as the file opens, and still finds all the file shows as it opens, including
-/// content shown only while a layer is off (a `/P /AllOff` membership, say). Text that shows only
-/// under another mix of layers is not searched: such content in a file that opens with every
-/// layer on, for one.
+/// the file opens them, every layer on when one is off as it opens, and every layer off when one
+/// is on as it opens. A search then finds content that one layer shows or hides, and content
+/// whose `/P` policy (AllOn, AnyOn, AnyOff, AllOff) any of these meets. Text that shows only
+/// under a mix of layers on and off, through a `/VE` expression or nested memberships, is not
+/// searched.
 pub fn redaction_search_layers(layers: &[Layer]) -> Vec<Arc<Vec<(i32, i32, bool)>>> {
+    let every = |visible: bool| Arc::new(layers.iter().map(|l| (l.id.0 as i32, l.id.1 as i32, visible)).collect());
     let mut choices = vec![Arc::default()];
     if layers.iter().any(|l| !l.initial) {
-        choices.push(Arc::new(layers.iter().map(|l| (l.id.0 as i32, l.id.1 as i32, true)).collect()));
+        choices.push(every(true));
+    }
+    if layers.iter().any(|l| l.initial) {
+        choices.push(every(false));
     }
     choices
 }
