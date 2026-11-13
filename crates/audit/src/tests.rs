@@ -1037,6 +1037,18 @@ fn form_text_past_the_page_decode_budget_fails_the_audit() {
     assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{result:?}");
 }
 
+/// The forms a page draws share its 16 MiB text budget too: a `/PCSoft` marker's `/N` is charged
+/// to it, 9 MB by the page, then `n` bytes by Y, before X draws the text a cover hides. Text past
+/// the budget fails the audit; 8 MB in Y would fit a budget of its own.
+#[test]
+fn form_text_past_the_page_text_budget_fails_the_audit() {
+    let soft = |n: usize| format!("/PCSoft << /N {n} >> BDC EMC ");
+    let doc = |n: usize| page_with_forms(&format!("{}/Y Do /X Do {FORM_BOX}", soft(9_000_000)), [("", FORM_SECRET), ("", &soft(n))]);
+    assert_eq!(covered(&doc(7_000_000)), ["SECRET"], "within the budget, X is read");
+    let result = audit_redactions(&doc(8_000_000));
+    assert!(matches!(&result, Err(crate::AuditError::Text(0, e)) if e.contains("too large")), "{result:?}");
+}
+
 /// A form without `/Resources` is read with those it was drawn with, by the cover walk as by the
 /// text walk: X draws the text, then Y, which only the page's resources name, draws the box.
 #[test]
