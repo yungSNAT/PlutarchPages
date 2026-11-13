@@ -1021,6 +1021,22 @@ fn form_text_left_unread_fails_the_audit() {
     assert!(start.elapsed() < std::time::Duration::from_secs(10), "took {:?}", start.elapsed());
 }
 
+/// The forms a page draws share its decode budget with its content, so text in a form past it
+/// fails the audit rather than go unread: after a mebibyte of spaces the page draws Y, another
+/// mebibyte, `n` times, then X, the text, and covers it. 255 draws fit a budget of the forms'
+/// own, not the page's.
+#[test]
+fn form_text_past_the_page_decode_budget_fails_the_audit() {
+    let mebibyte = " ".repeat(1 << 20);
+    let doc = |n: usize| {
+        let content = format!("{mebibyte}{}/X Do {FORM_BOX}", "/Y Do ".repeat(n));
+        page_with_forms(&content, [("", FORM_SECRET), ("", &mebibyte)])
+    };
+    assert_eq!(covered(&doc(253)), ["SECRET"], "within the budget, X is read");
+    let result = audit_redactions(&doc(255));
+    assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{result:?}");
+}
+
 /// A form without `/Resources` is read with those it was drawn with, by the cover walk as by the
 /// text walk: X draws the text, then Y, which only the page's resources name, draws the box.
 #[test]
