@@ -89,7 +89,7 @@ Builds are on the [latest release](https://github.com/yungSNAT/PlutarchPages/rel
 | Web | `pdfcraft-web-<ver>.zip`, a static site to host yourself |
 | Command line only | `pdfcraft-cli-<ver>-*`, for Linux and macOS |
 
-**The packages are unsigned**, so Windows and macOS may warn about or block them. `SHA256SUMS.txt` on the release lists a checksum for every file. For releases after v0.18.1, `gh attestation verify <file> --repo yungSNAT/PlutarchPages` also confirms that a file was built by this repository's release workflow. On Windows, don't install it alongside upstream PdfCraft: the 2 share some registry entries, so that isn't supported. To build from source instead, see [Development](docs/development.md).
+**The packages are unsigned**, so Windows and macOS may warn about or block them. `SHA256SUMS.txt` on the release lists a checksum for every file. A file with a build attestation can also be checked with `gh attestation verify <file> --repo yungSNAT/PlutarchPages --signer-workflow yungSNAT/PlutarchPages/.github/workflows/release.yml --source-ref refs/heads/release`, which confirms that this repository's release workflow built it from the `release` branch. Releases drafted before the workflow began attesting have none. On Windows, don't install it alongside upstream PdfCraft: the 2 share some registry entries, so that isn't supported. To build from source instead, see [Development](docs/development.md).
 
 ---
 

@@ -805,7 +805,8 @@ jobs:
           gh release create "$tag" --draft "${pre[@]}" --target "$GITHUB_SHA" \
             --title "PlutarchPages v$VERSION" --generate-notes -- *
       # Runs after the draft exists, so a run stopped by the tag checks attests nothing. The files
-      # are the draft's assets, SHA256SUMS.txt included.
+      # are the draft's assets, SHA256SUMS.txt included. If this step fails, re-run the job before
+      # publishing: the draft already exists without attestations.
       - name: Attest release file provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:

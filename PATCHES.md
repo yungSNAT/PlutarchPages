@@ -93,9 +93,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   either when a merge brings it back.
 - Releases: `.github/workflows/release.yml` is this fork's own and uses nothing from
   `craft-common-actions`. It builds unsigned packages, tests an installed MSI and an upgrade from the
-  latest published release with `packaging/windows/test-install.ps1`, and only drafts the release. From the
-  release after v0.18.1, the draft job also records a GitHub build provenance attestation for every draft
-  file with `actions/attest`. Keep it over
+  latest published release with `packaging/windows/test-install.ps1`, and only drafts the release. The
+  draft job also records a GitHub build provenance attestation for every draft file with
+  `actions/attest`; releases drafted before that step was added have none. Keep it over
   upstream's. Its FreeBSD, riscv64, web and Flatpak jobs are ported from that repository's
   `release.yml` at `2b3fb9dc`, without the FreeBSD Cargo cache action, and
   `packaging/linux/arch-package.sh` replaces its `arch-package` action. It drops privileges before a Rust helper
