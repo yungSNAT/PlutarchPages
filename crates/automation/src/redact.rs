@@ -108,7 +108,7 @@ impl Automation {
             };
             matched_words = needles.iter().map(|w| (w.clone(), 0)).collect();
             let info = self.doc(a)?.info.clone();
-            // Text found with both layer choices makes one mark.
+            // A word that finds the same text with both layer choices marks it once.
             let mut seen = HashSet::new();
             for layers in redaction_search_layers(&info.layers) {
                 let texts = self.page_texts(id, &pages, &layers)?;
@@ -123,7 +123,7 @@ impl Automation {
                     };
                     for (word, h) in hits {
                         let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| info.pages[p].view_rect_to_quad(r)).collect();
-                        if !quads.is_empty() && seen.insert((p, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
+                        if !quads.is_empty() && seen.insert((p, word, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
                             marks.push((p, quads));
                             if let Some(m) = word.and_then(|i| matched_words.get_mut(i)) {
                                 m.1 += 1;

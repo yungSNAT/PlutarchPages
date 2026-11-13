@@ -306,7 +306,7 @@ impl PdfCraftApp {
         }
         let mut edits = Vec::new();
         let author = self.comment_prefs.author.clone();
-        // Text found with both layer choices makes one mark.
+        // A word that finds the same text with both layer choices marks it once.
         let mut seen = std::collections::HashSet::new();
         for layers in pdfcraft_engine::redaction_search_layers(&doc.info.layers) {
             let config = pdfcraft_render::RenderConfig { password: doc.password.as_deref().map(std::sync::Arc::from), layers, ..Default::default() };
@@ -315,13 +315,17 @@ impl PdfCraftApp {
                 let out =
                     r.render(pdfcraft_render::RenderRequest { page, kind: pdfcraft_render::RequestKind::Text, scale: 1.0, ..Default::default() });
                 let Some(text) = out.text else { continue };
-                let hits = match d.mode {
-                    SearchMode::Patterns => text.find_with(|c| pdfcraft_engine::find_pattern(d.pattern, c)),
-                    _ => needles.iter().flat_map(|w| text.find_for_redaction(w, d.case_sensitive, d.whole_words)).collect(),
+                let hits: Vec<(Option<usize>, _)> = match d.mode {
+                    SearchMode::Patterns => text.find_with(|c| pdfcraft_engine::find_pattern(d.pattern, c)).into_iter().map(|h| (None, h)).collect(),
+                    _ => needles
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, w)| text.find_for_redaction(w, d.case_sensitive, d.whole_words).into_iter().map(move |h| (Some(i), h)))
+                        .collect(),
                 };
-                for h in hits {
+                for (word, h) in hits {
                     let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| page_info.view_rect_to_quad(r)).collect();
-                    if !quads.is_empty() && seen.insert((page, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
+                    if !quads.is_empty() && seen.insert((page, word, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
                         edits.push(self.redact_prefs.mark(page, quads, &author));
                     }
                 }

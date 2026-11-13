@@ -685,6 +685,10 @@ mod tests {
             let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "find": find }));
             assert_eq!(marked["marked"], 1, "{find}: {marked}");
         }
+        // Each word marks what it finds, even text another word marks too.
+        let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "words": ["First layer", "first layer"] }));
+        assert_eq!(marked["marked"], 2, "{marked}");
+        assert_eq!(marked["matched_words"], json!([{ "word": "First layer", "marked": 1 }, { "word": "first layer", "marked": 1 }]));
     }
 
     #[test]
