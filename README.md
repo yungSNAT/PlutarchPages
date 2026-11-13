@@ -91,7 +91,7 @@ Builds are on the [latest release](https://github.com/yungSNAT/PlutarchPages/rel
 
 **The packages are unsigned**, so Windows and macOS may warn about or block them. `SHA256SUMS.txt` on the release lists a checksum for every file. On Windows, don't install it alongside upstream PdfCraft: the 2 share some registry entries, so that isn't supported. To build from source instead, see [Development](docs/development.md).
 
-**Flatpak users of v0.16.1 or v0.18.1:** those bundles used the app ID `io.github.EquityBot.PlutarchPages`, and later ones use `io.github.yungSNAT.PlutarchPages`, so installing a later bundle adds a second app with empty settings instead of updating the old one. To keep your settings, install the new bundle, then, before you start it for the first time, remove the old app and move its data folder to the new ID:
+**Flatpak users of v0.16.1 or v0.18.1:** those bundles used the app ID `io.github.EquityBot.PlutarchPages`, and later ones use `io.github.yungSNAT.PlutarchPages`, so installing a later bundle adds a second app with empty settings instead of updating the old one. To keep your settings, install the new bundle, then, before you start it for the first time, quit the old app, then remove it and move its data folder to the new ID:
 
 ```sh
 flatpak uninstall io.github.EquityBot.PlutarchPages
