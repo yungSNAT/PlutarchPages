@@ -39,9 +39,11 @@ fn revision(root: &Path, reference: &str) -> anyhow::Result<String> {
 fn report(root: &Path, upstream: &str) -> anyhow::Result<String> {
     let head = revision(root, "HEAD")?;
     let upstream = revision(root, upstream)?;
-    let counts = checked(root, &["rev-list", "--left-right", "--count", &format!("{head}...{upstream}")])?;
-    let counts: Vec<usize> = counts.split_whitespace().map(str::parse).collect::<Result<_, _>>()?;
-    let [ahead, behind] = counts.as_slice() else { bail!("git rev-list did not return 2 counts") };
+    let range = format!("{head}...{upstream}");
+    let [ahead, behind] = counts(root, &["rev-list", "--left-right", "--count", &range])?;
+    // Upstream merges each pull request as one first-parent commit, so this count tracks PRs
+    // and direct commits; the count above includes every commit those merges bring in.
+    let [ahead_first, behind_first] = counts(root, &["rev-list", "--left-right", "--count", "--first-parent", &range])?;
     let merged = git(root, &["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", &head, &upstream])?;
     if !matches!(merged.status.code(), Some(0 | 1)) {
         bail!("git merge-tree: {}", String::from_utf8_lossy(&merged.stderr).trim());
@@ -51,7 +53,7 @@ fn report(root: &Path, upstream: &str) -> anyhow::Result<String> {
         bail!("git merge-tree status disagrees with its conflict paths");
     }
     let mut report = format!(
-        "## Upstream drift\n\nFork: `{head}`\n\nUpstream: `{upstream}`\n\nAhead: {ahead} commits. Behind: {behind} commits.\n\nConflicted paths: {}.\n",
+        "## Upstream drift\n\nFork: `{head}`\n\nUpstream: `{upstream}`\n\nAhead: {ahead} commits. Behind: {behind} commits.\n\nFirst-parent only (merged pull requests and direct commits): {ahead_first} ahead, {behind_first} behind.\n\nConflicted paths: {}.\n",
         paths.len()
     );
     if merged.status.success() {
@@ -77,6 +79,13 @@ fn report(root: &Path, upstream: &str) -> anyhow::Result<String> {
     }
     report.push_str("\nPreview only. Merge through a reviewed PR after `cargo xtask fork-check` and the required checks pass.\n");
     Ok(report)
+}
+
+fn counts(root: &Path, args: &[&str]) -> anyhow::Result<[usize; 2]> {
+    let output = checked(root, args)?;
+    let counts: Vec<usize> = output.split_whitespace().map(str::parse).collect::<Result<_, _>>()?;
+    let [left, right] = counts.as_slice() else { bail!("git rev-list did not return 2 counts") };
+    Ok([*left, *right])
 }
 
 fn conflict_paths(output: &[u8]) -> anyhow::Result<BTreeSet<&[u8]>> {
@@ -136,6 +145,21 @@ mod tests {
         assert!(report.contains("Conflicted paths: 0."), "{report}");
         assert_eq!(before, revision(&repo.0, "HEAD").unwrap());
         assert_eq!(checked(&repo.0, &["status", "--porcelain"]).unwrap(), "");
+    }
+
+    #[test]
+    fn counts_a_merged_pull_request_once_on_the_first_parent_line() {
+        let repo = Repo::new();
+        repo.commit("fork.txt", "fork\n");
+        repo.command(&["checkout", "-q", "-b", "feature", "upstream"]);
+        repo.commit("feature-a.txt", "a\n");
+        repo.commit("feature-b.txt", "b\n");
+        repo.command(&["checkout", "-q", "upstream"]);
+        repo.command(&["merge", "-q", "--no-ff", "-m", "Merge pull request", "feature"]);
+        repo.command(&["checkout", "-q", "main"]);
+        let report = report(&repo.0, "upstream").unwrap();
+        assert!(report.contains("Ahead: 1 commits. Behind: 3 commits."), "{report}");
+        assert!(report.contains("First-parent only (merged pull requests and direct commits): 1 ahead, 1 behind."), "{report}");
     }
 
     #[test]
