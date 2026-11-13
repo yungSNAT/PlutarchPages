@@ -87,7 +87,7 @@ Builds are on the [latest release](https://github.com/yungSNAT/PlutarchPages/rel
 | Linux riscv64 | `.deb`, `.rpm` or `.tar.gz` (glibc 2.39 or newer) |
 | FreeBSD | `pdfcraft-<ver>-freebsd-x86_64.tar.gz` or `pdfcraft-<ver>-freebsd-aarch64.tar.gz` |
 | Web | `pdfcraft-web-<ver>.zip`, a static site to host yourself |
-| Command line only | `pdfcraft-cli-<ver>-*`, for Linux and macOS |
+| Command line only | `pdfcraft-cli-<ver>-*`, for Linux and macOS. On Windows, the MSI and the portable zip include `pdfcraft-cli.exe` |
 
 **The packages are unsigned**, so Windows and macOS may warn about or block them. `SHA256SUMS.txt` on the release lists a checksum for every file. A file with a build attestation can also be checked with `gh attestation verify <file> --repo yungSNAT/PlutarchPages --signer-workflow yungSNAT/PlutarchPages/.github/workflows/release.yml --source-ref refs/heads/release`, which confirms that this repository's release workflow built it from the `release` branch. Releases drafted before the workflow began attesting have none. On Windows, don't install it alongside upstream PdfCraft: the 2 share some registry entries, so that isn't supported. To build from source instead, see [Development](docs/development.md).
 
@@ -161,7 +161,7 @@ pictures), enhanced OCR clean-up, an AI assistant and an Explorer 'Combine' menu
 
 PlutarchPages is alpha, like PdfCraft (see [What's next](#whats-next)). Another tool fits better when:
 
-- **You need OCR, office document conversion or content editing today:** [Stirling-PDF](https://github.com/Stirling-Tools/Stirling-PDF) does all 3, with more than 50 tools, as a desktop app, in the browser or on your own server. Its core is MIT; some of its directories are under a proprietary licence.
+- **You need to edit existing text today, or a wider toolset:** [Stirling-PDF](https://github.com/Stirling-Tools/Stirling-PDF) has a text editor and lists 60 or more tools (v3.3.0, [stirling.com/pricing](https://www.stirling.com/pricing), read 13 November 2026), as a desktop app, in the browser or on your own server. Its core is MIT; some of its directories are under a proprietary licence. PlutarchPages reads Latin-script scans ([Scan &amp; OCR](#scan-pages-then-read-the-words-back-before-trusting-them)) and converts Office files through an installed LibreOffice ([Fork changes](#fork-changes)), so those alone are no reason to switch.
 - **You only merge, split, rotate or extract pages:** [PDFsam Basic](https://github.com/torakiki/pdfsam) is a mature desktop app for exactly that (AGPL-3.0).
 - **You want one viewer for PDF, EPUB, DjVu and comic books:** [Okular](https://okular.kde.org/), KDE's document viewer, reads them all and annotates PDFs (GPL).
 - **You transform PDFs in scripts:** [qpdf](https://github.com/qpdf/qpdf) is a mature command line tool that encrypts, linearises, selects pages and repairs files without changing their content (Apache-2.0). `pdfcraft-cli` covers PlutarchPages's own engine.
@@ -416,6 +416,8 @@ Every engine feature is reachable without the GUI, through one table of JSON-Sch
   ```json
   { "mcpServers": { "pdfcraft": { "command": "pdfcraft-cli", "args": ["mcp", "--root", "/path/to/your/pdfs"] } } }
   ```
+
+  The Windows MSI installs `pdfcraft-cli.exe` beside the app without adding it to `PATH`, so give its full path as the `command`: `C:\\Program Files\\PlutarchPages\\pdfcraft-cli.exe` for the x64 MSI (JSON doubles each backslash).
 
   `--compact` shrinks the tool list the agent has to read: `tools/list` returns 15 core tools plus `tool_search` and `tool_call`, which find and run every other tool, so the list costs far fewer tokens. Every tool still works.
 
