@@ -789,7 +789,7 @@ fn runs_without_words_count_against_the_comparison_bound() {
 ",
     );
     let doc = open(one_page(&content, ""));
-    let lines = pdfcraft_edit::glyph_text_lines(&doc, &pdfcraft_model::pages(&doc)[0]).expect("text");
+    let lines = pdfcraft_edit::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).expect("text").lines;
     assert_eq!(lines.iter().map(|l| (l.ink.len(), l.runs().count())).collect::<Vec<_>>(), [(1, 51)]);
     // Plus the hidden line's text, read once to copy it.
     let text = lines[0].text.len() / crate::TEXT_BYTES_PER_COMPARISON;
@@ -912,7 +912,7 @@ fn covered_text_bytes_count_against_the_comparison_bound() {
         content.extend_from_slice(b"-1 688 1000000 32 re f\n");
     }
     let doc = open(one_page(&content, ""));
-    let lines = pdfcraft_edit::glyph_text_lines(&doc, &pdfcraft_model::pages(&doc)[0]).expect("text");
+    let lines = pdfcraft_edit::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).expect("text").lines;
     assert_eq!(lines.len(), 1);
     let bytes = lines[0].text.len();
     assert!(bytes > 20_000, "{bytes} bytes of text");
@@ -945,4 +945,87 @@ fn every_finding_record_counts_against_the_output_bound() {
     assert_eq!(crate::audit(&doc, exact).expect("within the budget").len(), 3);
     let short = crate::Limits { covered_text: 3 * one - 1, ..exact };
     assert!(matches!(crate::audit(&doc, short), Err(crate::AuditError::TooMuchOutput)));
+}
+
+/// Resources naming the font and the forms X and Y (objects 6 and 7) of [`page_with_forms`].
+const FORM_RESOURCES: &str = "/Resources << /Font << /F1 5 0 R >> /XObject << /X 6 0 R /Y 7 0 R >> >>";
+const FORM_SECRET: &str = "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET";
+const FORM_BOX: &str = "0 g 100 688 220 32 re f";
+
+/// One page drawing `content` with [`FORM_RESOURCES`], and its forms X and Y: each the extra
+/// entries of its dictionary and its content.
+fn page_with_forms(content: &str, forms: [(&str, &str); 2]) -> Document {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add(&format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R {FORM_RESOURCES} >>"));
+    b.add_stream(content.as_bytes());
+    b.add(FONT);
+    for (extra, body) in forms {
+        b.add_stream_with(body.as_bytes(), &format!("/Type /XObject /Subtype /Form /BBox [0 0 612 792] {extra}"));
+    }
+    open(b.build())
+}
+
+/// The text of each covered-text finding.
+fn covered(doc: &Document) -> Vec<String> {
+    let findings = audit_redactions(doc).expect("audit must run");
+    assert!(findings.iter().all(|f| f.kind == FindingKind::CoveredText), "{findings:?}");
+    findings.into_iter().map(|f| f.covered_text).collect()
+}
+
+/// R2461: text a form XObject draws is audited like the page's own. A cover hides it when painted
+/// after it: by the page after the `Do`, or by the form after the text (a page that is one form).
+#[test]
+fn text_inside_a_form_is_audited() {
+    let only = |content: &str, x: &str| page_with_forms(content, [(FORM_RESOURCES, x), (FORM_RESOURCES, "")]);
+    assert_eq!(covered(&only(&format!("/X Do {FORM_BOX}"), FORM_SECRET)), ["SECRET"]);
+    assert_eq!(covered(&only("/X Do", &format!("{FORM_SECRET} {FORM_BOX}"))), ["SECRET"]);
+    // Painted before the text, the box lies under it.
+    assert!(covered(&only(&format!("{FORM_BOX} /X Do"), FORM_SECRET)).is_empty());
+    assert!(covered(&only("/X Do", &format!("{FORM_BOX} {FORM_SECRET}"))).is_empty());
+}
+
+/// Nested forms: X draws Y, which draws the text, with X's `/Matrix` moving it 100 points down.
+#[test]
+fn text_inside_nested_forms_is_audited() {
+    let nested = |content: &str, x: &str| {
+        page_with_forms(content, [(&format!("{FORM_RESOURCES} /Matrix [1 0 0 1 0 -100]"), x), (FORM_RESOURCES, FORM_SECRET)])
+    };
+    assert_eq!(covered(&nested("/X Do 0 g 100 588 220 32 re f", "/Y Do")), ["SECRET"]);
+    // Where the text would be without X's matrix, the box hides nothing.
+    assert!(covered(&nested(&format!("/X Do {FORM_BOX}"), "/Y Do")).is_empty());
+    // A cover X paints after Y hides Y's text; one painted before it doesn't.
+    assert_eq!(covered(&nested("/X Do", &format!("/Y Do {FORM_BOX}"))), ["SECRET"]);
+    assert!(covered(&nested("/X Do", &format!("{FORM_BOX} /Y Do"))).is_empty());
+}
+
+/// A form whose text the audit can't read in full fails it, quickly, rather than report the page
+/// clean. X has no `/Resources`, so it is read with the page's, which name X itself and a Y that
+/// doesn't decode. (The cover walk doesn't follow a form's `Do` without its own resources.)
+#[test]
+fn form_text_left_unread_fails_the_audit() {
+    let start = std::time::Instant::now();
+    let cases = [
+        ("drawn inside itself", ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /X Do"), ("", "")),
+        ("undecodable", ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /Y Do"), ("/Filter /FlateDecode", "not deflated")),
+    ];
+    for (case, x, y) in cases {
+        let doc = page_with_forms(&format!("/X Do {FORM_BOX}"), [x, y]);
+        let result = audit_redactions(&doc);
+        assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{case}: {result:?}");
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(10), "took {:?}", start.elapsed());
+}
+
+/// A forward `TJ` adjustment a form draws under a later cover is a retained advance too.
+#[test]
+fn retained_advance_inside_a_form_is_reported() {
+    let advance = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";
+    let kinds = |content: &str| {
+        let doc = page_with_forms(content, [(FORM_RESOURCES, advance), (FORM_RESOURCES, "")]);
+        crate::audit_document(&doc).expect("audit must run").page_findings.into_iter().map(|f| f.kind).collect::<Vec<_>>()
+    };
+    assert_eq!(kinds("/X Do 0 g 71 688 22 21 re f"), [FindingKind::RetainedAdvance]);
+    assert!(kinds("0 g 71 688 22 21 re f /X Do").is_empty());
 }

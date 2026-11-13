@@ -8497,7 +8497,7 @@ fn vertical_page(content: &str) -> Document {
 fn vertical_advance_audit_records_forward_gaps() {
     let doc = vertical_page("BT /V1 20 Tf 500 720 Td [<0041> 1000 <0042> -1000 <0043>] TJ ET");
     let page = &pdfcraft_model::pages(&doc)[0];
-    let (_, gaps) = text::glyph_text_with_gaps(&doc, page).unwrap();
+    let gaps = text::glyph_text(&doc, page, true).unwrap().gaps;
     assert_eq!(gaps.len(), 1);
     assert_eq!(gaps[0].from, (500.0, 700.0));
     assert_eq!(gaps[0].to, (500.0, 680.0));

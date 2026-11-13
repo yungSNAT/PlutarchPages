@@ -10,13 +10,13 @@ impl TextLine {
         self.origin.baseline
     }
 
-    /// Paint position of the line's first operator: `(content-stream index, operator index in
-    /// the page's joined stream)`. A line joins runs painted at different times, so anything
-    /// painted after this position may lie on top of part of it.
-    /// (Lines from `text_lines` never come from form XObjects, so `stream` is always a
-    /// page content-stream index and `ops` are indices into the joined operator list.)
-    pub fn first_paint_pos(&self) -> (usize, usize) {
-        (self.stream, self.ops.iter().min().copied().unwrap_or(0))
+    /// Paint position of the line's first operator: the index of each `Do` that drew the form it
+    /// is in, outermost first, then the operator's index in the page's joined stream or in the
+    /// form's. Positions compare in paint order lexicographically (`Iterator::cmp`). A line joins
+    /// runs painted at different times, so anything painted after this position may lie on top
+    /// of part of it.
+    pub fn paint_order(&self) -> impl Iterator<Item = usize> + '_ {
+        self.drawn_by.iter().copied().chain(std::iter::once(self.ops.iter().min().copied().unwrap_or(0)))
     }
 
     /// The runs of text the line joins, in content order: each run's text as its glyphs show it,
@@ -218,59 +218,70 @@ fn fill_color(fill: &[Op]) -> [f64; 3] {
 
 /// The lines of text on a page (0-based), in content order.
 pub fn text_lines(doc: &Document, page: usize) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, &page_dict(doc, page)?, true, None)
+    Ok(text_lines_in(doc, &page_dict(doc, page)?, Reading::Editor)?.lines)
 }
 
-/// The lines `page`'s glyphs show, in content order, without `/ActualText` replacements: what the
-/// page draws, not what its marked-content metadata says the glyphs mean. For checks that must
-/// not trust that metadata (the redaction audit). Takes the page itself, so a caller going
-/// through every page doesn't walk the page tree again for each.
-pub fn glyph_text_lines(doc: &Document, page: &pdfcraft_model::Page) -> Result<Vec<TextLine>, EditError> {
-    text_lines_in(doc, page, false, None)
+/// What a page's glyphs show, for checks that must not trust its marked-content metadata (the
+/// redaction audit): see [`glyph_text`].
+pub struct GlyphText {
+    /// The page's own lines, then those of the forms it draws, in content order.
+    pub lines: Vec<TextLine>,
+    /// Its forward `TJ` adjustments that paint no glyphs, when asked for.
+    pub gaps: Vec<GlyphAdvanceGap>,
+    /// Some form's text is missing from `lines`: a form drawn inside itself, one whose content
+    /// doesn't decode cleanly, or forms past [`MAX_FORM_DEPTH`], [`MAX_FORM_VISITS`] or the page's decode
+    /// budget.
+    pub unread_forms: bool,
 }
 
 /// A forward text adjustment that painted no glyphs, in page user space.
 pub struct GlyphAdvanceGap {
-    pub paint_pos: (usize, usize),
+    /// Where it is painted, as [`TextLine::paint_order`] gives it for a line.
+    pub paint_pos: Vec<usize>,
     pub from: (f64, f64),
     pub to: (f64, f64),
 }
 
-/// Extract the drawn glyphs and their large numeric `TJ` adjustments for a redaction audit.
-pub fn glyph_text_with_gaps(doc: &Document, page: &pdfcraft_model::Page) -> Result<(Vec<TextLine>, Vec<GlyphAdvanceGap>), EditError> {
-    let mut gaps = Vec::new();
-    let lines = text_lines_in(doc, page, false, Some(&mut gaps))?;
-    Ok((lines, gaps))
+/// The lines `page`'s glyphs show, in content order, the text of the form XObjects it draws
+/// included, without `/ActualText` replacements: what the page draws, not what its marked-content
+/// metadata says the glyphs mean. With `gaps`, its large numeric `TJ` adjustments too. Takes the
+/// page itself, so a caller going through every page doesn't walk the page tree again for each.
+pub fn glyph_text(doc: &Document, page: &pdfcraft_model::Page, gaps: bool) -> Result<GlyphText, EditError> {
+    text_lines_in(doc, page, Reading::Glyphs { gaps })
 }
 
-/// [`text_lines`] of `p`; with `actual_text`, `/ActualText` replaces the glyphs it spans.
-fn text_lines_in(
-    doc: &Document,
-    p: &pdfcraft_model::Page,
-    actual_text: bool,
-    gaps: Option<&mut Vec<GlyphAdvanceGap>>,
-) -> Result<Vec<TextLine>, EditError> {
+/// How [`text_lines_in`] reads a page.
+#[derive(Clone, Copy, PartialEq)]
+enum Reading {
+    /// The page's own content, with `/ActualText` replacing the glyphs it spans: what the editor
+    /// can rewrite.
+    Editor,
+    /// The glyphs alone, those its forms draw included, with or without the advance gaps.
+    Glyphs { gaps: bool },
+}
+
+/// The lines of `p`, read as `reading` says.
+fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> Result<GlyphText, EditError> {
+    let glyphs = reading != Reading::Editor;
+    let want_gaps = reading == Reading::Glyphs { gaps: true };
     let res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut cache = HashMap::new();
     let mut lines: Vec<TextLine> = Vec::new();
     let mut carry = Carry::new();
-    if gaps.is_some() {
+    if want_gaps {
         carry.advance_gaps = Some(Vec::new());
     }
     // The streams are one stream in pieces (§7.8.2), split between any two tokens: parse them
     // joined, so an operator whose operands end one piece still has them.
-    let pieces = Pieces::join(&content_streams(doc, &p.dict)?.into_iter().map(|(_, d)| d).collect::<Vec<_>>());
+    let mut decode = DecodeBudget::page();
+    let pieces = Pieces::join(&content_streams_within(doc, &p.dict, &mut decode)?.into_iter().map(|(_, d)| d).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
     let properties = res.get(b"Properties").and_then(|o| doc.dict(o)).unwrap_or_default();
-    let shown = interpret(doc, &ops, &res, &mut cache, &mut carry, None, actual_text.then_some(&properties))?;
+    let mut invoked = Vec::new();
+    let shown = interpret(doc, &ops, &res, &mut cache, &mut carry, glyphs.then_some(&mut invoked), (!glyphs).then_some(&properties))?;
     let layer_scopes = Arc::<[LayerScope]>::from(carry.layer_scopes);
-    if let (Some(gaps), Some(adjustments)) = (gaps, carry.advance_gaps) {
-        gaps.extend(adjustments.into_iter().map(|gap| GlyphAdvanceGap {
-            paint_pos: (ops.get(gap.op).map_or(0, |op| pieces.pieces_of(op).0), gap.op),
-            from: gap.from,
-            to: gap.to,
-        }));
-    }
+    let mut gaps: Vec<GlyphAdvanceGap> =
+        carry.advance_gaps.into_iter().flatten().map(|gap| GlyphAdvanceGap { paint_pos: vec![gap.op], from: gap.from, to: gap.to }).collect();
     let mut last: Option<(usize, Pen)> = None; // the stream piece and where its last run ended
     for mut s in shown {
         // A single RTL glyph's ActualText (e.g. lam-alef) is an inline ligature, not a
@@ -342,6 +353,7 @@ fn text_lines_in(
                 visual_order: s.visual_order,
                 face: s.face.clone(),
                 stream: si,
+                drawn_by: Vec::new(),
                 scope: s.scope,
                 paint: s.paint.clone(),
                 logical_order: s.logical_order,
@@ -370,6 +382,16 @@ fn text_lines_in(
         }
         last = Some((si, Pen::after(&s)));
     }
+    // The forms the page draws, each read from the state at its `Do`, on the page's text budget.
+    // Strictly: a form read leniently past corrupt data could lose text a cover hides.
+    let mut budget = FormBudget::new(decode);
+    budget.strict = true;
+    let mut forms = FormWalk::new(doc, pieces.len(), budget, false, want_gaps);
+    for (at, name, ts) in invoked {
+        forms.enter(&res, at, &name, ts, &mut carry.text_left)?;
+    }
+    lines.append(&mut forms.lines);
+    gaps.append(&mut forms.gaps);
     // Content streams draw right-to-left lines in visual order; the editor works in typing order.
     for l in lines.iter_mut().filter(|l| !l.logical_order) {
         // A visual-order Indic font draws pre-base vowel signs before their consonant.
@@ -385,7 +407,7 @@ fn text_lines_in(
     }
     // Lines of only spaces aren't editable text.
     lines.retain(|l| !l.text.trim().is_empty());
-    Ok(lines)
+    Ok(GlyphText { lines, gaps, unread_forms: forms.budget.truncated || forms.budget.skipped })
 }
 
 /// Joining independent text objects is safe only when they use the same text and graphics
@@ -408,8 +430,8 @@ fn compatible_word(line: &TextLine, shown: &Shown) -> bool {
 }
 
 /// The line `s` continues, or a new one: `last` is the previous run of the same stream
-/// (`bt`, baseline, end x, size).
-fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize, layer_scopes: &Arc<[LayerScope]>) {
+/// (`bt`, baseline, end x, size). `drawn_by` is [`TextLine::drawn_by`] for a new line.
+fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream: usize, layer_scopes: &Arc<[LayerScope]>, drawn_by: &[usize]) {
     let joins = last.is_some_and(|pen| {
         let bt = pen.bt;
         lines.last().is_some_and(|l| l.scope == s.scope && l.paint == s.paint && l.logical_order == s.logical_order)
@@ -462,6 +484,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
             visual_order: s.visual_order,
             face: s.face.clone(),
             stream,
+            drawn_by: drawn_by.to_vec(),
             scope: s.scope,
             paint: s.paint.clone(),
             logical_order: s.logical_order,
@@ -512,12 +535,18 @@ pub(crate) struct FormBudget {
     /// A form was left unread because it nests deeper than [`MAX_FORM_DEPTH`], comes past
     /// [`MAX_FORM_VISITS`] or past the decode budget: what it draws is missing from the walk.
     pub(crate) truncated: bool,
+    /// A form was passed over because it is drawn inside itself, or read as empty because its
+    /// content doesn't decode. Export goes on without it; the audit can't vouch for what it draws.
+    pub(crate) skipped: bool,
+    /// Decode forms as [`DecodeBudget::decode_strict`] does, so that corrupt data counts as a
+    /// form that doesn't decode rather than as the part read before it.
+    pub(crate) strict: bool,
 }
 
 impl FormBudget {
     /// The walk of a page's forms, spending what `decode` has left after the page's content.
     pub(crate) fn new(decode: DecodeBudget) -> Self {
-        Self { visits: 0, decode, truncated: false }
+        Self { visits: 0, decode, truncated: false, skipped: false, strict: false }
     }
 }
 
@@ -582,6 +611,7 @@ pub(crate) fn form_call(
     // Only a reference can name a stream, so nothing else needs reading, or copying.
     let obj = Some(o.as_ref()?);
     if obj.is_some_and(|r| path.contains(&r)) {
+        budget.skipped = true;
         return None;
     }
     let form = doc.resolve(o);
@@ -600,44 +630,61 @@ pub(crate) fn form_call(
         <[f64; 6]>::try_from(v).ok().filter(|v| v.iter().all(|x| x.is_finite()))
     });
     let own = s.dict.get(b"Resources").filter(|r| matches!(r, Object::Ref(_))).map(|r| doc.resolve(r));
-    let data = match budget.decode.decode(s) {
+    let decoded = if budget.strict { budget.decode.decode_strict(s) } else { budget.decode.decode(s) };
+    let data = match decoded {
         Ok(data) => data,
         Err(_) if budget.decode.remaining() == 0 => {
             budget.truncated = true;
             return None;
         }
-        Err(_) => Vec::new(),
+        Err(_) => {
+            budget.skipped = true;
+            Vec::new()
+        }
     };
     budget.visits = budget.visits.saturating_add(1);
     Some(FormCall { obj, data, form, own, ctm: m.map_or(ctm, |m| Matrix(m).then(&ctm)) })
 }
 
-/// The lines a page shows as it reads, including text drawn by form XObjects (which
-/// [`text_lines`] leaves out because it can only rewrite the page's own streams). Lines from a
-/// form carry a stream number past the page's streams, one per form drawn. The flag is `true`
-/// when forms past [`MAX_FORM_DEPTH`] or [`MAX_FORM_VISITS`] were left unread.
-pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine>, bool), EditError> {
-    struct Walk<'a> {
-        doc: &'a Document,
-        lines: Vec<TextLine>,
-        next_stream: usize,
-        path: Vec<pdfcraft_cos::ObjRef>,
-        budget: FormBudget,
+/// A walk through the form XObjects a page draws, collecting the lines of text they show. Lines
+/// from a form carry a stream number past the page's streams, one per form drawn.
+struct FormWalk<'a> {
+    doc: &'a Document,
+    lines: Vec<TextLine>,
+    gaps: Vec<GlyphAdvanceGap>,
+    next_stream: usize,
+    path: Vec<pdfcraft_cos::ObjRef>,
+    /// The `Do` that drew each form being read, outermost first: [`TextLine::drawn_by`].
+    calls: Vec<usize>,
+    budget: FormBudget,
+    /// Read `/ActualText` and named optional content as a reader does, or the glyphs alone.
+    logical_text: bool,
+    want_gaps: bool,
+}
+
+impl<'a> FormWalk<'a> {
+    fn new(doc: &'a Document, next_stream: usize, budget: FormBudget, logical_text: bool, want_gaps: bool) -> Self {
+        FormWalk { doc, lines: Vec::new(), gaps: Vec::new(), next_stream, path: Vec::new(), calls: Vec::new(), budget, logical_text, want_gaps }
     }
+
     /// `stream` gives the stream number of the operator at an index of `ops`.
-    fn walk(w: &mut Walk, ops: &[Op], resources: &Dict, carry: &mut Carry, stream: &dyn Fn(usize) -> usize) -> Result<(), EditError> {
+    fn walk(&mut self, ops: &[Op], resources: &Dict, carry: &mut Carry, stream: &dyn Fn(usize) -> usize) -> Result<(), EditError> {
         let mut cache = HashMap::new();
         let mut invoked = Vec::new();
         let (mut held, none) = (None, Dict::new());
-        let properties = resource_dict(w.doc, resources, b"Properties", &mut held).unwrap_or(&none);
-        let shown = interpret(w.doc, ops, resources, &mut cache, carry, Some(&mut invoked), Some(properties))?;
+        let properties = resource_dict(self.doc, resources, b"Properties", &mut held).unwrap_or(&none);
+        let shown = interpret(self.doc, ops, resources, &mut cache, carry, Some(&mut invoked), self.logical_text.then_some(properties))?;
+        for gap in carry.advance_gaps.take().into_iter().flatten() {
+            let paint_pos = self.calls.iter().copied().chain(std::iter::once(gap.op)).collect();
+            self.gaps.push(GlyphAdvanceGap { paint_pos, from: gap.from, to: gap.to });
+        }
         let layer_scopes = Arc::<[LayerScope]>::from(std::mem::take(&mut carry.layer_scopes));
         let mut last = None;
         let mut last_stream = None;
         let mut forms = invoked.into_iter().peekable();
         for s in shown {
-            while let Some((_, name, ts)) = forms.next_if(|f| f.0 < s.op) {
-                enter(w, resources, &name, ts, &mut carry.text_left)?;
+            while let Some((at, name, ts)) = forms.next_if(|f| f.0 < s.op) {
+                self.enter(resources, at, &name, ts, &mut carry.text_left)?;
                 // Text after a form starts a new line.
                 last = None;
             }
@@ -646,36 +693,48 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
             if last_stream.replace(si).is_some_and(|prev| prev != si) {
                 last = None;
             }
-            add_shown(&mut w.lines, &mut last, s, si, &layer_scopes);
+            add_shown(&mut self.lines, &mut last, s, si, &layer_scopes, &self.calls);
         }
-        for (_, name, ts) in forms {
-            enter(w, resources, &name, ts, &mut carry.text_left)?;
+        for (at, name, ts) in forms {
+            self.enter(resources, at, &name, ts, &mut carry.text_left)?;
         }
         Ok(())
     }
-    /// `text_left`: the page's text budget, shared with the forms the page draws.
-    fn enter(w: &mut Walk, resources: &Dict, name: &[u8], ts: Ts, text_left: &mut usize) -> Result<(), EditError> {
-        let Some(form) = form_call(w.doc, resources, name, ts.ctm, &w.path, &mut w.budget) else { return Ok(()) };
+
+    /// Read the form `name` that the `Do` at index `at` draws with state `ts`. `text_left`: the
+    /// page's text budget, shared with the forms the page draws.
+    fn enter(&mut self, resources: &Dict, at: usize, name: &[u8], ts: Ts, text_left: &mut usize) -> Result<(), EditError> {
+        let Some(form) = form_call(self.doc, resources, name, ts.ctm, &self.path, &mut self.budget) else { return Ok(()) };
         let ops = parse(&form.data).ops;
         // The form starts with the graphics state at its `Do`, its own matrix applied.
-        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, ..Carry::new() };
-        let stream = w.next_stream;
-        w.next_stream = w.next_stream.saturating_add(1);
+        let advance_gaps = self.want_gaps.then(Vec::new);
+        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, advance_gaps, ..Carry::new() };
+        let stream = self.next_stream;
+        self.next_stream = self.next_stream.saturating_add(1);
         if let Some(r) = form.obj {
-            w.path.push(r);
+            self.path.push(r);
         }
-        walk(w, &ops, form.resources(resources), &mut carry, &|_| stream)?;
+        self.calls.push(at);
+        self.walk(&ops, form.resources(resources), &mut carry, &|_| stream)?;
+        self.calls.pop();
         *text_left = carry.text_left;
         if form.obj.is_some() {
-            w.path.pop();
+            self.path.pop();
         }
         Ok(())
     }
+}
+
+/// The lines a page shows as it reads, including text drawn by form XObjects (which
+/// [`text_lines`] leaves out because it can only rewrite the page's own streams). Lines from a
+/// form carry a stream number past the page's streams, one per form drawn. The flag is `true`
+/// when forms past [`MAX_FORM_DEPTH`] or [`MAX_FORM_VISITS`] were left unread.
+pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine>, bool), EditError> {
     let p = page_dict(doc, page)?;
     let res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut decode = DecodeBudget::page();
     let streams = content_streams_within(doc, &p.dict, &mut decode)?;
-    let mut w = Walk { doc, lines: Vec::new(), next_stream: streams.len(), path: Vec::new(), budget: FormBudget::new(decode) };
+    let mut w = FormWalk::new(doc, streams.len(), FormBudget::new(decode), true, false);
     let mut carry = Carry::new();
     // Read the page's streams as the one stream they are, in one pass, as rendering and editing
     // do: a comment, an operator's operands or a marked-content sequence (its /ActualText too)
@@ -684,7 +743,7 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
     let pieces = Pieces::join(&streams.into_iter().map(|(_, data)| data).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
     let stream_of = |i: usize| ops.get(i).map_or(0, |op| pieces.pieces_of(op).0);
-    walk(&mut w, &ops, &res, &mut carry, &stream_of)?;
+    w.walk(&ops, &res, &mut carry, &stream_of)?;
     let mut lines = w.lines;
     // A visual-order Indic font draws pre-base vowel signs before their consonant.
     for l in lines.iter_mut().filter(|l| l.visual_order && !l.actual_text) {
