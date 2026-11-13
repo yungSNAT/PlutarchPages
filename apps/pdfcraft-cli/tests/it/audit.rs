@@ -5,10 +5,11 @@ use std::process::Command;
 
 const BIN: &str = env!("CARGO_BIN_EXE_pdfcraft-cli");
 
-/// Two US Letter pages with the same content. The second page is turned a quarter.
-fn fixture(body: &str, with_info: bool) -> Vec<u8> {
+/// Two US Letter pages with the same content. The second page is turned a quarter. `catalog` and
+/// `trailer` are extra entries for the catalogue and the trailer; object 7 is a small /Info.
+fn fixture(body: &str, catalog: &str, trailer: &str) -> Vec<u8> {
     let objs: Vec<String> = vec![
-        "<< /Type /Catalog /Pages 2 0 R >>".into(),
+        format!("<< /Type /Catalog /Pages 2 0 R{catalog} >>"),
         "<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 /MediaBox [0 0 612 792] >>".into(),
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".into(),
         "<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Resources << /Font << /F1 3 0 R >> >> >>".into(),
@@ -27,8 +28,7 @@ fn fixture(body: &str, with_info: bool) -> Vec<u8> {
     for o in offsets {
         out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
     }
-    let info = if with_info { " /Info 7 0 R" } else { "" };
-    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R{info} >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R{trailer} >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
     out
 }
 
@@ -42,7 +42,7 @@ fn audit_rectangles_match_the_tool_in_top_left_points() {
     let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let body = "BT /F1 24 Tf 100 700 Td (TOP SECRET) Tj ET\n0 g\n90 688 220 32 re f";
-    std::fs::write(dir.join("faux.pdf"), fixture(body, false)).unwrap();
+    std::fs::write(dir.join("faux.pdf"), fixture(body, "", "")).unwrap();
 
     let out = Command::new(BIN).arg("audit").arg(dir.join("faux.pdf")).output().unwrap();
     assert!(!out.status.success(), "findings must fail the audit");
@@ -72,7 +72,7 @@ fn advisory_findings_do_not_fail_the_cli_audit() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("advisory.pdf");
     let body = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET\n0 g 71 688 22 21 re f";
-    std::fs::write(&path, fixture(body, true)).unwrap();
+    std::fs::write(&path, fixture(body, "", " /Info 7 0 R")).unwrap();
 
     let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
@@ -80,5 +80,45 @@ fn advisory_findings_do_not_fail_the_cli_audit() {
     assert_eq!(report["count"], 2, "{report}");
     assert_eq!(report["findings"][0]["kind"], "retained-advance");
     assert_eq!(report["document_findings"][0]["kind"], "document-info");
+    std::fs::remove_file(path).unwrap();
+}
+
+/// A /Info or /Metadata of the wrong type, as a catalogue entry and a trailer entry, with the
+/// document finding each one gives.
+const MALFORMED: [(&str, &str, &str); 2] =
+    [("", " /Info (not a dictionary)", "malformed-document-info"), (" /Metadata (not a stream)", "", "malformed-xmp-metadata")];
+
+#[test]
+fn malformed_metadata_alone_does_not_fail_the_cli_audit() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("malformed-only.pdf");
+    for (catalog, trailer, kind) in MALFORMED {
+        std::fs::write(&path, fixture("BT /F1 24 Tf 100 700 Td (PUBLIC) Tj ET", catalog, trailer)).unwrap();
+
+        let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
+        assert!(out.status.success(), "{kind}: {}", String::from_utf8_lossy(&out.stderr));
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["count"], 0, "{report}");
+        assert_eq!(report["document_findings"], serde_json::json!([{ "kind": kind, "count": 1 }]), "{report}");
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn malformed_metadata_beside_covered_text_still_fails_the_cli_audit() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("malformed-leak.pdf");
+    for (catalog, trailer, kind) in MALFORMED {
+        std::fs::write(&path, fixture("BT /F1 24 Tf 100 700 Td (TOP SECRET) Tj ET\n0 g\n90 688 220 32 re f", catalog, trailer)).unwrap();
+
+        let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
+        assert!(!out.status.success(), "{kind}: covered text must fail the audit");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["count"], 2, "{report}");
+        assert!(report["findings"].as_array().unwrap().iter().all(|f| f["kind"] == "covered-text"), "{report}");
+        assert_eq!(report["document_findings"], serde_json::json!([{ "kind": kind, "count": 1 }]), "{report}");
+    }
     std::fs::remove_file(path).unwrap();
 }
