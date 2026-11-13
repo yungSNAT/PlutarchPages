@@ -99,6 +99,26 @@ fn null_metadata_does_not_suppress_page_findings() {
 }
 
 #[test]
+fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
+    use pdfcraft_cos::{Object, PdfString};
+    let bytes = one_page(b"BT /F1 20 Tf 100 700 Td (SECRET) Tj ET\n0 g 95 690 120 30 re f", "");
+    for indirect in [false, true] {
+        let mut doc = open(bytes.clone());
+        let value = Object::String(PdfString::literal("not a dictionary or stream"));
+        let value = if indirect { Object::Ref(doc.add(value)) } else { value };
+        doc.trailer_mut().set(b"Info".to_vec(), value.clone());
+        let root = doc.root().unwrap();
+        doc.update_dict(root, |d| d.set(b"Metadata".to_vec(), value)).unwrap();
+
+        let report = crate::audit_document(&doc).unwrap();
+        let kinds: Vec<_> = report.document_findings.iter().map(|f| (f.kind, f.count)).collect();
+        assert_eq!(kinds, [("malformed-document-info", 1), ("malformed-xmp-metadata", 1)]);
+        assert_eq!(report.page_findings.len(), 1);
+        assert_eq!(report.page_findings[0].kind, FindingKind::CoveredText);
+    }
+}
+
+#[test]
 fn audit_reports_a_covered_text_advance_only_after_the_displacement() {
     let text = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";
     let cover = "0 g 71 688 22 21 re f";

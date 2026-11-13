@@ -688,7 +688,7 @@ pub fn tools() -> Vec<ToolDef> {
         t(
             "doc_audit_redactions",
             "Audit potential redaction leaks",
-            "Find covered extractable text, unapplied redaction marks and large numeric text gaps aligned with a later opaque cover (retained width). Page findings include the 1-based page, kind, rectangle in displayed points and covered text when copying is allowed. Document findings report counts for earlier revisions and retained document information or XMP metadata without returning metadata values. These are exposure signals. Unreadable content is an error.",
+            "Find covered extractable text, unapplied redaction marks and large numeric text gaps aligned with a later opaque cover (retained width). Page findings include the 1-based page, kind, rectangle in displayed points and covered text when copying is allowed. Document findings report counts for earlier revisions and retained document information or XMP metadata without returning metadata values, and flag an /Info or /Metadata entry of the wrong type (malformed-document-info, malformed-xmp-metadata) while still auditing the pages. These are exposure signals. Unreadable content is an error.",
         )
         .ro()
         .with(schema(json!({ "doc": doc() }), &["doc"])),
