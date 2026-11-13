@@ -417,7 +417,7 @@ Every engine feature is reachable without the GUI, through one table of JSON-Sch
   { "mcpServers": { "pdfcraft": { "command": "pdfcraft-cli", "args": ["mcp", "--root", "/path/to/your/pdfs"] } } }
   ```
 
-  The Windows MSI installs `pdfcraft-cli.exe` beside the app without adding it to `PATH`, so give its full path as the `command`: `C:\\Program Files\\PlutarchPages\\pdfcraft-cli.exe` for the x64 MSI (JSON doubles each backslash).
+  The Windows MSI installs `pdfcraft-cli.exe` beside the app without adding it to `PATH`, so give its full path as the `command`. The MSI installs for the current user unless you choose 'Everyone on this computer', so the path is `C:\\Users\\<you>\\AppData\\Local\\Programs\\PlutarchPages\\pdfcraft-cli.exe`, or `C:\\Program Files\\PlutarchPages\\pdfcraft-cli.exe` when the x64 MSI was installed for everyone (JSON doubles each backslash).
 
   `--compact` shrinks the tool list the agent has to read: `tools/list` returns 15 core tools plus `tool_search` and `tool_call`, which find and run every other tool, so the list costs far fewer tokens. Every tool still works.
 
