@@ -213,10 +213,9 @@ fn is_amount(s: &str) -> bool {
     let s = s.strip_prefix('$').unwrap_or(s);
     let (whole, fraction) = s.split_once('.').unwrap_or((s, "0"));
     let digits = |p: &str| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
-    let whole_ok = match whole.split(',').collect::<Vec<_>>().as_slice() {
-        [only] => digits(only),
-        [first, rest @ ..] => first.len() <= 3 && digits(first) && rest.iter().all(|g| g.len() == 3 && digits(g)),
-        [] => false,
+    let whole_ok = match whole.split_once(',') {
+        None => digits(whole),
+        Some((first, rest)) => first.len() <= 3 && digits(first) && rest.split(',').all(|g| g.len() == 3 && digits(g)),
     };
     whole_ok && digits(fraction)
 }
