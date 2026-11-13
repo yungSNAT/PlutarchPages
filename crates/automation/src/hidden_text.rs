@@ -679,10 +679,50 @@ mod tests {
         let markup = |a: &mut Automation, find: &str| a.call("comment_add", &json!({ "doc": doc, "page": 1, "type": "highlight", "find": find }));
         assert!(markup(&mut a, "Second layer").is_ok());
         assert!(markup(&mut a, "First layer").is_err_and(|e| e.to_string().contains("was not found")), "markup over hidden text");
-        // Redaction search reads the layers as the file opens them, as the app's Search & Redact
-        // does, so a layer the view hides is still searched.
-        let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "find": "First layer" }));
-        assert_eq!(marked["marked"], 1, "{marked}");
+        // Redaction search reads every layer, as the app's Search & Redact does: the layer the
+        // view hides, and the one off as the file opens, each once.
+        for find in ["First layer", "Second layer"] {
+            let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "find": find }));
+            assert_eq!(marked["marked"], 1, "{find}: {marked}");
+        }
+    }
+
+    #[test]
+    fn redaction_removes_text_in_a_layer_off_as_the_file_opens() {
+        // "Second" is off as the file opens and never shown; /NotSecond shows only while it is off.
+        let content = format!(
+            "/OC /Second BDC {}EMC /OC /NotSecond BDC {}EMC {}",
+            line(300, 0, "Secret layer"),
+            line(200, 0, "Secret fallback"),
+            line(100, 0, "Public line")
+        );
+        let bytes = Pdf::new()
+            .obj("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] /D << /OFF [6 0 R] >> >> >>")
+            .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
+            .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+            .obj(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 400] /Contents 5 0 R \
+                 /Resources << /Font << /F1 3 0 R >> /Properties << /Second 6 0 R /NotSecond 7 0 R >> >> >>",
+            )
+            .stream("", &content)
+            .obj("<< /Type /OCG /Name (Second) >>")
+            .obj("<< /Type /OCMD /OCGs [6 0 R] /P /AllOff >>")
+            .build();
+        let mut a = Automation::new();
+        let doc = a.session.open("layers.pdf", None, Arc::new(bytes), None).unwrap().0;
+        // The page's text with "Second" off, then on.
+        let texts = |a: &mut Automation| {
+            [false, true].map(|visible| {
+                call(a, "layer_set", json!({ "doc": doc, "layer": "Second", "visible": visible }));
+                call(a, "text_extract", json!({ "doc": doc }))["pages"][0]["text"].as_str().unwrap().to_owned()
+            })
+        };
+        assert_eq!(texts(&mut a), ["Secret fallback\nPublic line", "Secret layer\nPublic line"]);
+        call(&mut a, "layer_set", json!({ "doc": doc, "layer": "Second", "visible": false }));
+        let marked = call(&mut a, "redact_mark", json!({ "doc": doc, "find": "Secret" }));
+        assert_eq!(marked["marked"], 2, "{marked}");
+        call(&mut a, "redact_apply", json!({ "doc": doc }));
+        assert!(texts(&mut a).iter().all(|t| !t.contains("Secret") && t.contains("Public line")), "{:?}", texts(&mut a));
     }
 
     #[test]

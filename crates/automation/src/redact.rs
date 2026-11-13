@@ -1,9 +1,11 @@
 //! Redaction tools: mark areas, text, patterns or whole pages for redaction, apply the marks
 //! (removing what they cover for good) or clear them.
 
+use std::collections::HashSet;
+
 use pdfcraft_engine::{
     Edit, Hidden, NewAnnotation, REDACT_MAX_WORDS, REDACTION_CODE_SETS, RedactPattern, RedactionCodeSet, Shape, Style, find_pattern, rect_quad,
-    redact_word_list,
+    redact_word_list, redaction_search_layers,
 };
 use serde_json::{Value, json};
 
@@ -105,23 +107,27 @@ impl Automation {
                 (None, None) => Vec::new(),
             };
             matched_words = needles.iter().map(|w| (w.clone(), 0)).collect();
-            let texts = self.page_texts(id, &pages)?;
             let info = self.doc(a)?.info.clone();
-            for (&p, text) in pages.iter().zip(&texts) {
-                let hits: Vec<(Option<usize>, _)> = match pattern {
-                    Some(pat) => text.find_with(|chars| find_pattern(pat, chars)).into_iter().map(|h| (None, h)).collect(),
-                    None => needles
-                        .iter()
-                        .enumerate()
-                        .flat_map(|(i, w)| text.find_for_redaction(w, case_sensitive, whole_words).into_iter().map(move |h| (Some(i), h)))
-                        .collect(),
-                };
-                for (word, h) in hits {
-                    let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| info.pages[p].view_rect_to_quad(r)).collect();
-                    if !quads.is_empty() {
-                        marks.push((p, quads));
-                        if let Some(m) = word.and_then(|i| matched_words.get_mut(i)) {
-                            m.1 += 1;
+            // Text found with both layer choices makes one mark.
+            let mut seen = HashSet::new();
+            for layers in redaction_search_layers(&info.layers) {
+                let texts = self.page_texts(id, &pages, &layers)?;
+                for (&p, text) in pages.iter().zip(&texts) {
+                    let hits: Vec<(Option<usize>, _)> = match pattern {
+                        Some(pat) => text.find_with(|chars| find_pattern(pat, chars)).into_iter().map(|h| (None, h)).collect(),
+                        None => needles
+                            .iter()
+                            .enumerate()
+                            .flat_map(|(i, w)| text.find_for_redaction(w, case_sensitive, whole_words).into_iter().map(move |h| (Some(i), h)))
+                            .collect(),
+                    };
+                    for (word, h) in hits {
+                        let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| info.pages[p].view_rect_to_quad(r)).collect();
+                        if !quads.is_empty() && seen.insert((p, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
+                            marks.push((p, quads));
+                            if let Some(m) = word.and_then(|i| matched_words.get_mut(i)) {
+                                m.1 += 1;
+                            }
                         }
                     }
                 }

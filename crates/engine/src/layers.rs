@@ -36,6 +36,19 @@ pub(crate) fn use_layer_choices(doc: &mut Document) {
     doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
 }
 
+/// The layer choices redaction search reads, as `RenderConfig::layers` takes them: the layers as
+/// the file opens them and, when one is off as it opens, every layer on. A search then finds the
+/// text of every layer whatever the view shows, and still finds text that shows only while a
+/// layer is off (a `/P /AllOff` membership, say). Text that shows only under some other mix of
+/// layers is not searched.
+pub fn redaction_search_layers(layers: &[Layer]) -> Vec<Arc<Vec<(i32, i32, bool)>>> {
+    let mut choices = vec![Arc::default()];
+    if layers.iter().any(|l| !l.initial) {
+        choices.push(Arc::new(layers.iter().map(|l| (l.id.0 as i32, l.id.1 as i32, true)).collect()));
+    }
+    choices
+}
+
 /// The optional content the view hides, worked out as the renderer does
 /// (`vendor/hayro-interpret/src/ocg.rs`): the default configuration (`/OCProperties /D`), then the
 /// view's choice for each layer in `info.layers`.

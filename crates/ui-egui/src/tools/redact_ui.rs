@@ -290,7 +290,8 @@ pub(crate) fn paint(painter: &egui::Painter, page: usize, view: &DocView, pointe
 }
 
 impl PdfCraftApp {
-    /// Mark every match of the search draft on every page; returns how many were marked.
+    /// Mark every match of the search draft on every page, searching with each of the engine's
+    /// `redaction_search_layers` whatever the view shows; returns how many were marked.
     pub fn redact_search(&mut self) -> usize {
         let Some((_, id)) = self.active_ids() else { return 0 };
         let Some(doc) = self.session.get(id) else { return 0 };
@@ -303,21 +304,26 @@ impl PdfCraftApp {
         if d.mode != SearchMode::Patterns && needles.is_empty() {
             return 0;
         }
-        let config = pdfcraft_render::RenderConfig { password: doc.password.as_deref().map(std::sync::Arc::from), ..Default::default() };
-        let mut r = pdfcraft_render::PageRenderer::new(doc.bytes.clone(), config);
         let mut edits = Vec::new();
         let author = self.comment_prefs.author.clone();
-        for (page, page_info) in doc.info.pages.iter().enumerate() {
-            let out = r.render(pdfcraft_render::RenderRequest { page, kind: pdfcraft_render::RequestKind::Text, scale: 1.0, ..Default::default() });
-            let Some(text) = out.text else { continue };
-            let hits = match d.mode {
-                SearchMode::Patterns => text.find_with(|c| pdfcraft_engine::find_pattern(d.pattern, c)),
-                _ => needles.iter().flat_map(|w| text.find_for_redaction(w, d.case_sensitive, d.whole_words)).collect(),
-            };
-            for h in hits {
-                let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| page_info.view_rect_to_quad(r)).collect();
-                if !quads.is_empty() {
-                    edits.push(self.redact_prefs.mark(page, quads, &author));
+        // Text found with both layer choices makes one mark.
+        let mut seen = std::collections::HashSet::new();
+        for layers in pdfcraft_engine::redaction_search_layers(&doc.info.layers) {
+            let config = pdfcraft_render::RenderConfig { password: doc.password.as_deref().map(std::sync::Arc::from), layers, ..Default::default() };
+            let mut r = pdfcraft_render::PageRenderer::new(doc.bytes.clone(), config);
+            for (page, page_info) in doc.info.pages.iter().enumerate() {
+                let out =
+                    r.render(pdfcraft_render::RenderRequest { page, kind: pdfcraft_render::RequestKind::Text, scale: 1.0, ..Default::default() });
+                let Some(text) = out.text else { continue };
+                let hits = match d.mode {
+                    SearchMode::Patterns => text.find_with(|c| pdfcraft_engine::find_pattern(d.pattern, c)),
+                    _ => needles.iter().flat_map(|w| text.find_for_redaction(w, d.case_sensitive, d.whole_words)).collect(),
+                };
+                for h in hits {
+                    let quads: Vec<[f64; 8]> = text.line_rects(h).into_iter().map(|r| page_info.view_rect_to_quad(r)).collect();
+                    if !quads.is_empty() && seen.insert((page, quads.iter().flatten().map(|v| v.to_bits()).collect::<Vec<_>>())) {
+                        edits.push(self.redact_prefs.mark(page, quads, &author));
+                    }
                 }
             }
         }
