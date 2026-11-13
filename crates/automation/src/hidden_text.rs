@@ -710,7 +710,7 @@ mod tests {
             line(100, 0, "Public line")
         );
         let bytes = Pdf::new()
-            .obj(&format!("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] {config} >> >>"))
+            .obj(format!("<< /Type /Catalog /Pages 2 0 R /OCProperties << /OCGs [6 0 R] {config} >> >>"))
             .obj("<< /Type /Pages /Kids [4 0 R] /Count 1 >>")
             .obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
             .obj(

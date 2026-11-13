@@ -208,7 +208,7 @@ mod tests {
         let layer = |n: u32, initial: bool| Layer { id: (n, 0), name: n.to_string(), visible: initial, initial };
         let passes =
             |layers: &[Layer]| -> Vec<Vec<bool>> { redaction_search_layers(layers).iter().map(|c| c.iter().map(|&(_, _, v)| v).collect()).collect() };
-        assert_eq!(passes(&[]), [vec![]]);
+        assert_eq!(passes(&[]), [Vec::<bool>::new()]);
         assert_eq!(passes(&[layer(1, true), layer(2, true)]), [vec![], vec![false, false]]);
         assert_eq!(passes(&[layer(1, false), layer(2, false)]), [vec![], vec![true, true]]);
         assert_eq!(passes(&[layer(1, true), layer(2, false)]), [vec![], vec![true, true], vec![false, false]]);
