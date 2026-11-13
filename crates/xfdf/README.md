@@ -34,7 +34,10 @@ let report = import(&mut doc, &bytes)?;                 // XFDF, FDF, XML, CSV o
 - **CSV export and spreadsheet merging** write a name or value a spreadsheet would run as a formula
   (after any leading whitespace or byte order mark, `=` or `@`, or `+` or `-` when it isn't a plain
   number) with a leading `'`, and quote cells with tabs as well as commas, quotes and line breaks.
-  CSV import keeps that `'`, since it can't be told apart from one the text already had.
+  For spreadsheets that split on `;` or tabs, or start a row at any line break, they also put a `'`
+  before text after a `;`, tab or line break that starts like a formula or a number, and a space
+  before a signed number in the first cell of a row with more cells. CSV import keeps the `'` and
+  the space, since they can't be told apart from ones the text already had.
 
 XML and XFDF exports preserve tabs and line breaks in field names and comment metadata with
 character references, so XML attribute normalization cannot change their identities.

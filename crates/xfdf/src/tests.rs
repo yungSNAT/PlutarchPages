@@ -634,8 +634,8 @@ fn one_field_exports_never_start_a_formula() {
         ("Name", "+1 555 0100", "Name\n'+1 555 0100\n"),
         ("Name", "-A1", "Name\n'-A1\n"),
         ("Name", " =1+1", "Name\n' =1+1\n"),
-        ("Name", "\t=1+1", "Name\n\"'\t=1+1\"\n"),
-        ("Name", "\r=1+1", "Name\n\"'\r=1+1\"\n"),
+        ("Name", "\t=1+1", "Name\n\"'\t'=1+1\"\n"),
+        ("Name", "\r=1+1", "Name\n\"'\r'=1+1\"\n"),
         ("Name", "=1,2", "Name\n\"'=1,2\"\n"),
         ("Name", "'=1+1", "Name\n'=1+1\n"),
         ("Name", "-12.5", "Name\n-12.5\n"),
@@ -1145,21 +1145,34 @@ fn xfdf_keeps_callout_leader_inset_and_ending() {
 }
 
 /// Cell text and how both CSV writers must write it: a cell a spreadsheet would run as a formula
-/// gets a leading `'`, before the usual quoting.
-const FORMULA_CELLS: [(&str, &str); 28] = [
+/// gets a leading `'`, before the usual quoting. `LEADING_CELLS` gives the ones written another way
+/// as the first of several cells in a record.
+const FORMULA_CELLS: [(&str, &str); 37] = [
     ("=1+1", "'=1+1"),
     ("@SUM(A1)", "'@SUM(A1)"),
     ("+1+cmd", "'+1+cmd"),
     ("-2+3", "'-2+3"),
-    // Leading whitespace is skipped before looking for a formula, as upstream does.
-    ("\t=1+1", "\"'\t=1+1\""),
-    ("\r=1+1", "\"'\r=1+1\""),
+    // Leading whitespace is skipped before looking for a formula, as upstream does. A tab or line
+    // break also starts a cell where a spreadsheet splits there (below), so what follows gets its own.
+    ("\t=1+1", "\"'\t'=1+1\""),
+    ("\r=1+1", "\"'\r'=1+1\""),
     (" =1+1", "' =1+1"),
     // Leading whitespace before ordinary text adds no `'`; tabs and line breaks are quoted.
     ("\tAda", "\"\tAda\""),
     ("\rAda", "\"\rAda\""),
-    // A tab is quoted, so a spreadsheet that also splits on tabs can't start a cell there.
-    ("Ada\t=1+1", "\"Ada\t=1+1\""),
+    // A spreadsheet that splits on `;` or tabs starts a cell after one, and some importers start a
+    // row at a line break inside quotes: quoting alone doesn't stop a formula there, nor does a
+    // quote mark. The new cell runs on into the next ones, so a number there gets a `'` too.
+    ("Ada\t=1+1", "\"Ada\t'=1+1\""),
+    ("x;=1+1", "x;'=1+1"),
+    ("x;-1", "x;'-1"),
+    ("x; +A1", "x;' +A1"),
+    ("x;\"@SUM(1)", "\"x;'\"\"@SUM(1)\""),
+    ("Ada\n=1+1", "\"Ada\n'=1+1\""),
+    ("Ada\r\n-1", "\"Ada\r\n'-1\""),
+    ("x;\t=1+1", "\"x;\t'=1+1\""),
+    ("a;b\tc", "\"a;b\tc\""),
+    ("x;'=1+1", "x;'=1+1"),
     // Plain numbers stay numbers.
     ("-12.50", "-12.50"),
     ("+3", "+3"),
@@ -1180,32 +1193,45 @@ const FORMULA_CELLS: [(&str, &str); 28] = [
     // Quoting still applies to the neutralised text.
     ("=1,2", "\"'=1,2\""),
     ("=\"x\"", "\"'=\"\"x\"\"\""),
-    // A lone carriage return is quoted, so a spreadsheet can't start a new row (and cell) there.
-    ("Ada\r=1+1", "\"Ada\r=1+1\""),
+    // A lone carriage return is quoted, and what follows it is neutralised like a line break.
+    ("Ada\r=1+1", "\"Ada\r'=1+1\""),
     ("a=b", "a=b"),
     ("Ada", "Ada"),
 ];
 
+/// A signed number that is the first of several cells in a record gets a leading space: a
+/// spreadsheet that splits on `;` or tabs would run it on into the next cell (`-1,5+A1` is the
+/// formula `=-1.5+A1`), and the space keeps that text whilst a comma split still reads a number.
+const LEADING_CELLS: [(&str, &str); 5] =
+    [("-12.50", " -12.50"), ("+3", " +3"), ("-1,234.56", "\" -1,234.56\""), ("-$50.00", " -$50.00"), ("+$12345", " +$12345")];
+
+/// How `text` is written as the first of several cells in a record.
+fn leading_cell(text: &str, cell: &'static str) -> &'static str {
+    LEADING_CELLS.iter().find(|(t, _)| *t == text).map_or(cell, |(_, c)| c)
+}
+
 #[test]
 fn exported_csv_cells_never_start_a_formula() {
     for (text, cell) in FORMULA_CELLS {
+        let lead = leading_cell(text, cell);
         // As a value.
         let mut doc = blank();
         set_value(&mut doc, "Name", &FieldValue::Text(text.into())).unwrap();
-        assert_eq!(export_data(&doc, Format::Csv), format!("Name,Agree,Pick\n{cell},Off,\n"), "value {text:?}");
+        assert_eq!(export_data(&doc, Format::Csv), format!("Name,Agree,Pick\n{lead},Off,\n"), "value {text:?}");
         // As a field name.
         let mut doc = blank();
         let field = fields(&doc).into_iter().find(|f| f.name == "Name").unwrap().obj;
         doc.update_dict(field, |d| d.set(b"T".to_vec(), PdfString::text(text))).unwrap();
-        assert_eq!(export_data(&doc, Format::Csv), format!("{cell},Agree,Pick\n,Off,\n"), "name {text:?}");
+        assert_eq!(export_data(&doc, Format::Csv), format!("{lead},Agree,Pick\n,Off,\n"), "name {text:?}");
     }
 }
 
 #[test]
 fn merged_spreadsheet_cells_never_start_a_formula() {
     for (text, cell) in FORMULA_CELLS {
+        let lead = leading_cell(text, cell);
         let csv = merge_csv(&[vec![("Name".to_string(), vec![text.to_string()]), (text.to_string(), vec!["v".to_string()])]]);
-        assert_eq!(csv, format!("Name,{cell}\n{cell},v\n"), "{text:?}");
+        assert_eq!(csv, format!("Name,{cell}\n{lead},v\n"), "{text:?}");
     }
     // Merged data files are read as text, so a leading byte order mark can reach the first cell; a
     // spreadsheet that drops it would see `=`. (Form values lose it before export.)
@@ -1213,14 +1239,38 @@ fn merged_spreadsheet_cells_never_start_a_formula() {
     assert_eq!(csv, "'\u{feff}=1+1\nv\n");
 }
 
-/// Import keeps a leading `'`: it can't tell the one export added from one the value had.
+/// Where a spreadsheet splits on `;`, `-1,5+A1` was the formula `=-1.5+A1`, and so was the same
+/// record after `x;`; a cell holding `;` or a line break could start any formula. A record of one
+/// cell can't run on, so its number is left alone.
+#[test]
+fn records_split_on_semicolons_or_line_breaks_never_start_a_formula() {
+    let row = |a: &str| vec![("a".to_string(), vec![a.to_string()]), ("b".to_string(), vec!["5+A1".to_string()])];
+    let wrong: Vec<_> = [
+        ("-1", " -1,5+A1"),
+        ("+3", " +3,5+A1"),
+        ("x;-1", "x;'-1,5+A1"),
+        ("x;=1+1;", "x;'=1+1;,5+A1"),
+        ("x\n=1+1\n", "\"x\n'=1+1\n\",5+A1"),
+        ("x\r=1+1", "\"x\r'=1+1\",5+A1"),
+    ]
+    .into_iter()
+    .filter(|(a, line)| merge_csv(&[row(a)]) != format!("a,b\n{line}\n"))
+    .collect();
+    assert!(wrong.is_empty(), "written otherwise: {wrong:?}");
+    assert_eq!(merge_csv(&[vec![("a".to_string(), vec!["-1".to_string()])]]), "a\n-1\n");
+}
+
+/// Import keeps a leading `'`, and the space before a leading signed number: it can't tell the ones
+/// export added from ones the value had.
 #[test]
 fn csv_import_keeps_a_leading_apostrophe() {
-    let mut src = blank();
-    set_value(&mut src, "Name", &FieldValue::Text("=1+1".into())).unwrap();
-    let mut dst = blank();
-    import(&mut dst, export_data(&src, Format::Csv).as_bytes()).unwrap();
-    assert_eq!(values(&dst)[0].1, ["'=1+1"]);
+    for (value, imported) in [("=1+1", "'=1+1"), ("-12.50", " -12.50")] {
+        let mut src = blank();
+        set_value(&mut src, "Name", &FieldValue::Text(value.into())).unwrap();
+        let mut dst = blank();
+        import(&mut dst, export_data(&src, Format::Csv).as_bytes()).unwrap();
+        assert_eq!(values(&dst)[0].1, [imported]);
+    }
 }
 
 #[test]
@@ -1914,7 +1964,7 @@ fn merged_cells_in_every_column_never_start_a_formula() {
     let csv = merge_csv(&[row]);
     let lines: Vec<&str> = csv.lines().collect();
     assert_eq!(lines[0], "\"'=HYPERLINK(\"\"http://x\"\")\",Total,Plus,Balance,\"\tName\"");
-    assert_eq!(lines[1], "'@SUM(A1),'-2+3,\"'\t+1+cmd\",-12.5,Ada");
+    assert_eq!(lines[1], "'@SUM(A1),'-2+3,\"'\t'+1+cmd\",-12.5,Ada");
 }
 
 fn imported_redact_mark(data: &[u8]) -> Dict {

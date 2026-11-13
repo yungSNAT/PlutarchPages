@@ -111,11 +111,7 @@ pub fn export_data(doc: &Document, format: Format) -> String {
             out.push_str("</fields>\n");
             out
         }
-        Format::Csv => format!(
-            "{}\n{}\n",
-            fields.iter().map(|f| csv_cell(&f.0)).collect::<Vec<_>>().join(","),
-            fields.iter().map(|f| csv_cell(&f.1)).collect::<Vec<_>>().join(",")
-        ),
+        Format::Csv => format!("{}\n{}\n", csv_record(fields.iter().map(|f| &f.0)), csv_record(fields.iter().map(|f| &f.1))),
         _ => {
             let clean = |s: &str| s.replace(['\t', '\n', '\r'], " ");
             format!(
@@ -174,7 +170,8 @@ pub fn data_values(bytes: &[u8]) -> Result<Vec<(String, Vec<String>)>, DataError
 ///
 /// The names and values come from other people's files, and spreadsheet programs evaluate a cell
 /// that starts with `=`, `+`, `-` or `@` (after any leading whitespace) as a formula. Such a cell
-/// is written with a leading `'`, which keeps it text; a plain number such as `-12.5` is not.
+/// is written with a leading `'`, which keeps it text; a plain number such as `-12.5` is not
+/// (`csv_cell` has the details).
 pub fn merge_csv(files: &[Vec<(String, Vec<String>)>]) -> String {
     let mut columns: Vec<&str> = Vec::new();
     for f in files {
@@ -184,12 +181,10 @@ pub fn merge_csv(files: &[Vec<(String, Vec<String>)>]) -> String {
             }
         }
     }
-    let mut out = columns.iter().map(|c| csv_cell(c)).collect::<Vec<_>>().join(",");
+    let mut out = csv_record(columns.iter());
     out.push('\n');
     for f in files {
-        let row: Vec<String> =
-            columns.iter().map(|c| f.iter().find(|(k, _)| k == c).map_or(String::new(), |(_, v)| csv_cell(&v.join(", ")))).collect();
-        out.push_str(&row.join(","));
+        out.push_str(&csv_record(columns.iter().map(|c| f.iter().find(|(k, _)| k == c).map_or(String::new(), |(_, v)| v.join(", ")))));
         out.push('\n');
     }
     out
@@ -220,14 +215,38 @@ fn is_amount(s: &str) -> bool {
     whole_ok && digits(fraction)
 }
 
+/// One CSV record, as both CSV writers write it.
+fn csv_record<S: AsRef<str>>(cells: impl ExactSizeIterator<Item = S>) -> String {
+    let leads = cells.len() > 1;
+    cells.enumerate().map(|(i, s)| csv_cell(s.as_ref(), leads && i == 0)).collect::<Vec<_>>().join(",")
+}
+
 /// One CSV cell, as both CSV writers write it. Names and values come from other people's files,
 /// so a cell that would run as a formula gets a leading `'`, which keeps it text; import leaves
 /// that `'` in place, since it can't be told from one the text already had. Then a cell with a
-/// comma, quote, tab or line break (a lone carriage return included) is quoted, so a spreadsheet
-/// that also splits on tabs can't start a new cell there.
-fn csv_cell(s: &str) -> String {
-    let s = if runs_as_formula(s) { format!("'{s}") } else { s.to_string() };
-    if s.contains([',', '"', '\t', '\n', '\r']) { format!("\"{}\"", s.replace('"', "\"\"")) } else { s }
+/// comma, quote, tab or line break (a lone carriage return included) is quoted.
+///
+/// A spreadsheet set to split records on `;` or tabs (as German regional settings split on `;`)
+/// ignores the commas, so a cell there runs on into the next ones: `-1,5+A1` is the formula
+/// `=-1.5+A1`. And some importers start a row at a line break even inside quotes. So text after a
+/// `;`, tab or line break that starts like a formula, a number included, also gets a `'` (after
+/// any whitespace or quote marks, which an importer may drop), and a signed number that `leads`
+/// a record (its first cell, with more to follow) gets a leading space, which Excel and Calc read
+/// as a number when they split on commas and as text when they don't.
+fn csv_cell(s: &str, leads: bool) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    if runs_as_formula(s) {
+        out.push('\'');
+    } else if leads && s.starts_with(['+', '-']) {
+        out.push(' ');
+    }
+    for (i, piece) in s.split_inclusive([';', '\t', '\n', '\r']).enumerate() {
+        if i > 0 && piece.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c == '"').starts_with(['=', '+', '-', '@']) {
+            out.push('\'');
+        }
+        out.push_str(piece);
+    }
+    if out.contains([',', '"', '\t', '\n', '\r']) { format!("\"{}\"", out.replace('"', "\"\"")) } else { out }
 }
 
 // Inspect the first logical record: tabs within quoted CSV cells are data. A quote
