@@ -34,7 +34,10 @@ let report = import(&mut doc, &bytes)?;                 // XFDF, FDF, XML, CSV o
 - **CSV export and spreadsheet merging** write a name or value a spreadsheet would run as a formula
   (after any leading whitespace or byte order mark, `=` or `@`, or `+` or `-` when it isn't a plain
   number) with a leading `'`, and quote cells with tabs as well as commas, quotes and line breaks.
-  CSV import keeps that `'`, since it can't be told apart from one the text already had.
+  For spreadsheets that split on `;` or tabs, or start a row at any line break, they also put a `'`
+  before text after a `;`, tab or line break that starts like a formula or a number, and a space
+  before a signed number in the first cell of a row with more cells. CSV import keeps the `'` and
+  the space, since they can't be told apart from ones the text already had.
 
 XML and XFDF exports preserve tabs and line breaks in field names and comment metadata with
 character references, so XML attribute normalization cannot change their identities.
@@ -45,8 +48,10 @@ including CDATA and character references. Nested-element and XFA interpretation 
 CSV export and spreadsheet merging quote tabs, and import distinguishes quoted tabs from TSV
 delimiters without changing field identities. Automatic detection of externally authored, ambiguous
 tables remains heuristic. Both write a cell that a spreadsheet would run as a formula (`=` or `@`,
-or `+` or `-` when it isn't a plain number) with a leading `'`; CSV import takes off the `'` that
-export added, so exported data imports back unchanged.
+or `+` or `-` when it isn't a plain number) with a leading `'`; CSV import keeps the `'`, so such a
+cell imports back with it. This was tested in Excel 365 and LibreOffice Calc across 29 import
+settings, but not in a German installation of Excel, Power Query, Excel for Mac or the web, Google
+Sheets or Numbers.
 
 Import replaces comments with the same `/NM` (and drops the replaced comment's pop-up), draws
 appearances PdfCraft can draw, and sets values through the form's own checks (formats,

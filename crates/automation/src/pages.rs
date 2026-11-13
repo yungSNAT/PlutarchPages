@@ -139,12 +139,11 @@ impl Automation {
         Ok(p as usize - 1)
     }
 
-    /// The text of `pages` (0-based) with the layers as the file opens them, whatever the view
-    /// shows, from the cache or extracted in parallel. Redaction search reads this text, as the
-    /// app's Search & Redact does: hiding a layer in the view never takes it out of a search, and
-    /// a layer hidden as the file opens is not searched even when the view shows it.
-    pub(crate) fn page_texts(&mut self, id: DocId, pages: &[usize]) -> Result<Vec<Arc<PageText>>> {
-        Ok(self.classed_page_texts(id, pages, &Layers::default())?.into_iter().map(|(text, _)| text).collect())
+    /// The text of `pages` (0-based) with the layer choices `layers`, from the cache or extracted
+    /// in parallel. Redaction search reads it with each of `redaction_search_layers`, as the app's
+    /// Search & Redact does, whatever the view shows.
+    pub(crate) fn page_texts(&mut self, id: DocId, pages: &[usize], layers: &Layers) -> Result<Vec<Arc<PageText>>> {
+        Ok(self.classed_page_texts(id, pages, layers)?.into_iter().map(|(text, _)| text).collect())
     }
 
     /// The text of `pages` with the layer choices `layers`, and the class of each glyph that
