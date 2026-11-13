@@ -232,15 +232,20 @@ fn csv_record<S: AsRef<str>>(cells: impl ExactSizeIterator<Item = S>) -> String 
 /// `;`, tab or line break that starts like a formula, a number included, also gets a `'` (after
 /// any whitespace or quote marks, which an importer may drop), and a signed number that `leads`
 /// a record (its first cell, with more to follow) gets a leading space, which Excel and Calc read
-/// as a number when they split on commas and as text when they don't.
+/// as a number when they split on commas and as text when they don't. The space goes after any
+/// byte order mark, which an importer drops at the start of a file.
 fn csv_cell(s: &str, leads: bool) -> String {
     let mut out = String::with_capacity(s.len() + 2);
+    let unmarked = s.trim_start_matches('\u{feff}');
+    let mut rest = s;
     if runs_as_formula(s) {
         out.push('\'');
-    } else if leads && s.starts_with(['+', '-']) {
+    } else if leads && unmarked.starts_with(['+', '-']) {
+        out.push_str(s.strip_suffix(unmarked).unwrap_or_default());
         out.push(' ');
+        rest = unmarked;
     }
-    for (i, piece) in s.split_inclusive([';', '\t', '\n', '\r']).enumerate() {
+    for (i, piece) in rest.split_inclusive([';', '\t', '\n', '\r']).enumerate() {
         if i > 0 && piece.trim_start_matches(|c: char| c.is_whitespace() || c == '\u{feff}' || c == '"').starts_with(['=', '+', '-', '@']) {
             out.push('\'');
         }

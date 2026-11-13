@@ -1248,6 +1248,8 @@ fn records_split_on_semicolons_or_line_breaks_never_start_a_formula() {
     let wrong: Vec<_> = [
         ("-1", " -1,5+A1"),
         ("+3", " +3,5+A1"),
+        // A byte order mark leading the file is dropped on import, so the space goes after it.
+        ("\u{feff}-1", "\u{feff} -1,5+A1"),
         ("x;-1", "x;'-1,5+A1"),
         ("x;=1+1;", "x;'=1+1;,5+A1"),
         ("x\n=1+1\n", "\"x\n'=1+1\n\",5+A1"),
