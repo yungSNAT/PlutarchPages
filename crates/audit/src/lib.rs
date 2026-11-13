@@ -273,13 +273,12 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // or substitute one must not hide text a cover sits on.
         let pdfcraft_edit::text::GlyphText { lines, gaps, unread_forms } =
             pdfcraft_edit::glyph_text(doc, page, report_advances).map_err(|e| AuditError::Text(n, e.to_string()))?;
-        let rects = cover::filled_rects(doc, &page.dict)?;
         if unread_forms {
             return Err(AuditError::UnreadForms(n));
         }
         budget.start_page(&lines);
         // 1. Opaque filled rectangles over extractable text.
-        for r in rects {
+        for r in cover::filled_rects(doc, &page.dict)? {
             if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |line| is_cover(&r, line))? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });

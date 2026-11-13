@@ -386,7 +386,8 @@ fn audit_fails_closed_on_undecodable_stream() {
 }
 
 /// A form XObject that draws itself nests without end. The walk can't follow it to the bottom, so
-/// the audit fails rather than report the page clean with a possible cover left unseen.
+/// the audit fails rather than report the page clean with a possible cover left unseen. The text
+/// walk, which reads the forms first, meets the cycle before the cover walk runs out of depth.
 #[test]
 fn self_drawing_form_fails_the_audit() {
     let mut b = Builder::new();
@@ -400,7 +401,7 @@ fn self_drawing_form_fails_the_audit() {
     );
     b.add(FONT);
     let result = audit_redactions(&open(b.build()));
-    assert!(matches!(result, Err(crate::AuditError::TooDeep)), "{result:?}");
+    assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{result:?}");
 }
 
 /// An applied redaction leaves the words around it and a `TJ` adjustment over the gap where the
@@ -1001,21 +1002,48 @@ fn text_inside_nested_forms_is_audited() {
 }
 
 /// A form whose text the audit can't read in full fails it, quickly, rather than report the page
-/// clean. X has no `/Resources`, so it is read with the page's, which name X itself and a Y that
-/// doesn't decode. (The cover walk doesn't follow a form's `Do` without its own resources.)
+/// clean: one that draws itself, one that doesn't decode, and a page drawing forms past the
+/// reader's visit limit. X has no `/Resources`, so it is read with the page's, which name X itself
+/// and Y.
 #[test]
 fn form_text_left_unread_fails_the_audit() {
     let start = std::time::Instant::now();
+    let many = format!("{}{FORM_BOX}", "/Y Do ".repeat(pdfcraft_edit::MAX_FORM_VISITS + 1));
     let cases = [
-        ("drawn inside itself", ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /X Do"), ("", "")),
-        ("undecodable", ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /Y Do"), ("/Filter /FlateDecode", "not deflated")),
+        ("drawn inside itself", format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /X Do"), ("", "")),
+        ("undecodable", format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /Y Do"), ("/Filter /FlateDecode", "not deflated")),
+        ("too many", many, (FORM_RESOURCES, ""), (FORM_RESOURCES, "")),
     ];
-    for (case, x, y) in cases {
-        let doc = page_with_forms(&format!("/X Do {FORM_BOX}"), [x, y]);
-        let result = audit_redactions(&doc);
+    for (case, content, x, y) in cases {
+        let result = audit_redactions(&page_with_forms(&content, [x, y]));
         assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{case}: {result:?}");
     }
     assert!(start.elapsed() < std::time::Duration::from_secs(10), "took {:?}", start.elapsed());
+}
+
+/// A form without `/Resources` is read with those it was drawn with, by the cover walk as by the
+/// text walk: X draws the text, then Y, which only the page's resources name, draws the box.
+#[test]
+fn cover_in_a_form_reached_through_inherited_resources_is_found() {
+    let doc = |x: &str| page_with_forms("/X Do", [("", x), (FORM_RESOURCES, FORM_BOX)]);
+    assert_eq!(covered(&doc(&format!("{FORM_SECRET} /Y Do"))), ["SECRET"]);
+    assert!(covered(&doc(&format!("/Y Do {FORM_SECRET}"))).is_empty());
+}
+
+/// A form whose `/Subtype` is a reference to `/Form` has its text read too (see
+/// `indirect_subtype_is_resolved` for its covers). Object 8 is the name.
+#[test]
+fn text_in_a_form_with_an_indirect_subtype_is_audited() {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add(&format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R {FORM_RESOURCES} >>"));
+    b.add_stream(format!("/X Do {FORM_BOX}").as_bytes());
+    b.add(FONT);
+    b.add_stream_with(FORM_SECRET.as_bytes(), &format!("/Type /XObject /Subtype 8 0 R /BBox [0 0 612 792] {FORM_RESOURCES}"));
+    b.add_stream_with(b"", "/Type /XObject /Subtype /Form /BBox [0 0 612 792]");
+    b.add("/Form");
+    assert_eq!(covered(&open(b.build())), ["SECRET"]);
 }
 
 /// A forward `TJ` adjustment a form draws under a later cover is a retained advance too.

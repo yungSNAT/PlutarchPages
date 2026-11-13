@@ -271,8 +271,10 @@ impl<'a> Walker<'a> {
                 (v.len() == 6 && v.iter().all(|x| x.is_finite())).then(|| Matrix([v[0], v[1], v[2], v[3], v[4], v[5]]))
             })
             .unwrap_or(Matrix::IDENTITY);
-        let (sub_resources, empty) = (dict.get(b"Resources").map(|o| self.doc.resolve(o)), Dict::new());
-        let sub_resources = sub_resources.as_deref().and_then(Object::as_dict).unwrap_or(&empty);
+        // A form without resources of its own reads those it is drawn with (PDF 1.1), as the text
+        // walk and the renderer do: a cover in a form it draws must not go unseen.
+        let sub_resources = dict.get(b"Resources").map(|o| self.doc.resolve(o));
+        let sub_resources = sub_resources.as_deref().and_then(Object::as_dict).unwrap_or(resources);
         if !self.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }

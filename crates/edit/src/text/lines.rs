@@ -616,7 +616,8 @@ pub(crate) fn form_call(
     }
     let form = doc.resolve(o);
     let Object::Stream(s) = &*form else { return None };
-    if s.dict.name(b"Subtype") != Some(b"Form") {
+    // The subtype may be a reference to the name, like any other value.
+    if s.dict.get(b"Subtype").map(|t| doc.resolve(t)).as_deref().and_then(Object::as_name) != Some(b"Form") {
         return None;
     }
     // Only a form left unread loses content; an image at the limit is still read by its caller.
@@ -672,8 +673,8 @@ impl<'a> FormWalk<'a> {
         let mut cache = HashMap::new();
         let mut invoked = Vec::new();
         let (mut held, none) = (None, Dict::new());
-        let properties = resource_dict(self.doc, resources, b"Properties", &mut held).unwrap_or(&none);
-        let shown = interpret(self.doc, ops, resources, &mut cache, carry, Some(&mut invoked), self.logical_text.then_some(properties))?;
+        let properties = if self.logical_text { Some(resource_dict(self.doc, resources, b"Properties", &mut held).unwrap_or(&none)) } else { None };
+        let shown = interpret(self.doc, ops, resources, &mut cache, carry, Some(&mut invoked), properties)?;
         for gap in carry.advance_gaps.take().into_iter().flatten() {
             let paint_pos = self.calls.iter().copied().chain(std::iter::once(gap.op)).collect();
             self.gaps.push(GlyphAdvanceGap { paint_pos, from: gap.from, to: gap.to });
