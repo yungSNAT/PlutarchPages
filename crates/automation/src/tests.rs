@@ -54,13 +54,13 @@ fn search_cache_stays_bounded_reextracts_and_follows_edits_and_close() {
         eprintln!("200 pages searched: {} resident pages, {} estimated bytes (budget 16384)", a.texts.len(), a.texts.bytes());
     }
     assert!(a.texts.get(first, 0, &Default::default()).is_none());
-    let text = a.page_texts(first, &[0]).unwrap().remove(0);
+    let text = a.page_texts(first, &[0], &Default::default()).unwrap().remove(0);
     assert_eq!(text.plain_text(), "Page 1");
-    let again = a.page_texts(first, &[0]).unwrap().remove(0);
+    let again = a.page_texts(first, &[0], &Default::default()).unwrap().remove(0);
     assert!(Arc::ptr_eq(&text, &again), "cache hits reuse glyph storage");
     assert!(a.texts.bytes() <= 16 * 1024);
     json(&mut a, "page_delete", json!({ "doc": first.0, "pages": [1] }));
-    let edited = a.page_texts(first, &[0]).unwrap().remove(0);
+    let edited = a.page_texts(first, &[0], &Default::default()).unwrap().remove(0);
     assert_eq!(edited.plain_text(), "Page 2");
     assert!(!Arc::ptr_eq(&text, &edited));
     json(&mut a, "doc_close", json!({ "doc": first.0, "discard_changes": true }));
@@ -72,7 +72,7 @@ fn search_cache_stays_bounded_reextracts_and_follows_edits_and_close() {
 fn strict_text_collection_refuses_partial_results_but_keeps_successful_pages() {
     let mut a = Automation::new();
     let id = search_document(&mut a, 3);
-    let error = a.page_texts(id, &[0, 3, 1]).unwrap_err();
+    let error = a.page_texts(id, &[0, 3, 1], &Default::default()).unwrap_err();
     assert!(error.to_string().contains("page 4: page is out of range"));
     assert!(a.texts.get(id, 0, &Default::default()).is_some());
     assert!(a.texts.get(id, 1, &Default::default()).is_some(), "successful extraction after the failed entry is retained");

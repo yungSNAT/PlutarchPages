@@ -36,6 +36,25 @@ pub(crate) fn use_layer_choices(doc: &mut Document) {
     doc.renderer = RenderPool::new(doc.display.clone(), render_threads(), display_config(&doc.config));
 }
 
+/// The layer choices redaction search reads, as `RenderConfig::layers` takes them: the layers as
+/// the file opens them, every layer on when one is off as it opens, and every layer off when one
+/// is on as it opens. Each is a full extraction, so keep all three. A search then finds content
+/// that one group `/OCGs` lists shows, either on or off, and content under any `/P` policy
+/// (AllOn, AnyOn, AnyOff, AllOff) over listed groups. Not searched: text that shows only under a
+/// mix of layers on and off (a `/VE` expression or nested memberships), and text that a group
+/// `/OCGs` does not list hides as the file opens, since such a group keeps its `/D` state.
+pub fn redaction_search_layers(layers: &[Layer]) -> Vec<Arc<Vec<(i32, i32, bool)>>> {
+    let every = |visible: bool| Arc::new(layers.iter().map(|l| (l.id.0 as i32, l.id.1 as i32, visible)).collect());
+    let mut choices = vec![Arc::default()];
+    if layers.iter().any(|l| !l.initial) {
+        choices.push(every(true));
+    }
+    if layers.iter().any(|l| l.initial) {
+        choices.push(every(false));
+    }
+    choices
+}
+
 /// The optional content the view hides, worked out as the renderer does
 /// (`vendor/hayro-interpret/src/ocg.rs`): the default configuration (`/OCProperties /D`), then the
 /// view's choice for each layer in `info.layers`.
@@ -178,4 +197,20 @@ pub(crate) fn apply_layer_state(layers: &mut [Layer], groups: &[Vec<(u32, u16)>]
         }
     }
     layers.iter().zip(before).any(|(l, was)| l.visible != was)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redaction_searches_all_on_or_all_off_only_when_that_differs_from_the_file() {
+        let layer = |n: u32, initial: bool| Layer { id: (n, 0), name: n.to_string(), visible: initial, initial };
+        let passes =
+            |layers: &[Layer]| -> Vec<Vec<bool>> { redaction_search_layers(layers).iter().map(|c| c.iter().map(|&(_, _, v)| v).collect()).collect() };
+        assert_eq!(passes(&[]), [Vec::<bool>::new()]);
+        assert_eq!(passes(&[layer(1, true), layer(2, true)]), [vec![], vec![false, false]]);
+        assert_eq!(passes(&[layer(1, false), layer(2, false)]), [vec![], vec![true, true]]);
+        assert_eq!(passes(&[layer(1, true), layer(2, false)]), [vec![], vec![true, true], vec![false, false]]);
+    }
 }
