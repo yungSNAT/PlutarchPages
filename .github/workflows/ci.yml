@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    # `labeled` so that adding `full-ci` to an open PR starts a run with Windows in it.
+    # `labeled` so that adding `full-ci` to an open PR starts a run with Windows and coverage in it.
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
 
@@ -92,9 +92,14 @@ jobs:
         cargo test --workspace --locked
 
   # The gate's tests run inside the pinned shared workflow, which keeps no report, so the Linux
-  # tests run once more here under instrumentation for Codecov. Not part of the gate.
+  # tests run once more here under instrumentation for Codecov. Not part of the gate. On a pull
+  # request that repeat was about half the run's runner time, so it runs there only with `full-ci`;
+  # every push to main still reports coverage.
   coverage:
-    if: github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+    if: >-
+      github.event_name != 'pull_request'
+      || (contains(github.event.pull_request.labels.*.name, 'full-ci')
+      && (github.event.action != 'labeled' || github.event.label.name == 'full-ci'))
     name: Test coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 60
