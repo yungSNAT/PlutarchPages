@@ -35,7 +35,7 @@ page paints after drawing the form. So are those of the appearance a viewer pain
 annotation that isn't Hidden or NoView (its normal appearance, or the state `/AS` names), mapped
 onto the annotation's rectangle and painted after the page in `/Annots` order. An appearance
 without resources of its own uses the page's. A Square is checked by the box its appearance
-paints, or by its interior colour when the appearance paints none. A Redact mark's own
+paints, and by its interior colour for text no such box lies over. A Redact mark's own
 appearance is not text it leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
