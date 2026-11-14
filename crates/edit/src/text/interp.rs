@@ -510,6 +510,9 @@ pub(super) struct Carry {
     /// Bytes of glyph text the rest of the page may still produce (see [`MAX_PAGE_TEXT`]).
     pub(super) text_left: usize,
     pub(super) advance_gaps: Option<Vec<AdvanceGap>>,
+    /// Whether a font an ExtGState's `/Font` sets is read: the glyph reading, which must see every
+    /// glyph a viewer shows. The editor reads the fonts `Tf` selects, which it can rewrite.
+    pub(super) state_fonts: bool,
 }
 
 /// A forward `TJ` displacement, from baseline start to baseline end in page user space.
@@ -557,6 +560,7 @@ impl Carry {
             layer_scopes: Vec::new(),
             text_left: MAX_PAGE_TEXT,
             advance_gaps: None,
+            state_fonts: false,
         }
     }
 }
@@ -573,6 +577,30 @@ pub(super) type CachedFont = (Rc<Metrics>, Option<String>, Result<Option<f64>, S
 pub(super) enum FontKey {
     Object(ObjRef),
     Named(Option<ObjRef>, Vec<u8>),
+    /// A font written out in an ExtGState's `/Font`, by the form whose resources hold the ExtGState
+    /// and the ExtGState's name there.
+    State(Option<ObjRef>, Vec<u8>),
+}
+
+/// Make `font`, named `name` and read once a page under `key`, the font `ts` shows text in.
+fn select_font(doc: &Document, cache: &mut HashMap<FontKey, CachedFont>, ts: &mut Ts, key: FontKey, name: &[u8], font: Option<&Object>) {
+    let (m, face, vertical) = cache.entry(key).or_insert_with(|| {
+        #[cfg(test)]
+        FONT_READS.with(|c| c.set(c.get().saturating_add(1)));
+        let dict = font.and_then(|f| doc.resolve(f).as_dict().cloned());
+        let metrics = dict.as_ref().map_or_else(Metrics::fallback, |d| Metrics::from_dict(doc, d));
+        let vertical = dict.as_ref().map_or(Ok(None), |d| vertical_advance(doc, d).map_err(|e| e.to_string()));
+        let face = dict.filter(is_type3_fallback).map(|_| metrics.base_font.clone());
+        (Rc::new(metrics), face, vertical)
+    });
+    ts.font = Some((name.to_vec(), m.clone()));
+    ts.face = face.clone();
+    // Which way the glyphs advance is unknown (§9.7.4.3): list the font's text as
+    // horizontal and record why, so editing its lines is refused (not the page).
+    match vertical {
+        Ok(v) => (ts.vertical, ts.unreadable) = (*v, None),
+        Err(e) => (ts.vertical, ts.unreadable) = (None, Some(Rc::from(e.as_str()))),
+    }
 }
 
 #[cfg(test)]
@@ -941,6 +969,7 @@ pub(super) fn interpret(
     let fonts_res = super::resource_dict(doc, resources, b"Font", &mut held_fonts).unwrap_or(&none);
     let states = super::resource_dict(doc, resources, b"ExtGState", &mut held_states).unwrap_or(&none);
     let mut out: Vec<Shown> = Vec::new();
+    let state_fonts = carry.state_fonts;
     let mut ts = carry.ts.clone();
     let mut at_bt = (0usize, ts.clone());
     let mut stack: Vec<(Ts, Matrix, Matrix)> = std::mem::take(&mut carry.stack);
@@ -1030,23 +1059,7 @@ pub(super) fn interpret(
                         Some(Object::Ref(r)) => FontKey::Object(*r),
                         _ => FontKey::Named(resources_of, name.to_vec()),
                     };
-                    let (m, face, vertical) = cache.entry(key).or_insert_with(|| {
-                        #[cfg(test)]
-                        FONT_READS.with(|c| c.set(c.get().saturating_add(1)));
-                        let dict = font.and_then(|f| doc.resolve(f).as_dict().cloned());
-                        let metrics = dict.as_ref().map_or_else(Metrics::fallback, |d| Metrics::from_dict(doc, d));
-                        let vertical = dict.as_ref().map_or(Ok(None), |d| vertical_advance(doc, d).map_err(|e| e.to_string()));
-                        let face = dict.filter(is_type3_fallback).map(|_| metrics.base_font.clone());
-                        (Rc::new(metrics), face, vertical)
-                    });
-                    ts.font = Some((name.to_vec(), m.clone()));
-                    ts.face = face.clone();
-                    // Which way the glyphs advance is unknown (§9.7.4.3): list the font's text as
-                    // horizontal and record why, so editing its lines is refused (not the page).
-                    match vertical {
-                        Ok(v) => (ts.vertical, ts.unreadable) = (*v, None),
-                        Err(e) => (ts.vertical, ts.unreadable) = (None, Some(Rc::from(e.as_str()))),
-                    }
+                    select_font(doc, cache, &mut ts, key, name, font);
                 }
             }
             b"Tc" => ts.char_spacing = op.num(0).unwrap_or(0.0),
@@ -1076,6 +1089,17 @@ pub(super) fn interpret(
                         ts.dash = d;
                     }
                     ts.line_cap = line_cap(doc, params.get(b"LC")).unwrap_or(ts.line_cap);
+                    // A font the ExtGState sets, `[font size]` (§8.4.5), as `Tf` sets one: the glyph
+                    // reading sees the text a viewer shows in it. The line names the ExtGState.
+                    let set = params.get(b"Font").filter(|_| state_fonts).map(|f| doc.resolve(f));
+                    if let (Some(name), Some([font, size])) = (op.name(0), set.as_deref().and_then(Object::as_array).map(Vec::as_slice)) {
+                        ts.size = doc.resolve(size).as_f64().unwrap_or(ts.size);
+                        let key = match font {
+                            Object::Ref(r) => FontKey::Object(*r),
+                            _ => FontKey::State(resources_of, name.to_vec()),
+                        };
+                        select_font(doc, cache, &mut ts, key, name, Some(font));
+                    }
                 }
             }
             b"Do" => {

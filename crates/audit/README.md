@@ -39,7 +39,10 @@ paints, and by its interior colour for text no such box lies over. A Redact mark
 appearance is not text it leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
-which a viewer paints once for each tile or glyph. Such text fails the audit.
+which a viewer paints once for each tile or glyph. Such text fails the audit. A font counts
+whether `Tf` selects it or a graphics state's `/Font` sets it (`gs`), and its text is read either
+way. A Type 3 font or tiling pattern without resources of its own reads those where it is used,
+so it is checked with each set it is used with.
 
 Limits, by design and documented rather than hidden:
 

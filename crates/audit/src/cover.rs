@@ -9,9 +9,10 @@
 //! viewer paints for the page's annotations. Anything fancier (other filled paths, shadings,
 //! patterns) is out of scope and documented as such.
 //!
-//! The walk also reads the glyph procedures of the Type 3 fonts the content selects and the cells
-//! of the tiling patterns it paints with. Placing what those draw would mean painting each glyph
-//! or tile where it lands, so the audit reads no text there: one that shows text fails it.
+//! The walk also reads the glyph procedures of the Type 3 fonts the content selects (with `Tf`,
+//! or an ExtGState's `/Font`) and the cells of the tiling patterns it paints with, once for each
+//! set of resources they read. Placing what those draw would mean painting each glyph or tile
+//! where it lands, so the audit reads no text there: one that shows text fails it.
 //!
 //! Paint order: a page's content streams are one stream in pieces (ISO 32000-2 §7.8.2), so they
 //! are parsed joined and walked once with a single graphics state — state set in an earlier
@@ -141,6 +142,34 @@ impl Default for Gs {
     }
 }
 
+/// Whose resources a stream reads its names from: the page's (which its appearances without
+/// resources of their own read too), or an object's. A Type 3 font or a tiling pattern without
+/// resources of its own reads those where it is used, so what its glyphs or cell draw depends on
+/// them.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Owner {
+    Page,
+    Object(ObjRef),
+    /// Resources of a stream written in place, which has no object number to tell them apart by:
+    /// never taken as seen before.
+    Unnumbered,
+}
+
+impl Owner {
+    /// The owner of the resources `entry` names for the stream `stream`: the resources dictionary
+    /// itself when it is an object of its own, which streams can share, otherwise the stream.
+    fn of(entry: &Object, stream: Option<ObjRef>) -> Owner {
+        entry.as_ref().or(stream).map_or(Owner::Unnumbered, Owner::Object)
+    }
+}
+
+/// The resources a stream reads names from, and whose they are.
+#[derive(Clone, Copy)]
+struct Res<'r> {
+    dict: &'r Dict,
+    owner: Owner,
+}
+
 struct Walker<'a> {
     doc: &'a Document,
     out: Vec<FilledRect>,
@@ -155,9 +184,9 @@ struct Walker<'a> {
     /// Set inside a glyph procedure or a pattern cell: rectangles there are not covers, and text
     /// fails the audit.
     inside: Option<Unplaced>,
-    /// The fonts and patterns already looked at on this page: a Type 3 font selected on every
-    /// line is walked once.
-    walked: HashSet<ObjRef>,
+    /// The fonts and patterns already looked at on this page, with the owner of the resources they
+    /// were read with: a Type 3 font selected on every line is walked once for each set.
+    walked: HashSet<(ObjRef, Owner)>,
 }
 
 impl<'a> Walker<'a> {
@@ -178,9 +207,10 @@ impl<'a> Walker<'a> {
         ops: impl Iterator<Item = Op>,
         gs: &mut Gs,
         stack: &mut Vec<Gs>,
-        resources: &Dict,
+        res: Res<'_>,
         calls: &mut Vec<usize>,
     ) -> Result<(), AuditError> {
+        let resources = res.dict;
         let mut path = Path::Empty;
         for (i, op) in ops.enumerate() {
             self.bump()?;
@@ -232,6 +262,7 @@ impl<'a> Walker<'a> {
                 b"gs" => {
                     if let Some(name) = op.name(0) {
                         gs.alpha = ext_alpha(self.doc, resources, name);
+                        self.walk_state_font(name, i, res, calls)?;
                     }
                 }
                 b"re" => {
@@ -285,13 +316,14 @@ impl<'a> Walker<'a> {
                     }
                 }
                 b"Tf" => {
-                    if let Some(name) = op.name(0) {
-                        self.walk_type3(name, i, resources, calls)?;
+                    let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
+                    if let Some(entry) = op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
+                        self.walk_type3(entry, i, res, calls)?;
                     }
                 }
                 b"scn" | b"SCN" => {
                     if let Some(name) = op.operands.last().and_then(Object::as_name) {
-                        self.walk_pattern(name, i, resources, calls)?;
+                        self.walk_pattern(name, i, res, calls)?;
                     }
                 }
                 b"S" | b"s" | b"n" => path = Path::Empty,
@@ -302,7 +334,7 @@ impl<'a> Walker<'a> {
                             return Err(AuditError::TooDeep);
                         }
                         calls.push(i);
-                        self.walk_xobject(name, gs, resources, calls)?;
+                        self.walk_xobject(name, gs, res, calls)?;
                         calls.pop();
                     }
                     path = Path::Empty;
@@ -315,9 +347,9 @@ impl<'a> Walker<'a> {
 
     /// Follow a form XObject read-only, composing its matrix onto the current CTM. State
     /// changes inside never leak out. `calls` ends with the `Do` that draws it.
-    fn walk_xobject(&mut self, name: &[u8], gs: &Gs, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+    fn walk_xobject(&mut self, name: &[u8], gs: &Gs, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
         // Borrowed, not copied: a `Do` must not cost the size of the whole XObject table.
-        let xobjects = resources.get(b"XObject").map(|o| self.doc.resolve(o));
+        let xobjects = res.dict.get(b"XObject").map(|o| self.doc.resolve(o));
         let Some(entry) = xobjects.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
         let resolved = self.doc.resolve(entry);
         let Object::Stream(stream) = &*resolved else { return Ok(()) };
@@ -328,8 +360,8 @@ impl<'a> Walker<'a> {
         let matrix = form_matrix(self.doc, dict);
         // A form without resources of its own reads those it is drawn with (PDF 1.1), as the text
         // walk and the renderer do: a cover in a form it draws must not go unseen.
-        let sub_resources = dict.get(b"Resources").map(|o| self.doc.resolve(o));
-        let sub_resources = sub_resources.as_deref().and_then(Object::as_dict).unwrap_or(resources);
+        let own = dict.get(b"Resources").map(|o| (o, self.doc.resolve(o)));
+        let sub = own_resources(own.as_ref(), entry.as_ref()).unwrap_or(res);
         if !self.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
@@ -339,56 +371,75 @@ impl<'a> Walker<'a> {
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
         let mut sub_stack = Vec::new();
-        self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub_resources, calls)
+        self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub, calls)
     }
 
-    /// Walk the glyph procedures of the Type 3 font `Tf` selects at index `at` as unplaced content,
-    /// once a page.
-    fn walk_type3(&mut self, name: &[u8], at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
-        let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
-        let Some(entry) = fonts.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
-        if entry.as_ref().is_some_and(|r| !self.walked.insert(r)) {
-            return Ok(());
+    /// Walk the font an ExtGState's `/Font` sets (ISO 32000-2 §8.4.5) as [`Walker::walk_type3`]
+    /// walks one `Tf` selects: the `gs` at index `at` names the ExtGState.
+    fn walk_state_font(&mut self, name: &[u8], at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        // Borrowed, not copied: a `gs` must not cost the size of the whole ExtGState table.
+        let states = res.dict.get(b"ExtGState").map(|o| self.doc.resolve(o));
+        let Some(state) = states.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| self.doc.resolve(o)) else { return Ok(()) };
+        let font = state.as_dict().and_then(|d| d.get(b"Font")).map(|o| self.doc.resolve(o));
+        match font.as_deref().and_then(Object::as_array).and_then(|a| a.first()) {
+            Some(entry) => self.walk_type3(entry, at, res, calls),
+            None => Ok(()),
         }
+    }
+
+    /// Walk the glyph procedures of the Type 3 font `entry`, selected at index `at`, as unplaced
+    /// content, once a page for each set of resources they read.
+    fn walk_type3(&mut self, entry: &Object, at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
         let font = self.doc.resolve(entry);
         let Some(font) = font.as_dict() else { return Ok(()) };
-        if crate::subtype(self.doc, font)?.as_deref() != Some(b"Type3") {
+        // A font without `/Resources` reads those where it is selected (PDF 1.1), as its glyphs
+        // are drawn there: a glyph drawing a form that only some of them name shows its text there
+        // alone.
+        let own = font.get(b"Resources").map(|o| (o, self.doc.resolve(o)));
+        let glyph = own_resources(own.as_ref(), entry.as_ref()).unwrap_or(res);
+        if !self.first_walk(entry, glyph.owner) || crate::subtype(self.doc, font)?.as_deref() != Some(b"Type3") {
             return Ok(());
         }
-        // shortcut: a font without `/Resources` reads those where it is first selected on the page,
-        // and is not walked again with others. Key `walked` by those resources too if a glyph's text
-        // depends on them.
-        let own = font.get(b"Resources").map(|o| self.doc.resolve(o));
-        let glyph_resources = own.as_deref().and_then(Object::as_dict).unwrap_or(resources);
         let procs = font.get(b"CharProcs").map(|o| self.doc.resolve(o));
-        for (_, glyph) in procs.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
+        for (_, proc) in procs.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
             // Each entry looked at counts as an operator: fonts sharing one large table of entries
             // that aren't streams would otherwise be read past every bound.
             self.bump()?;
-            if let Object::Stream(s) = &*self.doc.resolve(glyph) {
-                self.walk_unplaced(Unplaced::Glyph, s, at, glyph_resources, calls)?;
+            if let Object::Stream(s) = &*self.doc.resolve(proc) {
+                self.walk_unplaced(Unplaced::Glyph, s, at, glyph, calls)?;
             }
         }
         Ok(())
     }
 
     /// Walk the cell of the tiling pattern `scn` paints with at index `at` as unplaced content,
-    /// once a page. Shading patterns are dictionaries and draw no text.
-    fn walk_pattern(&mut self, name: &[u8], at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
-        let patterns = resources.get(b"Pattern").map(|o| self.doc.resolve(o));
+    /// once a page for each set of resources it reads. Shading patterns are dictionaries and draw
+    /// no text.
+    fn walk_pattern(&mut self, name: &[u8], at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        let patterns = res.dict.get(b"Pattern").map(|o| self.doc.resolve(o));
         let Some(entry) = patterns.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
-        if entry.as_ref().is_some_and(|r| !self.walked.insert(r)) {
-            return Ok(());
-        }
         let pattern = self.doc.resolve(entry);
         let Object::Stream(s) = &*pattern else { return Ok(()) };
-        let own = s.dict.get(b"Resources").map(|o| self.doc.resolve(o));
-        self.walk_unplaced(Unplaced::Pattern, s, at, own.as_deref().and_then(Object::as_dict).unwrap_or(resources), calls)
+        let own = s.dict.get(b"Resources").map(|o| (o, self.doc.resolve(o)));
+        let cell = own_resources(own.as_ref(), entry.as_ref()).unwrap_or(res);
+        if !self.first_walk(entry, cell.owner) {
+            return Ok(());
+        }
+        self.walk_unplaced(Unplaced::Pattern, s, at, cell, calls)
+    }
+
+    /// Whether the font or pattern `entry` is yet to be walked with the resources `owner` holds.
+    /// One written in place, or read with resources written in place, is walked each time.
+    fn first_walk(&mut self, entry: &Object, owner: Owner) -> bool {
+        match entry.as_ref() {
+            Some(r) if owner != Owner::Unnumbered => self.walked.insert((r, owner)),
+            _ => true,
+        }
     }
 
     /// Walk `stream`, reached from the operator at index `at`, as `unplaced` content: forms it
     /// draws count towards the depth and the page's budget like any other.
-    fn walk_unplaced(&mut self, unplaced: Unplaced, stream: &Stream, at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+    fn walk_unplaced(&mut self, unplaced: Unplaced, stream: &Stream, at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
         if calls.len() >= MAX_DEPTH {
             return Err(AuditError::TooDeep);
         }
@@ -398,11 +449,19 @@ impl<'a> Walker<'a> {
         let data = self.budget.decode_strict(stream)?;
         let outer = self.inside.replace(unplaced);
         calls.push(at);
-        self.walk_ops(ops(&data), &mut Gs::default(), &mut Vec::new(), resources, calls)?;
+        self.walk_ops(ops(&data), &mut Gs::default(), &mut Vec::new(), res, calls)?;
         calls.pop();
         self.inside = outer;
         Ok(())
     }
+}
+
+/// The resources a stream has of its own, `own` being its `/Resources` entry and what that
+/// resolves to, `stream` its object number: `None` when it has none that are a dictionary, and it
+/// reads those where it is used.
+fn own_resources<'r>(own: Option<&'r (&Object, Arc<Object>)>, stream: Option<ObjRef>) -> Option<Res<'r>> {
+    let (entry, resolved) = own?;
+    Some(Res { dict: resolved.as_dict()?, owner: Owner::of(entry, stream) })
 }
 
 /// A form's `/Matrix`, or the identity when it has none that is usable.
@@ -461,7 +520,8 @@ pub fn filled_rects(doc: &Document, page: &Dict, n: usize, appearances: &[&Appea
     let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
     // decode budget, and the walk only ever needs the current one.
-    w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, &resources, &mut Vec::new())?;
+    let page = Res { dict: &resources, owner: Owner::Page };
+    w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, page, &mut Vec::new())?;
     for a in appearances {
         let Object::Stream(form) = &*a.form else { return Err(AuditError::BadAppearance(n)) };
         if !w.budget.enter_form() {
@@ -469,10 +529,10 @@ pub fn filled_rects(doc: &Document, page: &Dict, n: usize, appearances: &[&Appea
         }
         let data = w.budget.decode_strict(form)?;
         // An appearance without resources of its own reads the page's, as a form does.
-        let own = form.dict.get(b"Resources").map(|o| doc.resolve(o));
+        let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
         w.layer = a.layer;
         let mut gs = Gs { ctm: a.ctm, ..Gs::default() };
-        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own.as_deref().and_then(Object::as_dict).unwrap_or(&resources), &mut Vec::new())?;
+        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
     Ok(w.out)
 }
