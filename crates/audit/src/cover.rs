@@ -5,18 +5,26 @@
 //! whose four corners form an axis-aligned rectangle in user space is the same shape and counts
 //! too (#1510). Graphics state tracked here is deliberately small: the CTM stack (`q`/`Q`/`cm`),
 //! the non-stroking color (`g`/`rg`/`k`) and the non-stroking alpha from ExtGState (`gs` reading
-//! `/ca`). Form XObjects are followed read-only with a depth cap. Anything fancier (other filled paths, shadings, patterns) is
-//! out of scope and documented as such.
+//! `/ca`). Form XObjects are followed read-only with a depth cap, and so are the appearances a
+//! viewer paints for the page's annotations. Anything fancier (other filled paths, shadings,
+//! patterns) is out of scope and documented as such.
+//!
+//! The walk also reads the glyph procedures of the Type 3 fonts the content selects and the cells
+//! of the tiling patterns it paints with. Placing what those draw would mean painting each glyph
+//! or tile where it lands, so the audit reads no text there: one that shows text fails it.
 //!
 //! Paint order: a page's content streams are one stream in pieces (ISO 32000-2 §7.8.2), so they
 //! are parsed joined and walked once with a single graphics state — state set in an earlier
 //! stream (a `cm`, a fill color) is still in force in the later ones. Each rectangle records the
-//! position of the fill operator that painted it, as `TextLine::paint_order` gives a line's: the
-//! index of each `Do` that drew the form it is in, outermost first, then the fill's index in the
+//! position of the fill operator that painted it: its layer (0 for the page's content, then one
+//! for each annotation, in `/Annots` order), then as `TextLine::paint_order` gives a line's, the
+//! index of each `Do` that drew the form it is in, outermost first, and the fill's index in the
 //! joined stream or the form's. Positions compare lexicographically in paint order.
 
+use std::collections::HashSet;
+
 use pdfcraft_content::{Matrix, Op, Pieces, ops};
-use pdfcraft_cos::{DecodeBudget, Dict, Document, Object};
+use pdfcraft_cos::{DecodeBudget, Dict, Document, ObjRef, Object, Stream};
 
 use crate::AuditError;
 
@@ -34,9 +42,39 @@ pub struct FilledRect {
     pub rect: [f64; 4],
     /// The fill color as sRGB-ish `[r, g, b]` (CMYK is converted approximately).
     pub rgb: [f64; 3],
-    /// Paint position: the `Do` operators that drew it, outermost first, then the fill operator's
-    /// index (see the module documentation).
+    /// Paint position: its layer, the `Do` operators that drew it, outermost first, then the fill
+    /// operator's index (see the module documentation).
     pub pos: Vec<usize>,
+}
+
+/// The appearance a viewer paints for an annotation: its form and where the form lands.
+pub struct Appearance {
+    /// The annotation's place in paint order, after the page's content (layer 0).
+    pub layer: usize,
+    /// The entry naming the form, as a page's `/Contents` names a stream.
+    pub contents: Object,
+    pub form: Stream,
+    /// The form's `/Matrix` composed with the one that maps its box onto the annotation's.
+    pub ctm: Matrix,
+    /// Whether its filled rectangles count as covers: not for a Square whose interior colour the
+    /// audit already counts, so its box is one finding.
+    pub covers: bool,
+}
+
+/// Content the audit cannot place on the page, walked only for the text it shows.
+#[derive(Clone, Copy)]
+enum Unplaced {
+    Pattern,
+    Glyph,
+}
+
+impl Unplaced {
+    fn what(self) -> &'static str {
+        match self {
+            Unplaced::Pattern => "a tiling pattern",
+            Unplaced::Glyph => "a Type 3 glyph",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -111,6 +149,17 @@ struct Walker<'a> {
     /// Decoded bytes and form entries left for the page, its forms included: spending either
     /// fails the audit.
     budget: DecodeBudget,
+    /// The 0-based page, for errors.
+    page: usize,
+    /// The layer being walked and whether its rectangles count (see [`Appearance::covers`]).
+    layer: usize,
+    covers: bool,
+    /// Set inside a glyph procedure or a pattern cell: rectangles there are not covers, and text
+    /// fails the audit.
+    inside: Option<Unplaced>,
+    /// The fonts and patterns already looked at on this page: a Type 3 font selected on every
+    /// line is walked once.
+    walked: HashSet<ObjRef>,
 }
 
 impl<'a> Walker<'a> {
@@ -226,9 +275,26 @@ impl<'a> Walker<'a> {
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
                     if let Some(r) = std::mem::replace(&mut path, Path::Empty).rect()
                         && gs.alpha >= 1.0
+                        && self.covers
+                        && self.inside.is_none()
                     {
-                        let pos = calls.iter().copied().chain(std::iter::once(i)).collect();
+                        let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(i)).collect();
                         self.out.push(FilledRect { rect: r, rgb: gs.fill, pos });
+                    }
+                }
+                b"Tj" | b"TJ" | b"'" | b"\"" => {
+                    if let Some(unplaced) = self.inside {
+                        return Err(AuditError::UncheckedText(self.page, unplaced.what()));
+                    }
+                }
+                b"Tf" => {
+                    if let Some(name) = op.name(0) {
+                        self.walk_type3(name, i, resources, calls)?;
+                    }
+                }
+                b"scn" | b"SCN" => {
+                    if let Some(name) = op.operands.last().and_then(Object::as_name) {
+                        self.walk_pattern(name, i, resources, calls)?;
                     }
                 }
                 b"S" | b"s" | b"n" => path = Path::Empty,
@@ -262,15 +328,7 @@ impl<'a> Walker<'a> {
         if crate::subtype(self.doc, dict)?.as_deref() != Some(b"Form") {
             return Ok(());
         }
-        let matrix = dict
-            .get(b"Matrix")
-            .map(|o| self.doc.resolve(o))
-            .and_then(|o| o.as_array().map(|a| a.to_vec()))
-            .and_then(|a| {
-                let v: Vec<f64> = a.iter().filter_map(|o| self.doc.resolve(o).as_f64()).collect();
-                (v.len() == 6 && v.iter().all(|x| x.is_finite())).then(|| Matrix([v[0], v[1], v[2], v[3], v[4], v[5]]))
-            })
-            .unwrap_or(Matrix::IDENTITY);
+        let matrix = form_matrix(self.doc, dict);
         // A form without resources of its own reads those it is drawn with (PDF 1.1), as the text
         // walk and the renderer do: a cover in a form it draws must not go unseen.
         let sub_resources = dict.get(b"Resources").map(|o| self.doc.resolve(o));
@@ -286,6 +344,77 @@ impl<'a> Walker<'a> {
         let mut sub_stack = Vec::new();
         self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub_resources, calls)
     }
+
+    /// Walk the glyph procedures of the Type 3 font `Tf` selects at index `at` as unplaced content,
+    /// once a page.
+    fn walk_type3(&mut self, name: &[u8], at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
+        let Some(entry) = fonts.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
+        if entry.as_ref().is_some_and(|r| !self.walked.insert(r)) {
+            return Ok(());
+        }
+        let font = self.doc.resolve(entry);
+        let Some(font) = font.as_dict() else { return Ok(()) };
+        if crate::subtype(self.doc, font)?.as_deref() != Some(b"Type3") {
+            return Ok(());
+        }
+        // shortcut: a font without `/Resources` reads those where it is first selected on the page,
+        // and is not walked again with others. Key `walked` by those resources too if a glyph's text
+        // depends on them.
+        let own = font.get(b"Resources").map(|o| self.doc.resolve(o));
+        let glyph_resources = own.as_deref().and_then(Object::as_dict).unwrap_or(resources);
+        let procs = font.get(b"CharProcs").map(|o| self.doc.resolve(o));
+        for (_, glyph) in procs.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
+            if let Object::Stream(s) = &*self.doc.resolve(glyph) {
+                self.walk_unplaced(Unplaced::Glyph, s, at, glyph_resources, calls)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Walk the cell of the tiling pattern `scn` paints with at index `at` as unplaced content,
+    /// once a page. Shading patterns are dictionaries and draw no text.
+    fn walk_pattern(&mut self, name: &[u8], at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        let patterns = resources.get(b"Pattern").map(|o| self.doc.resolve(o));
+        let Some(entry) = patterns.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
+        if entry.as_ref().is_some_and(|r| !self.walked.insert(r)) {
+            return Ok(());
+        }
+        let pattern = self.doc.resolve(entry);
+        let Object::Stream(s) = &*pattern else { return Ok(()) };
+        let own = s.dict.get(b"Resources").map(|o| self.doc.resolve(o));
+        self.walk_unplaced(Unplaced::Pattern, s, at, own.as_deref().and_then(Object::as_dict).unwrap_or(resources), calls)
+    }
+
+    /// Walk `stream`, reached from the operator at index `at`, as `unplaced` content: forms it
+    /// draws count towards the depth and the page's budget like any other.
+    fn walk_unplaced(&mut self, unplaced: Unplaced, stream: &Stream, at: usize, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        if calls.len() >= MAX_DEPTH {
+            return Err(AuditError::TooDeep);
+        }
+        if !self.budget.enter_form() {
+            return Err(AuditError::TooManyForms);
+        }
+        let data = self.budget.decode_strict(stream)?;
+        let outer = self.inside.replace(unplaced);
+        calls.push(at);
+        self.walk_ops(ops(&data), &mut Gs::default(), &mut Vec::new(), resources, calls)?;
+        calls.pop();
+        self.inside = outer;
+        Ok(())
+    }
+}
+
+/// A form's `/Matrix`, or the identity when it has none that is usable.
+pub(crate) fn form_matrix(doc: &Document, dict: &Dict) -> Matrix {
+    dict.get(b"Matrix")
+        .map(|o| doc.resolve(o))
+        .and_then(|o| o.as_array().map(|a| a.to_vec()))
+        .and_then(|a| {
+            let v: Vec<f64> = a.iter().filter_map(|o| doc.resolve(o).as_f64()).collect();
+            (v.len() == 6 && v.iter().all(|x| x.is_finite())).then(|| Matrix([v[0], v[1], v[2], v[3], v[4], v[5]]))
+        })
+        .unwrap_or(Matrix::IDENTITY)
 }
 
 /// The `x y` operands of `m`/`l`, mapped to user space.
@@ -304,12 +433,13 @@ fn ext_alpha(doc: &Document, resources: &Dict, name: &[u8]) -> f64 {
     alpha.filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0)).unwrap_or(1.0)
 }
 
-/// Every opaque filled rectangle drawn by a page's content (and its form XObjects), with paint
-/// positions. A page's content streams are walked once, joined, with one graphics state, so
-/// state set in an earlier stream is still in force in the later ones. Any content stream that
-/// cannot be decoded, or content and forms that decode or enter past one page's [`DecodeBudget`]
-/// in all, is an audit failure, never an empty result.
-pub fn filled_rects(doc: &Document, page: &Dict) -> Result<Vec<FilledRect>, AuditError> {
+/// Every opaque filled rectangle drawn by the content of page `n` (and its form XObjects), then by
+/// its annotations' `appearances`, with paint positions. A page's content streams are walked once,
+/// joined, with one graphics state, so state set in an earlier stream is still in force in the
+/// later ones. Any content stream that cannot be decoded, content, forms and appearances that
+/// decode or enter past one page's [`DecodeBudget`] in all, or text in a glyph procedure or
+/// pattern cell is an audit failure, never an empty result.
+pub fn filled_rects(doc: &Document, page: &Dict, n: usize, appearances: &[&Appearance]) -> Result<Vec<FilledRect>, AuditError> {
     let resources = page.get(b"Resources").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let contents: Vec<Object> = match page.get(b"Contents") {
         None => Vec::new(),
@@ -326,11 +456,21 @@ pub fn filled_rects(doc: &Document, page: &Dict) -> Result<Vec<FilledRect>, Audi
         }
     }
     let pieces = Pieces::join(&streams);
-    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget };
+    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, covers: true, inside: None, walked: HashSet::new() };
     let mut gs = Gs::default();
     let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
     // decode budget, and the walk only ever needs the current one.
     w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, &resources, &mut Vec::new())?;
+    for a in appearances {
+        if !w.budget.enter_form() {
+            return Err(AuditError::TooManyForms);
+        }
+        let data = w.budget.decode_strict(&a.form)?;
+        let own = a.form.dict.get(b"Resources").map(|o| doc.resolve(o));
+        (w.layer, w.covers) = (a.layer, a.covers);
+        let mut gs = Gs { ctm: a.ctm, ..Gs::default() };
+        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own.as_deref().and_then(Object::as_dict).unwrap_or(&Dict::new()), &mut Vec::new())?;
+    }
     Ok(w.out)
 }

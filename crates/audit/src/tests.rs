@@ -386,8 +386,7 @@ fn audit_fails_closed_on_undecodable_stream() {
 }
 
 /// A form XObject that draws itself nests without end. The walk can't follow it to the bottom, so
-/// the audit fails rather than report the page clean with a possible cover left unseen. The text
-/// walk, which reads the forms first, meets the cycle before the cover walk runs out of depth.
+/// the audit fails rather than report the page clean with a possible cover left unseen.
 #[test]
 fn self_drawing_form_fails_the_audit() {
     let mut b = Builder::new();
@@ -401,7 +400,7 @@ fn self_drawing_form_fails_the_audit() {
     );
     b.add(FONT);
     let result = audit_redactions(&open(b.build()));
-    assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{result:?}");
+    assert!(matches!(result, Err(crate::AuditError::TooDeep)), "{result:?}");
 }
 
 /// An applied redaction leaves the words around it and a `TJ` adjustment over the gap where the
@@ -843,7 +842,7 @@ fn copy_restricted_documents_withhold_covered_text() {
 fn withheld_covered_text_is_not_assembled() {
     const PAGE: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
     let doc = open(one_page(b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n", ""));
-    let lines = pdfcraft_edit::text_lines(&doc, 0).expect("text");
+    let lines: Vec<_> = pdfcraft_edit::text_lines(&doc, 0).expect("text").into_iter().map(|line| crate::Painted { at: Vec::new(), line }).collect();
     let mut budget = crate::Budget { limits: crate::Limits::DEFAULT, comparisons: 0, page_cost: 0, covered_text: 0 };
     budget.start_page(&lines);
     let withheld = budget.hidden_text(&lines, false, &PAGE, |_| true).expect("within the budget");
@@ -874,7 +873,7 @@ fn repeated_stream_references_share_one_decode_budget() {
     let mut doc = Document::new_empty();
     let spaces = doc.add(Stream::flate(Dict::new(), &vec![b' '; 1 << 20]));
     let contents: Dict = [(b"Contents".to_vec(), Object::Array(vec![Object::Ref(spaces); 300]))].into_iter().collect();
-    assert!(crate::cover::filled_rects(&doc, &contents).is_err(), "repeated content streams");
+    assert!(crate::cover::filled_rects(&doc, &contents, 0, &[]).is_err(), "repeated content streams");
 
     let form_dict: Dict = [(b"Subtype".to_vec(), Object::Name(b"Form".to_vec()))].into_iter().collect();
     let form = doc.add(Stream::flate(form_dict, &vec![b' '; 1 << 20]));
@@ -882,7 +881,7 @@ fn repeated_stream_references_share_one_decode_budget() {
     let xobjects: Dict = [(b"X".to_vec(), Object::Ref(form))].into_iter().collect();
     let resources: Dict = [(b"XObject".to_vec(), Object::Dict(xobjects))].into_iter().collect();
     let page: Dict = [(b"Contents".to_vec(), Object::Ref(draws)), (b"Resources".to_vec(), Object::Dict(resources))].into_iter().collect();
-    assert!(crate::cover::filled_rects(&doc, &page).is_err(), "repeated form draws");
+    assert!(crate::cover::filled_rects(&doc, &page, 0, &[]).is_err(), "repeated form draws");
 }
 
 #[test]
@@ -896,7 +895,7 @@ fn form_entries_past_the_page_allowance_fail_the_audit() {
     let xobjects: Dict = [(b"X".to_vec(), Object::Ref(form))].into_iter().collect();
     let resources: Dict = [(b"XObject".to_vec(), Object::Dict(xobjects))].into_iter().collect();
     let page: Dict = [(b"Contents".to_vec(), Object::Ref(draws)), (b"Resources".to_vec(), Object::Dict(resources))].into_iter().collect();
-    assert!(matches!(crate::cover::filled_rects(&doc, &page), Err(crate::AuditError::TooManyForms)));
+    assert!(matches!(crate::cover::filled_rects(&doc, &page, 0, &[]), Err(crate::AuditError::TooManyForms)));
 }
 
 /// Copying a covered line's text walks all of it, padding included, so a long padded line under
@@ -1003,21 +1002,21 @@ fn text_inside_nested_forms_is_audited() {
 
 /// A form whose text the audit can't read in full fails it, quickly, rather than report the page
 /// clean: one that draws itself, one that doesn't decode, and a page drawing forms past the
-/// reader's visit limit. X has no `/Resources`, so it is read with the page's, which name X itself
-/// and Y.
+/// reader's visit limit. The cover walk, which goes first, stops each. X has no `/Resources`, so
+/// it is read with the page's, which name X itself and Y.
 #[test]
 fn form_text_left_unread_fails_the_audit() {
+    use crate::AuditError::{Cos, TooDeep, TooManyForms};
     let start = std::time::Instant::now();
     let many = format!("{}{FORM_BOX}", "/Y Do ".repeat(pdfcraft_edit::MAX_FORM_VISITS + 1));
-    let cases = [
-        ("drawn inside itself", format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /X Do"), ("", "")),
-        ("undecodable", format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /Y Do"), ("/Filter /FlateDecode", "not deflated")),
-        ("too many", many, (FORM_RESOURCES, ""), (FORM_RESOURCES, "")),
-    ];
-    for (case, content, x, y) in cases {
-        let result = audit_redactions(&page_with_forms(&content, [x, y]));
-        assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{case}: {result:?}");
-    }
+    let undecodable = ("/Filter /FlateDecode", "not deflated");
+    let result = |content: &str, x, y| audit_redactions(&page_with_forms(content, [x, y]));
+    let drawn_inside_itself = result(&format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /X Do"), ("", ""));
+    assert!(matches!(drawn_inside_itself, Err(TooDeep)), "{drawn_inside_itself:?}");
+    let undecodable = result(&format!("/X Do {FORM_BOX}"), ("", "BT /F1 24 Tf 100 700 Td (SECRET) Tj ET /Y Do"), undecodable);
+    assert!(matches!(undecodable, Err(Cos(pdfcraft_cos::CosError::Filter(_)))), "{undecodable:?}");
+    let too_many = result(&many, (FORM_RESOURCES, ""), (FORM_RESOURCES, ""));
+    assert!(matches!(too_many, Err(TooManyForms)), "{too_many:?}");
     assert!(start.elapsed() < std::time::Duration::from_secs(10), "took {:?}", start.elapsed());
 }
 
@@ -1034,7 +1033,7 @@ fn form_text_past_the_page_decode_budget_fails_the_audit() {
     };
     assert_eq!(covered(&doc(253)), ["SECRET"], "within the budget, X is read");
     let result = audit_redactions(&doc(255));
-    assert!(matches!(result, Err(crate::AuditError::UnreadForms(0))), "{result:?}");
+    assert!(matches!(result, Err(crate::AuditError::Cos(pdfcraft_cos::CosError::Filter(_)))), "{result:?}");
 }
 
 /// The forms a page draws share its 16 MiB text budget too: a `/PCSoft` marker's `/N` is charged
@@ -1084,4 +1083,240 @@ fn retained_advance_inside_a_form_is_reported() {
     };
     assert_eq!(kinds("/X Do 0 g 71 688 22 21 re f"), [FindingKind::RetainedAdvance]);
     assert!(kinds("0 g 71 688 22 21 re f /X Do").is_empty());
+}
+
+/// R2847: a form of more operators than the page's bound fails the audit before the text walk,
+/// which holds a stream's operators all at once, reads it. Read first, X would be read whole and
+/// then found drawing itself.
+#[test]
+fn an_oversized_form_fails_before_its_text_is_read() {
+    let x = format!("{}/X Do", "n\n".repeat(2_000_001));
+    let result = audit_redactions(&page_with_forms("/X Do", [(FORM_RESOURCES, &x), (FORM_RESOURCES, "")]));
+    assert!(matches!(result, Err(crate::AuditError::TooManyOps)), "{result:?}");
+}
+
+/// R2847: audit errors name pages from 1, as a reader does; their fields keep the 0-based index.
+#[test]
+fn audit_errors_number_pages_from_1() {
+    use crate::AuditError::{BadAppearance, Text, UncheckedText, UnreadForms};
+    assert_eq!(Text(0, "x".into()).to_string(), "page 1: x");
+    assert_eq!(UnreadForms(1).to_string(), "page 2: the text of a form XObject could not be read");
+    assert_eq!(UncheckedText(2, "a tiling pattern").to_string(), "page 3: a tiling pattern shows text, which the audit does not read");
+    assert_eq!(BadAppearance(3).to_string(), "page 4: an annotation's appearance has no usable /BBox");
+}
+
+/// Resources naming the font, for a page, an appearance or a pattern.
+const F1: &str = "/Resources << /Font << /F1 5 0 R >> >>";
+
+/// The body of a stream object for [`page_with`]: `entries` in its dictionary, then `data`.
+fn stream(entries: &str, data: &str) -> String {
+    format!("<< /Length {} {entries} >>\nstream\n{data}\nendstream", data.len())
+}
+
+/// An appearance form of `bbox` with [`F1`], drawing `data`.
+fn appearance(bbox: &str, data: &str) -> String {
+    stream(&format!("/Type /XObject /Subtype /Form /BBox [{bbox}] {F1}"), data)
+}
+
+/// One page drawing `content`, its dictionary ending with `page_extra`, and `objects` from object 6
+/// on (5 is [`FONT`]).
+fn page_with(page_extra: &str, content: &str, objects: &[String]) -> Document {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add(&format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R {page_extra} >>"));
+    b.add_stream(content.as_bytes());
+    b.add(FONT);
+    for o in objects {
+        b.add(o);
+    }
+    open(b.build())
+}
+
+/// R2846: text an annotation's appearance draws is audited like the page's. The appearance's box,
+/// 200 by 50, is mapped onto the annotation's, 400 by 100 at (100, 600), and a cover it paints
+/// after the text hides the text.
+#[test]
+fn text_in_an_annotation_appearance_is_audited() {
+    let doc = |data: &str| {
+        let annot = "<< /Type /Annot /Subtype /FreeText /Rect [100 600 500 700] /AP << /N 6 0 R >> >>".to_string();
+        page_with("/Annots [7 0 R]", "", &[appearance("0 0 200 50", data), annot])
+    };
+    let text = "BT /F1 24 Tf 5 15 Td (SECRET) Tj ET";
+    let findings = audit_redactions(&doc(&format!("{text} 0 g 0 0 200 50 re f"))).unwrap();
+    let found: Vec<_> = findings.iter().map(|f| (f.covered_text.as_str(), f.rect)).collect();
+    assert_eq!(found, [("SECRET", [100.0, 600.0, 500.0, 700.0])]);
+    assert!(covered(&doc(&format!("0 g 0 0 200 50 re f {text}"))).is_empty());
+}
+
+/// A cover an annotation's appearance paints hides the page's text, painted before it, unless
+/// the annotation is Hidden.
+#[test]
+fn page_text_under_an_appearance_cover_is_found() {
+    let doc = |extra: &str| {
+        let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 220 32]", "0 g 0 0 220 32 re f");
+        let annot = format!("<< /Type /Annot /Subtype /Stamp /Rect [100 688 320 720] /AP << /N 6 0 R >> {extra} >>");
+        page_with(&format!("{F1} /Annots [7 0 R]"), FORM_SECRET, &[ap, annot])
+    };
+    assert_eq!(covered(&doc("")), ["SECRET"]);
+    assert!(covered(&doc("/F 2")).is_empty());
+}
+
+/// Annotations are painted in `/Annots` order: a Square after the annotation whose appearance
+/// draws the text hides it, one before doesn't, and a Hidden annotation's text isn't drawn.
+#[test]
+fn appearance_text_and_squares_follow_the_annotation_order() {
+    let doc = |annots: &str, extra: &str| {
+        let text = format!("<< /Type /Annot /Subtype /FreeText /Rect [0 0 612 792] /AP << /N 6 0 R >> {extra} >>");
+        let square = "<< /Type /Annot /Subtype /Square /Rect [95 685 325 725] /IC [0 0 0] >>".to_string();
+        page_with(annots, "", &[appearance("0 0 612 792", FORM_SECRET), text, square])
+    };
+    assert_eq!(covered(&doc("/Annots [7 0 R 8 0 R]", "")), ["SECRET"]);
+    assert!(covered(&doc("/Annots [8 0 R 7 0 R]", "")).is_empty());
+    assert!(covered(&doc("/Annots [7 0 R 8 0 R]", "/F 2")).is_empty());
+}
+
+/// Of an annotation's appearances for each state, the one `/AS` names is painted; without one,
+/// none is.
+#[test]
+fn the_appearance_state_shown_is_audited() {
+    let doc = |state: &str| {
+        let annot = format!("<< /Type /Annot /Subtype /Widget /Rect [0 0 612 792] /AP << /N << /On 6 0 R /Off 7 0 R >> >> {state} >>");
+        page_with("/Annots [8 0 R]", "", &[appearance("0 0 612 792", &format!("{FORM_SECRET} {FORM_BOX}")), appearance("0 0 612 792", ""), annot])
+    };
+    assert_eq!(covered(&doc("/AS /On")), ["SECRET"]);
+    assert!(covered(&doc("/AS /Off")).is_empty());
+    assert!(covered(&doc("")).is_empty());
+}
+
+/// A Square counted by its interior colour paints the same box in its appearance: one finding, not
+/// two. Without an interior colour, the box its appearance paints is the cover.
+#[test]
+fn a_square_and_its_appearance_are_one_finding() {
+    let doc = |colour: &str| {
+        let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 230 40]", "0 g 0 0 230 40 re f");
+        let square = format!("<< /Type /Annot /Subtype /Square /Rect [95 685 325 725] {colour} /AP << /N 6 0 R >> >>");
+        page_with(&format!("{F1} /Annots [7 0 R]"), FORM_SECRET, &[ap, square])
+    };
+    assert_eq!(covered(&doc("/IC [0 0 0]")), ["SECRET"]);
+    assert_eq!(covered(&doc("")), ["SECRET"]);
+}
+
+/// A Redact mark's own appearance, a label here, is not text the mark leaves under it: the mark
+/// over the page's text names that text alone, and one over no text is no finding.
+#[test]
+fn a_redact_mark_does_not_report_its_own_appearance() {
+    let marks = |content: &str| {
+        let ap = appearance("0 0 230 40", "BT /F1 12 Tf 5 15 Td (REDACTED) Tj ET");
+        let mark = "<< /Type /Annot /Subtype /Redact /Rect [95 685 325 725] /AP << /N 6 0 R >> >>".to_string();
+        let findings = audit_redactions(&page_with(&format!("{F1} /Annots [7 0 R]"), content, &[ap, mark])).expect("audit must run");
+        findings.into_iter().map(|f| (f.kind, f.covered_text)).collect::<Vec<_>>()
+    };
+    assert_eq!(marks(FORM_SECRET), [(FindingKind::UnappliedMark, "SECRET".to_string())]);
+    assert!(marks("").is_empty());
+}
+
+/// An appearance without a usable `/BBox` fails the audit: where it draws can't be worked out. One
+/// whose box has no area shows nothing.
+#[test]
+fn an_appearance_without_a_box_fails_the_audit() {
+    let doc = |bbox: &str| {
+        let ap = stream(&format!("/Type /XObject /Subtype /Form {bbox} {F1}"), &format!("{FORM_SECRET} {FORM_BOX}"));
+        let annot = "<< /Type /Annot /Subtype /FreeText /Rect [0 0 612 792] /AP << /N 6 0 R >> >>".to_string();
+        page_with("/Annots [7 0 R]", "", &[ap, annot])
+    };
+    assert_eq!(covered(&doc("/BBox [0 0 612 792]")), ["SECRET"]);
+    for bbox in ["", "/BBox [0 0 612]", "/BBox 5"] {
+        let result = audit_redactions(&doc(bbox));
+        assert!(matches!(result, Err(crate::AuditError::BadAppearance(0))), "{bbox}: {result:?}");
+    }
+    assert!(covered(&doc("/BBox [0 0 0 792]")).is_empty());
+}
+
+/// The appearances of a page's annotations share its form budget: one annotation listed past it
+/// fails the audit rather than be read again and again.
+#[test]
+fn appearances_past_the_page_form_budget_fail_the_audit() {
+    let annots = format!("/Annots [{}]", "7 0 R ".repeat(pdfcraft_cos::MAX_PAGE_FORMS + 1));
+    let annot = "<< /Type /Annot /Subtype /FreeText /Rect [0 0 612 792] /AP << /N 6 0 R >> >>".to_string();
+    let result = audit_redactions(&page_with(&annots, "", &[appearance("0 0 612 792", ""), annot]));
+    assert!(matches!(result, Err(crate::AuditError::TooManyForms)), "{result:?}");
+}
+
+/// A forward `TJ` adjustment an appearance draws under a later cover is a retained advance, where
+/// the appearance maps it on the page.
+#[test]
+fn retained_advance_inside_an_appearance_is_reported() {
+    let kinds = |data: &str| {
+        let annot = "<< /Type /Annot /Subtype /FreeText /Rect [100 600 200 650] /AP << /N 6 0 R >> >>".to_string();
+        let doc = page_with("/Annots [7 0 R]", "", &[appearance("0 0 100 50", data), annot]);
+        crate::audit_document(&doc).unwrap().page_findings.into_iter().map(|f| f.kind).collect::<Vec<_>>()
+    };
+    let advance = "BT /F1 20 Tf 2 4 Td [-1000] TJ ET";
+    assert_eq!(kinds(&format!("{advance} 0 g 1 0 22 21 re f")), [FindingKind::RetainedAdvance]);
+    assert!(kinds(&format!("0 g 1 0 22 21 re f {advance}")).is_empty());
+}
+
+/// A tiling pattern's cell that shows text, itself or through a form, fails the audit, which
+/// doesn't place it on the page. A cell that only paints doesn't, nor does a shading pattern.
+#[test]
+fn text_in_a_tiling_pattern_fails_the_audit() {
+    let tiling = "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 100 100] /XStep 100 /YStep 100";
+    let shading =
+        "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >> >>";
+    let objects = [
+        stream(&format!("{tiling} {F1}"), FORM_SECRET),
+        stream(&format!("{tiling} /Resources << /XObject << /X 10 0 R >> >>"), "/X Do"),
+        stream(tiling, "0 0 50 50 re f"),
+        format!("<< /PatternType 2 /Shading {shading} >>"),
+        appearance("0 0 100 100", FORM_SECRET),
+    ];
+    let resources = "/Resources << /Pattern << /P1 6 0 R /P2 7 0 R /P3 8 0 R /P4 9 0 R >> >>";
+    let audit = |p: &str| audit_redactions(&page_with(resources, &format!("/Pattern cs /{p} scn 0 0 612 792 re f"), &objects));
+    for p in ["P1", "P2"] {
+        let result = audit(p);
+        assert!(matches!(result, Err(crate::AuditError::UncheckedText(0, "a tiling pattern"))), "{p}: {result:?}");
+    }
+    for p in ["P3", "P4"] {
+        assert!(audit(p).unwrap().is_empty(), "{p}");
+    }
+}
+
+/// Patterns whose cells paint with the next nest no deeper than forms do.
+#[test]
+fn nested_patterns_past_the_depth_fail_the_audit() {
+    let tiling = "/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 100 100] /XStep 100 /YStep 100";
+    let objects: Vec<String> =
+        (6..46).map(|i| stream(&format!("{tiling} /Resources << /Pattern << /N {} 0 R >> >>", i + 1), "/Pattern cs /N scn 0 0 9 9 re f")).collect();
+    let result = audit_redactions(&page_with("/Resources << /Pattern << /N 6 0 R >> >>", "/Pattern cs /N scn", &objects));
+    assert!(matches!(result, Err(crate::AuditError::TooDeep)), "{result:?}");
+}
+
+/// A Type 3 font whose glyph procedure shows text fails the audit; one whose glyphs only paint
+/// doesn't, and selecting it on every line walks its glyphs once: 600,000 times would pass the
+/// page's operator bound.
+#[test]
+fn text_in_a_type3_glyph_fails_the_audit() {
+    let font = |glyph: usize| {
+        format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a {glyph} 0 R >> \
+             /Encoding << /Type /Encoding /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] {F1} >>"
+        )
+    };
+    let objects = [font(8), font(9), stream("", "1000 0 d0 BT /F1 12 Tf (SECRET) Tj ET"), stream("", "1000 0 0 0 1000 1000 d1 0 0 1000 1000 re f")];
+    let audit = |content: &str| audit_redactions(&page_with("/Resources << /Font << /T 6 0 R /P 7 0 R >> >>", content, &objects));
+    let result = audit("BT /T 12 Tf 100 700 Td (a) Tj ET");
+    assert!(matches!(result, Err(crate::AuditError::UncheckedText(0, "a Type 3 glyph"))), "{result:?}");
+    assert!(audit("BT /P 12 Tf 100 700 Td (a) Tj ET").unwrap().is_empty());
+    assert!(audit(&format!("BT {}ET", "/P 12 Tf ".repeat(600_000))).unwrap().is_empty());
+}
+
+/// A Type 3 font's glyph procedures count against the page's form budget, as forms do.
+#[test]
+fn type3_glyphs_past_the_page_form_budget_fail_the_audit() {
+    let procs: String = (0..=pdfcraft_cos::MAX_PAGE_FORMS).map(|i| format!("/g{i} 7 0 R ")).collect();
+    let font = format!("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << {procs}>> >>");
+    let doc = page_with("/Resources << /Font << /T 6 0 R >> >>", "BT /T 12 Tf ET", &[font, stream("", "1000 0 d0")]);
+    let result = audit_redactions(&doc);
+    assert!(matches!(result, Err(crate::AuditError::TooManyForms)), "{result:?}");
 }
