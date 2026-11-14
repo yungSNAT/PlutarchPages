@@ -15,13 +15,12 @@
 //! considered when closed by a fill operator — other filled paths, shadings and patterns are
 //! not; a rectangle drawn with a translucent ExtGState (`/ca < 1`) is not flagged; opaque
 //! filled `/Square` annotations count as covers, but annotation rectangles are compared in
-//! unrotated user space, so pages with `/Rotate` may misalign;
-//! covers inside form XObjects are found, but only text drawn directly in the page content
-//! is checked under them, so text inside a form XObject is not audited.
+//! unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
+//! XObjects, nested ones included, are checked like the page's own, in the order they are painted.
 //!
 //! The audit fails closed: any content that cannot be read (an undecodable content stream,
-//! malformed annotations, form XObjects nested deeper than 32 or in a cycle) is an error, never
-//! an empty finding list.
+//! malformed annotations, form XObjects nested deeper than 32 or in a cycle, a form whose text
+//! can't be read) is an error, never an empty finding list.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -92,6 +91,10 @@ pub enum AuditError {
     TooManyOps,
     #[error("form XObjects nest deeper than the audit follows")]
     TooDeep,
+    /// Some text a form draws was not read: the form draws itself, doesn't decode, or comes past
+    /// the text reader's form limits. It could be text a cover hides.
+    #[error("page {0}: the text of a form XObject could not be read")]
+    UnreadForms(usize),
     #[error("content walk entered more form XObjects than the audit follows")]
     TooManyForms,
     #[error("page has a malformed /Annots entry")]
@@ -268,12 +271,11 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
     for (n, page) in pdfcraft_model::pages(doc).iter().enumerate() {
         // The glyphs themselves: `/ActualText` is the file's own claim about them, and an empty
         // or substitute one must not hide text a cover sits on.
-        let (lines, gaps) = if report_advances {
-            pdfcraft_edit::text::glyph_text_with_gaps(doc, page)
-        } else {
-            pdfcraft_edit::glyph_text_lines(doc, page).map(|lines| (lines, Vec::new()))
+        let pdfcraft_edit::text::GlyphText { lines, gaps, unread_forms } =
+            pdfcraft_edit::glyph_text(doc, page, report_advances).map_err(|e| AuditError::Text(n, e.to_string()))?;
+        if unread_forms {
+            return Err(AuditError::UnreadForms(n));
         }
-        .map_err(|e| AuditError::Text(n, e.to_string()))?;
         budget.start_page(&lines);
         // 1. Opaque filled rectangles over extractable text.
         for r in cover::filled_rects(doc, &page.dict)? {
@@ -325,7 +327,7 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 /// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
 /// too.
 fn is_cover(rect: &cover::FilledRect, line: &TextLine) -> bool {
-    rect.pos > line.first_paint_pos() && covers(&rect.rect, line) && contrast(line.color, rect.rgb) < COVER_CONTRAST
+    rect.pos.iter().copied().cmp(line.paint_order()).is_gt() && covers(&rect.rect, line) && contrast(line.color, rect.rgb) < COVER_CONTRAST
 }
 
 /// Does `cover` hide a substantial part of what `line` draws? Three ways, any is enough:

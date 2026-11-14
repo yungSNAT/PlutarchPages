@@ -29,13 +29,15 @@ least 40% of the area of the words the line draws, or at least 40% of the line's
 with a positive-area intersection with one of its words. The gap an applied redaction leaves (a `TJ` adjustment where the text was) is in the line's box but
 holds no word. A box over the gap alone can produce a retained-advance finding.
 
+Covers and text drawn by form XObjects, nested ones included, are checked like the page's own,
+in the order they are painted: a cover a form paints after its text hides it, as does one the
+page paints after drawing the form.
+
 Limits, by design and documented rather than hidden:
 
 - only filled rectangles count as covers, drawn with `re` or as a single `m`/`l` subpath whose
   corners form an axis-aligned rectangle (not other paths, shadings or patterns), and a
   translucent one (`/ca` below 1) is not flagged;
-- covers inside form XObjects are found, but only text drawn directly in the page content is
-  checked under them;
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
@@ -44,7 +46,8 @@ Limits, by design and documented rather than hidden:
   less than 40% of its words (a sliver of a long value) is not flagged.
 
 It fails closed: an undecodable content stream, malformed `/Annots`, form XObjects nested deeper
-than 32 or in a cycle, a walk past the operator bound, more than 50 million cover-against-word
+than 32 or in a cycle, a form whose text can't be read (it draws itself, doesn't decode, or comes
+past the text reader's form limits), a walk past the operator bound, more than 50 million cover-against-word
 comparisons on a page, or more than 64 MiB of covered text in the report is an error, never "no
 findings".
 
