@@ -27,6 +27,8 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::collections::HashMap;
+
 use pdfcraft_content::Matrix;
 use pdfcraft_cos::{Dict, Document, Object};
 use pdfcraft_edit::{TextLine, text::GlyphAdvanceGap};
@@ -325,22 +327,34 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                 }
             }
         }
-        // 2. Annotation covers over extractable text. A Square whose appearance paints a cover is
-        // checked by what it paints (above); one whose appearance paints none, by its interior
-        // colour, after the page and the annotations before it. A Redact mark lies over everything
-        // but the text of its own appearance, which is not text it marks.
+        // 2. Annotation covers over extractable text. A Square is checked by its interior colour,
+        // after the page and the annotations before it, for the lines no rectangle its appearance
+        // paints lies over: those are checked by what it paints (above), one finding per box. A
+        // Redact mark lies over everything but the text of its own appearance, which is not text
+        // it marks.
+        let mut painted_by: HashMap<usize, Vec<[f64; 4]>> = HashMap::new();
+        for r in &rects {
+            if let Some(&layer) = r.pos.first().filter(|&&layer| layer > 0) {
+                painted_by.entry(layer).or_default().push(r.rect);
+            }
+        }
         for a in &annotations {
             let Some(annot) = &a.cover else { continue };
-            if matches!(annot, AnnotationCover::Square { .. }) && rects.iter().any(|r| r.pos.first() == Some(&a.layer)) {
-                continue;
-            }
+            let own = painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice);
+            // Each line is also compared with each of those rectangles.
+            budget.spend(budget.page_cost.saturating_mul(own.len()))?;
             let (kind, rect) = match annot {
                 AnnotationCover::Redact(rect) => (FindingKind::UnappliedMark, *rect),
                 AnnotationCover::Square { rect, .. } => (FindingKind::CoveredText, *rect),
             };
             if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
-                AnnotationCover::Square { rect, rgb } => p.layer <= a.layer && covers(rect, &p.line) && contrast(p.line.color, *rgb) < COVER_CONTRAST,
+                AnnotationCover::Square { rect, rgb } => {
+                    p.layer <= a.layer
+                        && covers(rect, &p.line)
+                        && contrast(p.line.color, *rgb) < COVER_CONTRAST
+                        && !own.iter().any(|r| covers(r, &p.line))
+                }
             })? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind, rect, covered_text });

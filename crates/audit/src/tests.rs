@@ -1190,8 +1190,8 @@ fn the_appearance_state_shown_is_audited() {
 }
 
 /// A Square is checked by the box its appearance paints, one finding whatever its interior colour
-/// says, even a white one over a black box. One whose appearance paints no box (a cloudy border
-/// drawn with curves) is checked by its interior colour.
+/// says, even a white one over a black box. Text no box of its appearance lies over (a cloudy
+/// border drawn with curves, beside a small box elsewhere) is checked by its interior colour.
 #[test]
 fn a_square_and_its_appearance_are_one_finding() {
     let doc = |colour: &str, data: &str| {
@@ -1205,6 +1205,7 @@ fn a_square_and_its_appearance_are_one_finding() {
     assert_eq!(covered(&doc("", boxed)), ["SECRET"]);
     let cloudy = "0 g 0 0 m 0 40 230 40 230 0 c f";
     assert_eq!(covered(&doc("/IC [0 0 0]", cloudy)), ["SECRET"]);
+    assert_eq!(covered(&doc("/IC [0 0 0]", &format!("{cloudy} 0 0 1 1 re f"))), ["SECRET"]);
 }
 
 /// An appearance without resources of its own reads the page's, as a form does: a Type 3 glyph it
