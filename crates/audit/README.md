@@ -72,3 +72,8 @@ and document-level findings are advisory. Rectangles are
 in points from the top-left of the displayed page (y down, after `/Rotate`).
 `AuditFinding::rect` stays in PDF user space. The library's `audit_redactions`
 entry point checks only covered text and unapplied marks.
+
+`fuzz/` is a detached cargo-fuzz crate (`cargo +nightly fuzz run content`, run from
+`crates/audit/`). Its target reads each input as a page's content, and as the content of the form,
+Type 3 glyph, tiling pattern and annotation appearance the page offers, or as a whole file when it
+starts with `%PDF`.
