@@ -842,7 +842,7 @@ fn copy_restricted_documents_withhold_covered_text() {
 fn withheld_covered_text_is_not_assembled() {
     const PAGE: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
     let doc = open(one_page(b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n", ""));
-    let lines: Vec<_> = pdfcraft_edit::text_lines(&doc, 0).expect("text").into_iter().map(|line| crate::Painted { at: Vec::new(), line }).collect();
+    let lines: Vec<_> = pdfcraft_edit::text_lines(&doc, 0).expect("text").into_iter().map(|line| crate::Painted { layer: 0, line }).collect();
     let mut budget = crate::Budget { limits: crate::Limits::DEFAULT, comparisons: 0, page_cost: 0, covered_text: 0 };
     budget.start_page(&lines);
     let withheld = budget.hidden_text(&lines, false, &PAGE, |_| true).expect("within the budget");
@@ -1189,17 +1189,66 @@ fn the_appearance_state_shown_is_audited() {
     assert!(covered(&doc("")).is_empty());
 }
 
-/// A Square counted by its interior colour paints the same box in its appearance: one finding, not
-/// two. Without an interior colour, the box its appearance paints is the cover.
+/// A Square is checked by the box its appearance paints, one finding whatever its interior colour
+/// says, even a white one over a black box. One whose appearance paints no box (a cloudy border
+/// drawn with curves) is checked by its interior colour.
 #[test]
 fn a_square_and_its_appearance_are_one_finding() {
-    let doc = |colour: &str| {
-        let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 230 40]", "0 g 0 0 230 40 re f");
+    let doc = |colour: &str, data: &str| {
+        let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 230 40]", data);
         let square = format!("<< /Type /Annot /Subtype /Square /Rect [95 685 325 725] {colour} /AP << /N 6 0 R >> >>");
         page_with(&format!("{F1} /Annots [7 0 R]"), FORM_SECRET, &[ap, square])
     };
-    assert_eq!(covered(&doc("/IC [0 0 0]")), ["SECRET"]);
-    assert_eq!(covered(&doc("")), ["SECRET"]);
+    let boxed = "0 g 0 0 230 40 re f";
+    assert_eq!(covered(&doc("/IC [0 0 0]", boxed)), ["SECRET"]);
+    assert_eq!(covered(&doc("/IC [1 1 1]", boxed)), ["SECRET"]);
+    assert_eq!(covered(&doc("", boxed)), ["SECRET"]);
+    let cloudy = "0 g 0 0 m 0 40 230 40 230 0 c f";
+    assert_eq!(covered(&doc("/IC [0 0 0]", cloudy)), ["SECRET"]);
+}
+
+/// An appearance without resources of its own reads the page's, as a form does: a Type 3 glyph it
+/// selects from them that shows text fails the audit.
+#[test]
+fn an_appearance_reads_the_page_resources_when_it_has_none() {
+    let font = format!(
+        "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 8 0 R >> \
+         /Encoding << /Type /Encoding /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] {F1} >>"
+    );
+    let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", "BT /T 12 Tf 100 700 Td (a) Tj ET");
+    let annot = "<< /Type /Annot /Subtype /FreeText /Rect [0 0 612 792] /AP << /N 7 0 R >> >>".to_string();
+    let glyph = stream("", "1000 0 d0 BT /F1 12 Tf (SECRET) Tj ET");
+    let result = audit_redactions(&page_with("/Resources << /Font << /T 6 0 R /F1 5 0 R >> >> /Annots [9 0 R]", "", &[font, ap, glyph, annot]));
+    assert!(matches!(result, Err(crate::AuditError::UncheckedText(0, "a Type 3 glyph"))), "{result:?}");
+}
+
+/// The text the page and its appearances show is held to one page's worth in all, though each is
+/// read with a budget of its own: here one appearance of 6 MiB of text, listed 3 times.
+#[test]
+fn appearance_text_past_one_page_fails_the_audit() {
+    let doc = |listed: usize| {
+        let ap = appearance("0 0 612 792", &format!("BT /F1 1 Tf ({}) Tj ET", "X".repeat(6 << 20)));
+        let annot = "<< /Type /Annot /Subtype /FreeText /Rect [0 0 612 792] /AP << /N 6 0 R >> >>".to_string();
+        page_with(&format!("/Annots [{}]", "7 0 R ".repeat(listed)), "", &[ap, annot])
+    };
+    assert!(audit_redactions(&doc(2)).unwrap().is_empty());
+    let result = audit_redactions(&doc(3));
+    assert!(matches!(&result, Err(crate::AuditError::Text(0, e)) if e.contains("too large")), "{result:?}");
+}
+
+/// Every glyph procedure entry a Type 3 font lists counts towards the page's operator bound, streams
+/// or not: fonts sharing one large table can't be read past it.
+#[test]
+fn type3_tables_past_the_operator_bound_fail_the_audit() {
+    let table: String = (0..1_000).map(|i| format!("/g{i} null ")).collect();
+    let fonts = 2_001;
+    let font = "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1000 1000] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs 6 0 R >>";
+    let mut objects = vec![format!("<< {table}>>")];
+    objects.extend((0..fonts).map(|_| font.to_string()));
+    let names: String = (0..fonts).map(|i| format!("/T{i} {} 0 R ", i + 7)).collect();
+    let content: String = (0..fonts).map(|i| format!("/T{i} 12 Tf ")).collect();
+    let result = audit_redactions(&page_with(&format!("/Resources << /Font << {names}>> >>"), &format!("BT {content}ET"), &objects));
+    assert!(matches!(result, Err(crate::AuditError::TooManyOps)), "{result:?}");
 }
 
 /// A Redact mark's own appearance, a label here, is not text the mark leaves under it: the mark

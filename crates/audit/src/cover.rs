@@ -22,6 +22,7 @@
 //! joined stream or the form's. Positions compare lexicographically in paint order.
 
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use pdfcraft_content::{Matrix, Op, Pieces, ops};
 use pdfcraft_cos::{DecodeBudget, Dict, Document, ObjRef, Object, Stream};
@@ -53,12 +54,10 @@ pub struct Appearance {
     pub layer: usize,
     /// The entry naming the form, as a page's `/Contents` names a stream.
     pub contents: Object,
-    pub form: Stream,
+    /// The form stream, shared rather than copied: one appearance can be listed many times.
+    pub form: Arc<Object>,
     /// The form's `/Matrix` composed with the one that maps its box onto the annotation's.
     pub ctm: Matrix,
-    /// Whether its filled rectangles count as covers: not for a Square whose interior colour the
-    /// audit already counts, so its box is one finding.
-    pub covers: bool,
 }
 
 /// Content the audit cannot place on the page, walked only for the text it shows.
@@ -151,9 +150,8 @@ struct Walker<'a> {
     budget: DecodeBudget,
     /// The 0-based page, for errors.
     page: usize,
-    /// The layer being walked and whether its rectangles count (see [`Appearance::covers`]).
+    /// The layer being walked (see [`FilledRect::pos`]).
     layer: usize,
-    covers: bool,
     /// Set inside a glyph procedure or a pattern cell: rectangles there are not covers, and text
     /// fails the audit.
     inside: Option<Unplaced>,
@@ -275,7 +273,6 @@ impl<'a> Walker<'a> {
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
                     if let Some(r) = std::mem::replace(&mut path, Path::Empty).rect()
                         && gs.alpha >= 1.0
-                        && self.covers
                         && self.inside.is_none()
                     {
                         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(i)).collect();
@@ -365,6 +362,9 @@ impl<'a> Walker<'a> {
         let glyph_resources = own.as_deref().and_then(Object::as_dict).unwrap_or(resources);
         let procs = font.get(b"CharProcs").map(|o| self.doc.resolve(o));
         for (_, glyph) in procs.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
+            // Each entry looked at counts as an operator: fonts sharing one large table of entries
+            // that aren't streams would otherwise be read past every bound.
+            self.bump()?;
             if let Object::Stream(s) = &*self.doc.resolve(glyph) {
                 self.walk_unplaced(Unplaced::Glyph, s, at, glyph_resources, calls)?;
             }
@@ -456,21 +456,23 @@ pub fn filled_rects(doc: &Document, page: &Dict, n: usize, appearances: &[&Appea
         }
     }
     let pieces = Pieces::join(&streams);
-    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, covers: true, inside: None, walked: HashSet::new() };
+    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, inside: None, walked: HashSet::new() };
     let mut gs = Gs::default();
     let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
     // decode budget, and the walk only ever needs the current one.
     w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, &resources, &mut Vec::new())?;
     for a in appearances {
+        let Object::Stream(form) = &*a.form else { return Err(AuditError::BadAppearance(n)) };
         if !w.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
-        let data = w.budget.decode_strict(&a.form)?;
-        let own = a.form.dict.get(b"Resources").map(|o| doc.resolve(o));
-        (w.layer, w.covers) = (a.layer, a.covers);
+        let data = w.budget.decode_strict(form)?;
+        // An appearance without resources of its own reads the page's, as a form does.
+        let own = form.dict.get(b"Resources").map(|o| doc.resolve(o));
+        w.layer = a.layer;
         let mut gs = Gs { ctm: a.ctm, ..Gs::default() };
-        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own.as_deref().and_then(Object::as_dict).unwrap_or(&Dict::new()), &mut Vec::new())?;
+        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own.as_deref().and_then(Object::as_dict).unwrap_or(&resources), &mut Vec::new())?;
     }
     Ok(w.out)
 }

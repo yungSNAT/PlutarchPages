@@ -33,8 +33,9 @@ Covers and text drawn by form XObjects, nested ones included, are checked like t
 in the order they are painted: a cover a form paints after its text hides it, as does one the
 page paints after drawing the form. So are those of the appearance a viewer paints for each
 annotation that isn't Hidden or NoView (its normal appearance, or the state `/AS` names), mapped
-onto the annotation's rectangle and painted after the page in `/Annots` order. A Square counted
-by its interior colour is one cover, whatever its appearance paints. A Redact mark's own
+onto the annotation's rectangle and painted after the page in `/Annots` order. An appearance
+without resources of its own uses the page's. A Square is checked by the box its appearance
+paints, or by its interior colour when the appearance paints none. A Redact mark's own
 appearance is not text it leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
@@ -56,7 +57,8 @@ It fails closed: an undecodable content stream, malformed `/Annots`, form XObjec
 than 32 or in a cycle, a form whose text can't be read (it draws itself, doesn't decode, or comes
 past the text reader's form limits), an annotation appearance without a usable `/BBox`, text in a
 tiling pattern or a Type 3 glyph, a walk past the operator bound (2 million operators a page, its
-forms and appearances included, counted before any text is read), more than 50 million
+forms and appearances included, counted before any text is read), more than 16 MiB of text on a
+page and its appearances, more than 50 million
 cover-against-word comparisons on a page, or more than 64 MiB of covered text in the report is an
 error, never "no findings". Errors name pages from 1.
 

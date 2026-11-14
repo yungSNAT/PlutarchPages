@@ -290,22 +290,30 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // times would cost it far more than the bounds allow.
         let rects = cover::filled_rects(doc, &page.dict, n, &appearances)?;
         let (mut lines, mut gaps) = painted_text(doc, page, n, 0, None, report_advances)?;
+        // Each read has a text budget of its own; the page's lines in all are held to one.
+        let mut text_bytes = text_len(&lines);
         for a in &appearances {
-            // Read as a page whose content is the appearance's form, then mapped onto the page.
+            let Object::Stream(form) = &*a.form else { return Err(AuditError::BadAppearance(n)) };
+            // Read as a page whose content is the appearance's form, then mapped onto the page. One
+            // without resources of its own reads the page's, as the cover walk does.
             let mut dict = Dict::new();
             dict.set(b"Contents".to_vec(), a.contents.clone());
-            if let Some(resources) = a.form.dict.get(b"Resources") {
+            if let Some(resources) = form.dict.get(b"Resources").or_else(|| page.dict.get(b"Resources")) {
                 dict.set(b"Resources".to_vec(), resources.clone());
             }
             let shown = pdfcraft_model::Page { obj: page.obj, dict };
             let (more, more_gaps) = painted_text(doc, &shown, n, a.layer, Some(&a.ctm), report_advances)?;
+            text_bytes = text_bytes.saturating_add(text_len(&more));
+            if text_bytes > MAX_PAGE_TEXT {
+                return Err(AuditError::Text(n, "the page's text is too large to read".into()));
+            }
             lines.extend(more);
             gaps.extend(more_gaps);
         }
         budget.start_page(&lines);
         // 1. Opaque filled rectangles over extractable text.
-        for r in rects {
-            if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |p| is_cover(&r, p))? {
+        for r in &rects {
+            if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |p| is_cover(r, p))? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
             }
@@ -317,21 +325,22 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                 }
             }
         }
-        // 2. Annotation covers over extractable text. A Square is painted after the page and the
-        // annotations before it, over its own appearance; a Redact mark lies over everything but
-        // the text of its own appearance, which is not text it marks.
+        // 2. Annotation covers over extractable text. A Square whose appearance paints a cover is
+        // checked by what it paints (above); one whose appearance paints none, by its interior
+        // colour, after the page and the annotations before it. A Redact mark lies over everything
+        // but the text of its own appearance, which is not text it marks.
         for a in &annotations {
             let Some(annot) = &a.cover else { continue };
-            let painted = [a.layer, usize::MAX];
+            if matches!(annot, AnnotationCover::Square { .. }) && rects.iter().any(|r| r.pos.first() == Some(&a.layer)) {
+                continue;
+            }
             let (kind, rect) = match annot {
                 AnnotationCover::Redact(rect) => (FindingKind::UnappliedMark, *rect),
                 AnnotationCover::Square { rect, .. } => (FindingKind::CoveredText, *rect),
             };
             if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
-                AnnotationCover::Redact(rect) => p.at.first() != Some(&a.layer) && covers(rect, &p.line),
-                AnnotationCover::Square { rect, rgb } => {
-                    p.at.as_slice() < painted.as_slice() && covers(rect, &p.line) && contrast(p.line.color, *rgb) < COVER_CONTRAST
-                }
+                AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
+                AnnotationCover::Square { rect, rgb } => p.layer <= a.layer && covers(rect, &p.line) && contrast(p.line.color, *rgb) < COVER_CONTRAST,
             })? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind, rect, covered_text });
@@ -341,11 +350,19 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
     Ok(out)
 }
 
+/// Text bytes a page's lines may hold in all, its appearances' included: the text reader's bound
+/// for one read.
+const MAX_PAGE_TEXT: usize = 16 << 20;
+
 /// A line of text and where it comes in paint order: its layer (0 for the page's content, then one
 /// for each annotation), then [`TextLine::paint_order`].
 struct Painted {
-    at: Vec<usize>,
+    layer: usize,
     line: TextLine,
+}
+
+fn text_len(lines: &[Painted]) -> usize {
+    lines.iter().fold(0, |n, p| n.saturating_add(p.line.text.len()))
 }
 
 /// The lines and advance gaps `page` shows, in `layer`, their boxes and points mapped by `ctm` when
@@ -374,7 +391,7 @@ fn painted_text(
                 line.rect = m.bbox(line.rect);
                 line.ink.iter_mut().for_each(|w| *w = m.bbox(*w));
             }
-            Painted { at: std::iter::once(layer).chain(line.paint_order()).collect(), line }
+            Painted { layer, line }
         })
         .collect();
     for gap in &mut gaps {
@@ -401,7 +418,9 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 /// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
 /// too.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
-    rect.pos > p.at && covers(&rect.rect, &p.line) && contrast(p.line.color, rect.rgb) < COVER_CONTRAST
+    rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
+        && covers(&rect.rect, &p.line)
+        && contrast(p.line.color, rect.rgb) < COVER_CONTRAST
 }
 
 /// Does `cover` hide a substantial part of what `line` draws? Three ways, any is enough:
@@ -503,6 +522,7 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
     // A missing /Annots means no marks; a malformed one fails the audit.
     let Some(items) = resolved.as_array() else { return Err(AuditError::BadAnnots) };
     let mut out = Vec::new();
+    let mut appearances = 0_usize;
     for (i, a) in items.iter().enumerate() {
         // Borrowed from the resolved object: one large dictionary listed many times is not
         // copied once per listing.
@@ -528,8 +548,16 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
             _ => None,
         };
         let layer = i.saturating_add(1);
-        let covers = !matches!(cover, Some(AnnotationCover::Square { .. }));
-        let appearance = if shown { appearance(doc, dict, rect, n, layer, covers)? } else { None };
+        // Each appearance is one form entry of the page's budget: count them before reading them.
+        let appearance = if shown && dict.contains(b"AP") {
+            appearances = appearances.saturating_add(1);
+            if appearances > pdfcraft_cos::MAX_PAGE_FORMS {
+                return Err(AuditError::TooManyForms);
+            }
+            appearance(doc, dict, rect, n, layer)?
+        } else {
+            None
+        };
         if cover.is_some() || appearance.is_some() {
             out.push(Annotation { layer, cover, appearance });
         }
@@ -541,7 +569,7 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
 /// appearance, or of those it has for each state the one `/AS` names, its box mapped onto `rect`.
 /// `None` when there is none, or it can show nothing (its box or `rect` has no area). One without a
 /// usable `/BBox` fails the audit: where it draws can't be worked out.
-fn appearance(doc: &Document, dict: &Dict, rect: [f64; 4], n: usize, layer: usize, covers: bool) -> Result<Option<cover::Appearance>, AuditError> {
+fn appearance(doc: &Document, dict: &Dict, rect: [f64; 4], n: usize, layer: usize) -> Result<Option<cover::Appearance>, AuditError> {
     let ap = dict.get(b"AP").map(|o| doc.resolve(o));
     let Some(normal) = ap.as_deref().and_then(Object::as_dict).and_then(|d| d.get(b"N")) else { return Ok(None) };
     // A dictionary (not a stream, whose dictionary `as_dict` would also give) holds one per state.
@@ -570,7 +598,7 @@ fn appearance(doc: &Document, dict: &Dict, rect: [f64; 4], n: usize, layer: usiz
     Ok(shows.then(|| {
         let (sx, sy) = ((rect[2] - rect[0]) / w, (rect[3] - rect[1]) / h);
         let fit = Matrix([sx, 0.0, 0.0, sy, rect[0] - bx0 * sx, rect[1] - by0 * sy]);
-        cover::Appearance { layer, contents, form: form.clone(), ctm: matrix.then(&fit), covers }
+        cover::Appearance { layer, contents, form: std::sync::Arc::clone(&resolved), ctm: matrix.then(&fit) }
     }))
 }
 
