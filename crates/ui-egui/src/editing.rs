@@ -478,7 +478,10 @@ impl PdfCraftApp {
         if let Some(d) = &view.content.draft {
             return has_typing_to_redo(ctx, crate::content_ui::input_id(), &d.text);
         }
-        view.comments.editing.as_ref().is_some_and(|(page, index, text)| has_typing_to_redo(ctx, crate::comments::editor_id(view.id, (*page, *index)), text))
+        view.comments
+            .editing
+            .as_ref()
+            .is_some_and(|(page, index, text)| has_typing_to_redo(ctx, crate::comments::editor_id(view.id, (*page, *index)), text))
     }
 
     /// Typing in a box on the page (a paragraph being edited, added text) that the page doesn't
