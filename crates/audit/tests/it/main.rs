@@ -1,6 +1,6 @@
-//! The audit against content it reads through resources: fonts a graphics state sets, and Type 3
-//! fonts and tiling patterns drawn under more than one set of resources. Contributor-original
-//! fixtures, built in code.
+//! The audit against content it reads through resources: fonts a graphics state sets, Type 3 fonts
+//! and tiling patterns drawn under more than one set of resources, and covers painted in colour
+//! spaces, patterns and shadings. Contributor-original fixtures, built in code.
 
 use std::sync::Arc;
 
@@ -116,6 +116,81 @@ fn resources_written_in_place_are_told_apart() {
     );
     let result = audit_redactions(&doc);
     assert!(matches!(result, Err(AuditError::UncheckedText(0, "a Type 3 glyph"))), "{result:?}");
+}
+
+/// The text every cover test draws: SECRET along y 700 and PUBLIC along y 500.
+const TWO_LINES: &str = "BT /F1 24 Tf 100 700 Td (SECRET) Tj 0 -200 Td (PUBLIC) Tj ET";
+
+/// A shading over the whole page, solid black.
+const BLACK_SHADING: &str = "<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 612 0] \
+                             /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [0] /N 1 >> >>";
+
+/// A cover painted in a colour set with `cs` and `sc` or `scn` is judged by that colour, not by
+/// the last `g`, `rg` or `k`: black over the black text hides it whatever `g` said before, and
+/// white doesn't. A colour space starts black.
+#[test]
+fn a_colour_a_colour_space_sets_is_the_covers() {
+    let resources = "<< /Font << /F1 5 0 R >> /ColorSpace << /Icc [/ICCBased 6 0 R] /Rgb /DeviceRGB >> >>";
+    for (fill, hidden) in [
+        ("1 g /DeviceGray cs 0 sc", true),
+        ("1 g /DeviceRGB cs 0 0 0 sc", true),
+        ("1 g /DeviceCMYK cs 0 0 0 1 scn", true),
+        ("1 g /Icc cs 0 scn", true),
+        ("1 g /Rgb cs 0 0 0 sc", true),
+        ("1 g /DeviceGray cs", true),
+        ("0 g /DeviceGray cs 1 sc", false),
+        ("0 g /DeviceRGB cs 1 1 1 sc", false),
+        ("0 g /Icc cs 1 sc", false),
+    ] {
+        let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &[stream_obj("/N 1", "")]);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "{fill}");
+    }
+}
+
+/// A cover in a colour the audit doesn't read, a pattern's or a spot colour's, counts as hiding the
+/// text under it: it may be as dark as the text, whatever `g` said before.
+#[test]
+fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
+    let resources = "<< /Font << /F1 5 0 R >> /Pattern << /P 6 0 R >> /ColorSpace << /Spot [/Separation /Ink /DeviceGray 7 0 R] >> >>";
+    let objects = [
+        format!("<< /PatternType 2 /Shading {BLACK_SHADING} >>").into_bytes(),
+        b"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>".to_vec(),
+    ];
+    for fill in ["1 g /Pattern cs /P scn", "1 g /Spot cs 1 scn"] {
+        let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &objects);
+        assert_eq!(covered(&doc), ["SECRET"], "{fill}");
+    }
+}
+
+/// A shading painted with `sh` over text hides what the clip it is painted in holds: a clip set by
+/// a rectangle, by lines or by a curve, the box of the form it is painted in, or the page. A
+/// translucent one is not a cover, as a translucent rectangle isn't.
+#[test]
+fn a_shading_painted_over_text_hides_it() {
+    let resources = "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R >> /XObject << /Fm 7 0 R >> /ExtGState << /Half << /ca 0.5 >> >> >>";
+    let objects = [
+        BLACK_SHADING.as_bytes().to_vec(),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [100 688 320 720] /Resources << /Shading << /Sh 6 0 R >> >>", "/Sh sh"),
+    ];
+    for (paint, hidden) in [
+        ("q 100 688 220 32 re W n /Sh sh Q", true),
+        ("q 100 688 m 320 688 l 320 720 l 100 720 l h W n /Sh sh Q", true),
+        ("q 100 688 m 320 688 l 320 720 l 210 740 100 720 v h W n /Sh sh Q", true),
+        ("q 0 600 612 192 re W n 100 0 0 100 0 0 cm /Sh sh Q", true),
+        ("/Fm Do", true),
+        ("q 100 400 220 32 re W n /Sh sh Q", false),
+        ("q 100 688 220 32 re W n /Half gs /Sh sh Q", false),
+    ] {
+        let doc = page(resources, &format!("{TWO_LINES} {paint}"), &objects);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "{paint}");
+    }
+    let doc = page(resources, &format!("{TWO_LINES} /Sh sh"), &objects);
+    let all = covered(&doc).concat();
+    assert!(all.contains("SECRET") && all.contains("PUBLIC"), "{all}");
+    let doc = page(resources, &format!("/Sh sh {TWO_LINES}"), &objects);
+    assert!(covered(&doc).is_empty(), "text painted after the shading is on it");
 }
 
 /// The same for a tiling pattern without resources of its own.
