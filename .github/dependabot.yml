@@ -9,6 +9,10 @@ updates:
       interval: "daily"
       time: "06:00"
       timezone: "America/New_York"
+    # A release is not proposed until it is 7 days old, so a bad or compromised one has time to be
+    # found and yanked. Security updates are not delayed.
+    cooldown:
+      default-days: 7
     # Consolidate updates into a single PR rather than one PR per crate
     groups:
       cargo-dependencies:
@@ -24,6 +28,8 @@ updates:
       interval: "daily"
       time: "06:00"
       timezone: "America/New_York"
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns:
