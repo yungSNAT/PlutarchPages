@@ -13,9 +13,9 @@
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
 //! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
-//! that holds its clip; other filled paths are not. A cover in a color the audit doesn't read (a
-//! pattern's, a spot color's) counts as dark as the text. A rectangle or shading drawn with a
-//! translucent ExtGState (`/ca < 1`) is not flagged; opaque
+//! that holds its clip and within its `/BBox`; other filled paths are not. A cover in a color
+//! the audit doesn't read (a pattern's, a spot color's) counts as dark as the text. A rectangle
+//! or shading drawn with a translucent ExtGState (`/ca < 1`) is not flagged; opaque
 //! filled `/Square` annotations count as covers, but annotation rectangles are compared in
 //! unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
 //! XObjects, nested ones included, are checked like the page's own, in the order they are painted,

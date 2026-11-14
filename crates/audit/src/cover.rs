@@ -3,9 +3,10 @@
 //! This is the geometric half of the faux-redaction audit: a rectangle filled with an opaque
 //! color (`re` + `f`) is the classic way a "redaction" is faked. A single closed `m`/`l` subpath
 //! whose four corners form an axis-aligned rectangle in user space is the same shape and counts
-//! too (#1510), and so does a shading painted with `sh`, over the box that holds its clip. Graphics
-//! state tracked here is deliberately small: the CTM stack (`q`/`Q`/`cm`), the box holding the clip
-//! (`W` paths, a form's `/BBox`, the page's crop box), the non-stroking color (`g`/`rg`/`k`, and
+//! too (#1510), and so does a shading painted with `sh`, over the box that holds its clip and
+//! within its `/BBox`. Graphics state tracked here is deliberately small: the CTM stack
+//! (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the page's crop box),
+//! the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
 //! one the audit can't read and counts as dark as the text) and the non-stroking alpha from
 //! ExtGState (`gs` reading `/ca`). Form XObjects are followed read-only with a depth cap, and so
@@ -277,13 +278,7 @@ impl<'a> Walker<'a> {
                         (gs.fill, gs.space) = (Some(fill), n);
                     }
                 }
-                b"cs" => {
-                    // DeviceCMYK starts black, and every other space the audit reads at 0 (ISO 32000-2
-                    // §8.6.8): black, or white for an ICC-based CMYK one.
-                    let name = op.name(0).unwrap_or_default();
-                    gs.space = components(self.doc, resources, name);
-                    gs.fill = rgb(if name == b"DeviceCMYK" { &[0.0, 0.0, 0.0, 1.0] } else { &[0.0; 4][..gs.space] });
-                }
+                b"cs" => (gs.space, gs.fill) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
                 b"sc" | b"scn" => {
                     gs.fill = numbers(&op.operands).filter(|v| v.len() == gs.space).and_then(|v| rgb(&v));
                     if let Some(name) = op.operands.last().and_then(Object::as_name) {
@@ -340,10 +335,14 @@ impl<'a> Walker<'a> {
                         self.paint(r, gs.fill, calls, i);
                     }
                 }
-                // A shading paints everywhere the clip lets it.
+                // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
-                    if gs.alpha >= 1.0 && self.inside.is_none() && gs.clip[2] > gs.clip[0] && gs.clip[3] > gs.clip[1] {
-                        self.paint(gs.clip, None, calls, i);
+                    let shadings = resources.get(b"Shading").map(|o| self.doc.resolve(o));
+                    let shading = op.name(0).and_then(|name| shadings.as_deref().and_then(Object::as_dict)?.get(name)).map(|o| self.doc.resolve(o));
+                    let bbox = shading.as_deref().and_then(Object::as_dict).and_then(|d| form_bbox(self.doc, d));
+                    let area = bbox.map_or(gs.clip, |b| meet(gs.clip, gs.ctm.bbox(b)));
+                    if gs.alpha >= 1.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
+                        self.paint(area, None, calls, i);
                     }
                 }
                 b"Tj" | b"TJ" | b"'" | b"\"" => {
@@ -523,7 +522,7 @@ fn own_resources<'r>(own: Option<&'r (&Object, Arc<Object>)>, stream: Option<Obj
     Some(Res { dict: resolved.as_dict()?, owner: Owner::of(entry, stream) })
 }
 
-/// A form's `/BBox`, normalized, or `None` when it has none that is usable.
+/// A `/BBox` (a form's, a shading's), normalized, or `None` when there is none that is usable.
 pub(crate) fn form_bbox(doc: &Document, dict: &Dict) -> Option<[f64; 4]> {
     let bbox = dict.get(b"BBox").map(|o| doc.resolve(o));
     let v: Vec<f64> = bbox.as_deref().and_then(Object::as_array)?.iter().filter_map(|o| doc.resolve(o).as_f64()).collect();
@@ -560,32 +559,36 @@ fn rgb(v: &[f64]) -> Option<[f64; 3]> {
     }
 }
 
-/// The components of the color space `cs` names when the audit reads its colors as gray (1), RGB
-/// (3) or CMYK (4): a device space, or one of `resources` that is calibrated or ICC-based. 0 for any
-/// other (a pattern, a spot color, an indexed or Lab space).
-fn components(doc: &Document, resources: &Dict, name: &[u8]) -> usize {
+/// The color space `cs` names, as the audit reads it: the components of its colors when it reads
+/// them as gray (1), RGB (3) or CMYK (4), else 0 (a pattern, a spot color, an indexed or Lab space),
+/// and its initial color (ISO 32000-2 §8.6.8). The spaces read are the device spaces, by name or
+/// through `resources`, and calibrated or ICC-based ones in `resources`. DeviceCMYK starts black,
+/// and the others at 0 in each component, which is white for an ICC-based CMYK space.
+fn color_space(doc: &Document, resources: &Dict, name: &[u8]) -> (usize, Option<[f64; 3]>) {
     let device = |name: &[u8]| match name {
-        b"DeviceGray" => 1,
-        b"DeviceRGB" => 3,
-        b"DeviceCMYK" => 4,
-        _ => 0,
+        b"DeviceGray" => Some(1),
+        b"DeviceRGB" => Some(3),
+        b"DeviceCMYK" => Some(4),
+        _ => None,
     };
-    if device(name) > 0 {
-        return device(name);
-    }
     let spaces = resources.get(b"ColorSpace").map(|o| doc.resolve(o));
-    let Some(space) = spaces.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| doc.resolve(o)) else { return 0 };
-    let Some(family) = space.as_array() else { return space.as_name().map_or(0, device) };
-    let part = |i: usize| family.get(i).map(|o| doc.resolve(o));
-    match part(0).as_deref().and_then(Object::as_name) {
-        Some(b"CalGray") => 1,
-        Some(b"CalRGB") => 3,
+    let space = spaces.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| doc.resolve(o));
+    // A device space by name, or one of `resources` that names one.
+    let named = device(name).or_else(|| space.as_deref().and_then(Object::as_name).and_then(device));
+    let family = space.as_deref().and_then(Object::as_array);
+    let part = |i: usize| family.and_then(|f| f.get(i)).map(|o| doc.resolve(o));
+    let n = named.or_else(|| match part(0).as_deref().and_then(Object::as_name) {
+        Some(b"CalGray") => Some(1),
+        Some(b"CalRGB") => Some(3),
         Some(b"ICCBased") => {
             let n = part(1).as_deref().and_then(|s| s.as_dict()?.get(b"N").map(|o| doc.resolve(o))).and_then(|n| n.as_int());
-            n.filter(|n| matches!(n, 1 | 3 | 4)).map_or(0, |n| n as usize)
+            n.filter(|n| matches!(n, 1 | 3 | 4)).map(|n| n as usize)
         }
-        _ => 0,
-    }
+        _ => None,
+    });
+    let Some(n) = n else { return (0, None) };
+    let cmyk = named == Some(4);
+    (n, rgb(if cmyk { &[0.0, 0.0, 0.0, 1.0] } else { &[0.0; 4][..n] }))
 }
 
 /// A form's `/Matrix`, or the identity when it has none that is usable.
