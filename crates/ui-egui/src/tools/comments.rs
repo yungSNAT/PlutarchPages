@@ -29,6 +29,13 @@ mod paint;
 mod state;
 
 pub(crate) use composer::{composer, submit_key};
+
+/// The inline editor open on comment or reply `key` in document `doc`'s Comments panel. Its own
+/// Undo history is kept under this id, which Undo and Redo from the menu step before the
+/// document's.
+pub(crate) fn editor_id(doc: pdfcraft_engine::DocId, key: (usize, usize)) -> egui::Id {
+    egui::Id::new(("comment-edit", doc, key))
+}
 #[cfg(test)]
 use geometry::handle_pos;
 #[cfg(test)]

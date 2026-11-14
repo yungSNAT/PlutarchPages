@@ -642,8 +642,14 @@ fn card(ui: &mut egui::Ui, view: &mut DocView, context: CardContext<'_>) -> Opti
 /// the edit Save makes.
 fn inline_editor(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, key: (usize, usize), rows: usize) -> Option<Edit> {
     let mut edit = None;
+    let id = crate::comments::editor_id(view.id, key);
+    // Just opened, it starts with no Undo history: one left from an earlier edit of the same
+    // comment would put that edit's text back.
+    if view.comments.editor_focus == Some(crate::comments::EditorFocus::Take) {
+        egui::TextEdit::store_state(ui.ctx(), id, egui::text_edit::TextEditState::default());
+    }
     let (_, _, text) = view.comments.editing.as_mut()?;
-    let r = ui.add(crate::widgets::block(text).desired_rows(rows).desired_width(f32::INFINITY).id_salt(("comment-edit", key)));
+    let r = ui.add(crate::widgets::block(text).desired_rows(rows).desired_width(f32::INFINITY).id(id));
     match view.comments.editor_focus.take() {
         Some(crate::comments::EditorFocus::Take) => r.request_focus(),
         Some(crate::comments::EditorFocus::Release) => r.surrender_focus(),
