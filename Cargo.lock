@@ -4313,6 +4313,7 @@ dependencies = [
  "pdfcraft-cos",
  "pdfcraft-edit",
  "pdfcraft-model",
+ "pdfcraft-testkit",
  "thiserror 2.0.21",
 ]
 
