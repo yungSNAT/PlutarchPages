@@ -46,14 +46,16 @@ fn covered(doc: &Document) -> Vec<String> {
 }
 
 /// Text that shows in a font an ExtGState's `/Font` sets (ISO 32000-2 §8.4.5), with no `Tf`, is
-/// still read, and a cover painted over it is found.
+/// still read, and a cover painted over it is found: a font given by reference or written out in
+/// place, on the page or in a form it draws.
 #[test]
 fn text_in_a_font_a_graphics_state_sets_is_audited() {
-    let doc = page(
-        "<< /Font << /F1 5 0 R >> /ExtGState << /GS1 << /Type /ExtGState /Font [5 0 R 24] >> >> >>",
-        "/GS1 gs BT 100 700 Td (SECRET) Tj ET 0 g 100 688 220 32 re f",
-        &[],
-    );
+    let shown = "/GS1 gs BT 100 700 Td (SECRET) Tj ET 0 g 100 688 220 32 re f";
+    for font in ["5 0 R", HELVETICA] {
+        let doc = page(&format!("<< /ExtGState << /GS1 << /Type /ExtGState /Font [{font} 24] >> >> >>"), shown, &[]);
+        assert_eq!(covered(&doc), ["SECRET"], "{font}");
+    }
+    let doc = page("<< /XObject << /Fm 6 0 R >> >>", "/Fm Do", &[form("<< /ExtGState << /GS1 << /Font [5 0 R 24] >> >> >>", shown)]);
     assert_eq!(covered(&doc), ["SECRET"]);
 }
 
@@ -91,6 +93,29 @@ fn a_type3_font_without_resources_is_walked_with_each_set_it_reads() {
         let result = audit_redactions(&doc(content));
         assert!(matches!(result, Err(AuditError::UncheckedText(0, "a Type 3 glyph"))), "{content}: {result:?}");
     }
+}
+
+/// Resources written out in place have no object number to tell them apart by. Type 3 fonts A and B
+/// are written out in place, each with resources of its own naming font T, which has none: T's
+/// glyph draws form X, which only B's resources name, so it shows text when B's glyph selects T,
+/// though A's selected it first.
+#[test]
+fn resources_written_in_place_are_told_apart() {
+    let font = |glyph: usize, resources: &str| String::from_utf8(type3(glyph, &format!("/Resources {resources}"))).expect("ascii");
+    let a = font(7, "<< /Font << /T 6 0 R >> >>");
+    let b = font(7, "<< /Font << /T 6 0 R >> /XObject << /X 9 0 R >> >>");
+    let doc = page(
+        &format!("<< /Font << /A {a} /B {b} >> >>"),
+        "BT /A 12 Tf /B 12 Tf ET",
+        &[
+            type3(8, ""),
+            stream_obj("", "1000 0 d0 /T 1 Tf"),
+            stream_obj("", "1000 0 d0 /X Do"),
+            form("<< /Font << /F1 5 0 R >> >>", "BT /F1 12 Tf (SECRET) Tj ET"),
+        ],
+    );
+    let result = audit_redactions(&doc);
+    assert!(matches!(result, Err(AuditError::UncheckedText(0, "a Type 3 glyph"))), "{result:?}");
 }
 
 /// The same for a tiling pattern without resources of its own.
