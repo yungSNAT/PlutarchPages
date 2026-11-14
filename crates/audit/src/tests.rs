@@ -873,7 +873,7 @@ fn repeated_stream_references_share_one_decode_budget() {
     let mut doc = Document::new_empty();
     let spaces = doc.add(Stream::flate(Dict::new(), &vec![b' '; 1 << 20]));
     let contents: Dict = [(b"Contents".to_vec(), Object::Array(vec![Object::Ref(spaces); 300]))].into_iter().collect();
-    assert!(crate::cover::filled_rects(&doc, &contents, 0, &[]).is_err(), "repeated content streams");
+    assert!(crate::cover::filled_rects(&doc, &contents, [0.0, 0.0, 612.0, 792.0], 0, &[]).is_err(), "repeated content streams");
 
     let form_dict: Dict = [(b"Subtype".to_vec(), Object::Name(b"Form".to_vec()))].into_iter().collect();
     let form = doc.add(Stream::flate(form_dict, &vec![b' '; 1 << 20]));
@@ -881,7 +881,7 @@ fn repeated_stream_references_share_one_decode_budget() {
     let xobjects: Dict = [(b"X".to_vec(), Object::Ref(form))].into_iter().collect();
     let resources: Dict = [(b"XObject".to_vec(), Object::Dict(xobjects))].into_iter().collect();
     let page: Dict = [(b"Contents".to_vec(), Object::Ref(draws)), (b"Resources".to_vec(), Object::Dict(resources))].into_iter().collect();
-    assert!(crate::cover::filled_rects(&doc, &page, 0, &[]).is_err(), "repeated form draws");
+    assert!(crate::cover::filled_rects(&doc, &page, [0.0, 0.0, 612.0, 792.0], 0, &[]).is_err(), "repeated form draws");
 }
 
 #[test]
@@ -895,7 +895,7 @@ fn form_entries_past_the_page_allowance_fail_the_audit() {
     let xobjects: Dict = [(b"X".to_vec(), Object::Ref(form))].into_iter().collect();
     let resources: Dict = [(b"XObject".to_vec(), Object::Dict(xobjects))].into_iter().collect();
     let page: Dict = [(b"Contents".to_vec(), Object::Ref(draws)), (b"Resources".to_vec(), Object::Dict(resources))].into_iter().collect();
-    assert!(matches!(crate::cover::filled_rects(&doc, &page, 0, &[]), Err(crate::AuditError::TooManyForms)));
+    assert!(matches!(crate::cover::filled_rects(&doc, &page, [0.0, 0.0, 612.0, 792.0], 0, &[]), Err(crate::AuditError::TooManyForms)));
 }
 
 /// Copying a covered line's text walks all of it, padding included, so a long padded line under

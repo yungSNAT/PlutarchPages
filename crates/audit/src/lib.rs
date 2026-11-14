@@ -12,8 +12,10 @@
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
-//! considered when closed by a fill operator — other filled paths, shadings and patterns are
-//! not; a rectangle drawn with a translucent ExtGState (`/ca < 1`) is not flagged; opaque
+//! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
+//! that holds its clip; other filled paths are not. A cover in a color the audit doesn't read (a
+//! pattern's, a spot color's) counts as dark as the text. A rectangle or shading drawn with a
+//! translucent ExtGState (`/ca < 1`) is not flagged; opaque
 //! filled `/Square` annotations count as covers, but annotation rectangles are compared in
 //! unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
 //! XObjects, nested ones included, are checked like the page's own, in the order they are painted,
@@ -290,7 +292,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // The text walk holds a stream's operators all at once, and reads each appearance with a
         // budget of its own: run first, a stream of tiny operators or an appearance listed many
         // times would cost it far more than the bounds allow.
-        let rects = cover::filled_rects(doc, &page.dict, n, &appearances)?;
+        let rects = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
         let (mut lines, mut gaps) = painted_text(doc, page, n, 0, None, report_advances)?;
         // Each read has a text budget of its own; the page's lines in all are held to one.
         let mut text_bytes = text_len(&lines);
@@ -431,13 +433,14 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
 /// after the start of the line, overlaps it substantially, and is dark enough against the line's
 /// color to make the text unreadable. Light covers (table shading, highlights) over dark text fail
-/// the contrast check and are not flagged. A line can join runs painted before and after the
+/// the contrast check and are not flagged; one in a color the audit doesn't read could be as dark
+/// as the text, and is. A line can join runs painted before and after the
 /// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
 /// too.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
     rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
         && covers(&rect.rect, &p.line)
-        && contrast(p.line.color, rect.rgb) < COVER_CONTRAST
+        && rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST)
 }
 
 /// Does `cover` hide a substantial part of what `line` draws? Three ways, any is enough:
@@ -602,14 +605,9 @@ fn appearance(doc: &Document, dict: &Dict, rect: [f64; 4], n: usize, layer: usiz
     };
     let resolved = doc.resolve(&contents);
     let Object::Stream(form) = &*resolved else { return Ok(None) };
-    let bbox = form.dict.get(b"BBox").map(|o| doc.resolve(o));
-    let bbox: Vec<f64> =
-        bbox.as_deref().and_then(Object::as_array).map(|a| a.iter().filter_map(|o| doc.resolve(o).as_f64()).collect()).unwrap_or_default();
-    let Some([x0, y0, x1, y1]) = <[f64; 4]>::try_from(bbox).ok().filter(|b| b.iter().all(|x| x.is_finite())) else {
-        return Err(AuditError::BadAppearance(n));
-    };
+    let Some(bbox) = cover::form_bbox(doc, &form.dict) else { return Err(AuditError::BadAppearance(n)) };
     let matrix = cover::form_matrix(doc, &form.dict);
-    let [bx0, by0, bx1, by1] = matrix.bbox([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)]);
+    let [bx0, by0, bx1, by1] = matrix.bbox(bbox);
     let (w, h) = (bx1 - bx0, by1 - by0);
     let shows = w > 0.0 && h > 0.0 && rect[2] > rect[0] && rect[3] > rect[1];
     Ok(shows.then(|| {

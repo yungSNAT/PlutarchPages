@@ -47,8 +47,11 @@ so it is checked with each set it is used with.
 Limits, by design and documented rather than hidden:
 
 - only filled rectangles count as covers, drawn with `re` or as a single `m`/`l` subpath whose
-  corners form an axis-aligned rectangle (not other paths, shadings or patterns), and a
-  translucent one (`/ca` below 1) is not flagged;
+  corners form an axis-aligned rectangle (not other paths, or glyphs such as a Type 3 box or a
+  full block), and shadings painted with `sh`, over the box that holds their clip; a translucent
+  one (`/ca` below 1) is not flagged. A cover is judged by its colour as set with `g`, `rg`, `k`
+  or in a gray, RGB or CMYK colour space with `cs` and `sc`/`scn`. One in a colour the audit
+  doesn't read (a pattern's, a spot colour's, a shading's) counts as dark as the text;
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
