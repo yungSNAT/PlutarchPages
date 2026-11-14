@@ -1206,6 +1206,12 @@ fn a_square_and_its_appearance_are_one_finding() {
     let cloudy = "0 g 0 0 m 0 40 230 40 230 0 c f";
     assert_eq!(covered(&doc("/IC [0 0 0]", cloudy)), ["SECRET"]);
     assert_eq!(covered(&doc("/IC [0 0 0]", &format!("{cloudy} 0 0 1 1 re f"))), ["SECRET"]);
+    // A white box before the appearance's own text hides nothing: a curve painted over the text is
+    // then checked by the interior colour.
+    let painted_over = "1 g 0 0 230 40 re f 0 g BT /F1 24 Tf 5 15 Td (SECRET) Tj ET 0 0 m 0 40 230 40 230 0 c f";
+    let ap = stream("/Type /XObject /Subtype /Form /BBox [0 0 230 40]", painted_over);
+    let square = "<< /Type /Annot /Subtype /Square /Rect [95 685 325 725] /IC [0 0 0] /AP << /N 6 0 R >> >>".to_string();
+    assert_eq!(covered(&page_with(&format!("{F1} /Annots [7 0 R]"), "", &[ap, square])), ["SECRET"]);
 }
 
 /// An appearance without resources of its own reads the page's, as a form does: a Type 3 glyph it

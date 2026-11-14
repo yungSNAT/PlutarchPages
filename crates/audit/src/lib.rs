@@ -329,18 +329,21 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         }
         // 2. Annotation covers over extractable text. A Square is checked by its interior colour,
         // after the page and the annotations before it, for the lines no rectangle its appearance
-        // paints lies over: those are checked by what it paints (above), one finding per box. A
+        // paints hides: that rectangle reports those (above), so a box is one finding. A
         // Redact mark lies over everything but the text of its own appearance, which is not text
         // it marks.
-        let mut painted_by: HashMap<usize, Vec<[f64; 4]>> = HashMap::new();
+        let mut painted_by: HashMap<usize, Vec<&cover::FilledRect>> = HashMap::new();
         for r in &rects {
             if let Some(&layer) = r.pos.first().filter(|&&layer| layer > 0) {
-                painted_by.entry(layer).or_default().push(r.rect);
+                painted_by.entry(layer).or_default().push(r);
             }
         }
         for a in &annotations {
             let Some(annot) = &a.cover else { continue };
-            let own = painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice);
+            let own = match annot {
+                AnnotationCover::Square { .. } => painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice),
+                AnnotationCover::Redact(_) => &[],
+            };
             // Each line is also compared with each of those rectangles.
             budget.spend(budget.page_cost.saturating_mul(own.len()))?;
             let (kind, rect) = match annot {
@@ -353,7 +356,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                     p.layer <= a.layer
                         && covers(rect, &p.line)
                         && contrast(p.line.color, *rgb) < COVER_CONTRAST
-                        && !own.iter().any(|r| covers(r, &p.line))
+                        && !own.iter().any(|r| is_cover(r, p))
                 }
             })? {
                 let covered_text = budget.report_text(covered, copying)?;
