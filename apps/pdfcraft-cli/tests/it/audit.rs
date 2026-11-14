@@ -122,3 +122,19 @@ fn malformed_metadata_beside_covered_text_still_fails_the_cli_audit() {
     }
     std::fs::remove_file(path).unwrap();
 }
+
+/// A page the audit can't read fails it, and the error names the page as a reader counts: here
+/// the first page's text runs past the text reader's budget.
+#[test]
+fn an_unreadable_page_fails_the_cli_audit_and_is_numbered_from_1() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("unreadable.pdf");
+    std::fs::write(&path, fixture("/PCSoft << /N 20000000 >> BDC EMC", "", "")).unwrap();
+
+    let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
+    assert!(!out.status.success(), "an audit error must fail the audit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("unreadable.pdf: page 1: "), "{stderr}");
+    std::fs::remove_file(path).unwrap();
+}
