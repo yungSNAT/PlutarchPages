@@ -127,10 +127,11 @@ const BLACK_SHADING: &str = "<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [
 
 /// A cover painted in a colour set with `cs` and `sc` or `scn` is judged by that colour, not by
 /// the last `g`, `rg` or `k`: black over the black text hides it whatever `g` said before, and
-/// white doesn't. A colour space starts black.
+/// white doesn't. DeviceCMYK starts black, by name or through a resource, and an ICC-based CMYK space
+/// starts at 0 0 0 0, white; the other spaces start black.
 #[test]
 fn a_colour_a_colour_space_sets_is_the_covers() {
-    let resources = "<< /Font << /F1 5 0 R >> /ColorSpace << /Icc [/ICCBased 6 0 R] /Rgb /DeviceRGB >> >>";
+    let resources = "<< /Font << /F1 5 0 R >> /ColorSpace << /Icc [/ICCBased 6 0 R] /Rgb /DeviceRGB /Cmyk /DeviceCMYK /Icc4 [/ICCBased 7 0 R] >> >>";
     for (fill, hidden) in [
         ("1 g /DeviceGray cs 0 sc", true),
         ("1 g /DeviceRGB cs 0 0 0 sc", true),
@@ -138,11 +139,13 @@ fn a_colour_a_colour_space_sets_is_the_covers() {
         ("1 g /Icc cs 0 scn", true),
         ("1 g /Rgb cs 0 0 0 sc", true),
         ("1 g /DeviceGray cs", true),
+        ("1 g /Cmyk cs", true),
+        ("0 g /Icc4 cs", false),
         ("0 g /DeviceGray cs 1 sc", false),
         ("0 g /DeviceRGB cs 1 1 1 sc", false),
         ("0 g /Icc cs 1 sc", false),
     ] {
-        let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &[stream_obj("/N 1", "")]);
+        let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &[stream_obj("/N 1", ""), stream_obj("/N 4", "")]);
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&doc), want, "{fill}");
     }
@@ -162,14 +165,15 @@ fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
 }
 
 /// A shading painted with `sh` over text hides what the clip it is painted in holds: a clip set by
-/// a rectangle, by lines or by a curve, the box of the form it is painted in, or the page. A
-/// translucent one is not a cover, as a translucent rectangle isn't.
+/// a rectangle, by lines or by a curve, the box of the form it is painted in, or the page, and
+/// within its own `/BBox`. A translucent one is not a cover, as a translucent rectangle isn't.
 #[test]
 fn a_shading_painted_over_text_hides_it() {
-    let resources = "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R >> /XObject << /Fm 7 0 R >> /ExtGState << /Half << /ca 0.5 >> >> >>";
+    let resources = "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R /Boxed 8 0 R >> /XObject << /Fm 7 0 R >> /ExtGState << /Half << /ca 0.5 >> >> >>";
     let objects = [
         BLACK_SHADING.as_bytes().to_vec(),
         stream_obj("/Type /XObject /Subtype /Form /BBox [100 688 320 720] /Resources << /Shading << /Sh 6 0 R >> >>", "/Sh sh"),
+        BLACK_SHADING.replacen("<< ", "<< /BBox [100 688 320 720] ", 1).into_bytes(),
     ];
     for (paint, hidden) in [
         ("q 100 688 220 32 re W n /Sh sh Q", true),
@@ -177,6 +181,8 @@ fn a_shading_painted_over_text_hides_it() {
         ("q 100 688 m 320 688 l 320 720 l 210 740 100 720 v h W n /Sh sh Q", true),
         ("q 0 600 612 192 re W n 100 0 0 100 0 0 cm /Sh sh Q", true),
         ("/Fm Do", true),
+        ("/Boxed sh", true),
+        ("0.01 0 0 0.01 0 0 cm /Boxed sh", false),
         ("q 100 400 220 32 re W n /Sh sh Q", false),
         ("q 100 688 220 32 re W n /Half gs /Sh sh Q", false),
     ] {
