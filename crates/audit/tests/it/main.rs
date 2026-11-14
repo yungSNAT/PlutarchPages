@@ -153,10 +153,8 @@ fn a_colour_a_colour_space_sets_is_the_covers() {
 #[test]
 fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
     let resources = "<< /Font << /F1 5 0 R >> /Pattern << /P 6 0 R >> /ColorSpace << /Spot [/Separation /Ink /DeviceGray 7 0 R] >> >>";
-    let objects = [
-        format!("<< /PatternType 2 /Shading {BLACK_SHADING} >>").into_bytes(),
-        b"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>".to_vec(),
-    ];
+    let objects =
+        [format!("<< /PatternType 2 /Shading {BLACK_SHADING} >>").into_bytes(), b"<< /FunctionType 2 /Domain [0 1] /C0 [1] /C1 [0] /N 1 >>".to_vec()];
     for fill in ["1 g /Pattern cs /P scn", "1 g /Spot cs 1 scn"] {
         let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &objects);
         assert_eq!(covered(&doc), ["SECRET"], "{fill}");

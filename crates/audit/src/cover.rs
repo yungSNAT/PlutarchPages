@@ -231,7 +231,7 @@ impl<'a> Walker<'a> {
             let op = &op;
             match op.op.as_slice() {
                 b"m" | b"l" | b"c" | b"v" | b"y" => {
-                    for p in op.operands.chunks_exact(2) {
+                    for p in op.operands.as_chunks::<2>().0 {
                         if let (Some(x), Some(y)) = (p[0].as_f64(), p[1].as_f64()) {
                             let (x, y) = gs.ctm.apply(x, y);
                             path_box = Some(join(path_box, [x, y, x, y]));
