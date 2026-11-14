@@ -56,7 +56,7 @@ pub(crate) use fallback::{glyph_path, type3_font_dict, unique_font_name};
 use interp::{LayerScope, Origin, Paint, union};
 use lines::page_dict;
 pub(crate) use lines::{FormBudget, content_streams, content_streams_within, dict_in_place, form_call, resource_dict, rewritten_contents, splice};
-pub use lines::{GlyphAdvanceGap, MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text_lines, glyph_text_with_gaps, text_lines};
+pub use lines::{GlyphAdvanceGap, GlyphText, MAX_FORM_DEPTH, MAX_FORM_VISITS, glyph_text, text_lines};
 pub use rewrite::{LineEdit, replace_line, rewrite_block};
 use rewrite::{coincident_ops, rewrite_block_from};
 #[cfg(test)]
@@ -94,9 +94,13 @@ pub struct TextLine {
     /// narrower than `rect` turned into the same frame.
     frame: [f64; 4],
     /// The content stream piece the line starts in, and its operators (indices into the page's
-    /// streams parsed joined).
+    /// streams parsed joined). A line a form XObject draws has a stream number past the page's
+    /// and operators indexed in the form's content.
     stream: usize,
     ops: Vec<usize>,
+    /// For a line a form draws, the index of each `Do` that drew it, outermost (the page's) first;
+    /// empty for the page's own text. See [`TextLine::paint_order`].
+    drawn_by: Vec<usize>,
     /// Where the line starts: text matrix (text space), the state there, and its `BT`.
     origin: Origin,
     /// Explicit marked-content scope (when present); distinct scopes must not be guessed into one paragraph.

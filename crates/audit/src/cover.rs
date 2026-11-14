@@ -11,9 +11,9 @@
 //! Paint order: a page's content streams are one stream in pieces (ISO 32000-2 §7.8.2), so they
 //! are parsed joined and walked once with a single graphics state — state set in an earlier
 //! stream (a `cm`, a fill color) is still in force in the later ones. Each rectangle records the
-//! position of the fill operator that painted it, as `(content-stream index, operator index in
-//! the joined stream)`; rectangles inside a form XObject carry the `Do` operator's position.
-//! Positions compare lexicographically in paint order.
+//! position of the fill operator that painted it, as `TextLine::paint_order` gives a line's: the
+//! index of each `Do` that drew the form it is in, outermost first, then the fill's index in the
+//! joined stream or the form's. Positions compare lexicographically in paint order.
 
 use pdfcraft_content::{Matrix, Op, Pieces, ops};
 use pdfcraft_cos::{DecodeBudget, Dict, Document, Object};
@@ -34,9 +34,9 @@ pub struct FilledRect {
     pub rect: [f64; 4],
     /// The fill color as sRGB-ish `[r, g, b]` (CMYK is converted approximately).
     pub rgb: [f64; 3],
-    /// Paint position: `(content-stream index, operator index in the joined stream)`.
-    /// Rectangles inside a form XObject carry the `Do` operator's position.
-    pub pos: (usize, usize),
+    /// Paint position: the `Do` operators that drew it, outermost first, then the fill operator's
+    /// index (see the module documentation).
+    pub pos: Vec<usize>,
 }
 
 #[derive(Clone)]
@@ -106,7 +106,6 @@ impl Default for Gs {
 
 struct Walker<'a> {
     doc: &'a Document,
-    pieces: &'a Pieces,
     out: Vec<FilledRect>,
     ops_seen: usize,
     /// Decoded bytes and form entries left for the page, its forms included: spending either
@@ -124,28 +123,21 @@ impl<'a> Walker<'a> {
     }
 
     /// Walk one stream's operators, read one at a time (a stream of millions of short operators
-    /// is never held whole), with the given graphics state. `at_do` is the `Do` position to
-    /// stamp on rectangles found inside a form XObject, or `None` at page level (where each
-    /// fill operator's own position is used).
+    /// is never held whole), with the given graphics state. `calls` holds the `Do` operators that
+    /// drew the form being walked, outermost first (none at page level): with an operator's
+    /// index, its paint position.
     fn walk_ops(
         &mut self,
         ops: impl Iterator<Item = Op>,
         gs: &mut Gs,
         stack: &mut Vec<Gs>,
         resources: &Dict,
-        depth: usize,
-        at_do: Option<(usize, usize)>,
+        calls: &mut Vec<usize>,
     ) -> Result<(), AuditError> {
         let mut path = Path::Empty;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
-            // Paint position of this operator: its own `(piece, joined index)` at page level,
-            // the enclosing `Do`'s position inside a form XObject.
-            let pos = match at_do {
-                Some(p) => p,
-                None => (self.pieces.pieces_of(op).0, i),
-            };
             match op.op.as_slice() {
                 b"q" => stack.push(gs.clone()),
                 b"Q" => {
@@ -235,6 +227,7 @@ impl<'a> Walker<'a> {
                     if let Some(r) = std::mem::replace(&mut path, Path::Empty).rect()
                         && gs.alpha >= 1.0
                     {
+                        let pos = calls.iter().copied().chain(std::iter::once(i)).collect();
                         self.out.push(FilledRect { rect: r, rgb: gs.fill, pos });
                     }
                 }
@@ -242,10 +235,12 @@ impl<'a> Walker<'a> {
                 b"c" | b"v" | b"y" | b"W" | b"W*" => path = Path::Other,
                 b"Do" => {
                     if let Some(name) = op.name(0) {
-                        if depth >= MAX_DEPTH {
+                        if calls.len() >= MAX_DEPTH {
                             return Err(AuditError::TooDeep);
                         }
-                        self.walk_xobject(name, gs, resources, depth, pos)?;
+                        calls.push(i);
+                        self.walk_xobject(name, gs, resources, calls)?;
+                        calls.pop();
                     }
                     path = Path::Empty;
                 }
@@ -256,9 +251,8 @@ impl<'a> Walker<'a> {
     }
 
     /// Follow a form XObject read-only, composing its matrix onto the current CTM. State
-    /// changes inside never leak out; every rectangle found is stamped with the `Do`
-    /// position `pos`.
-    fn walk_xobject(&mut self, name: &[u8], gs: &Gs, resources: &Dict, depth: usize, pos: (usize, usize)) -> Result<(), AuditError> {
+    /// changes inside never leak out. `calls` ends with the `Do` that draws it.
+    fn walk_xobject(&mut self, name: &[u8], gs: &Gs, resources: &Dict, calls: &mut Vec<usize>) -> Result<(), AuditError> {
         // Borrowed, not copied: a `Do` must not cost the size of the whole XObject table.
         let xobjects = resources.get(b"XObject").map(|o| self.doc.resolve(o));
         let Some(entry) = xobjects.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)) else { return Ok(()) };
@@ -277,8 +271,10 @@ impl<'a> Walker<'a> {
                 (v.len() == 6 && v.iter().all(|x| x.is_finite())).then(|| Matrix([v[0], v[1], v[2], v[3], v[4], v[5]]))
             })
             .unwrap_or(Matrix::IDENTITY);
-        let (sub_resources, empty) = (dict.get(b"Resources").map(|o| self.doc.resolve(o)), Dict::new());
-        let sub_resources = sub_resources.as_deref().and_then(Object::as_dict).unwrap_or(&empty);
+        // A form without resources of its own reads those it is drawn with (PDF 1.1), as the text
+        // walk and the renderer do: a cover in a form it draws must not go unseen.
+        let sub_resources = dict.get(b"Resources").map(|o| self.doc.resolve(o));
+        let sub_resources = sub_resources.as_deref().and_then(Object::as_dict).unwrap_or(resources);
         if !self.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
@@ -288,7 +284,7 @@ impl<'a> Walker<'a> {
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
         let mut sub_stack = Vec::new();
-        self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub_resources, depth + 1, Some(pos))
+        self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub_resources, calls)
     }
 }
 
@@ -330,11 +326,11 @@ pub fn filled_rects(doc: &Document, page: &Dict) -> Result<Vec<FilledRect>, Audi
         }
     }
     let pieces = Pieces::join(&streams);
-    let mut w = Walker { doc, pieces: &pieces, out: Vec::new(), ops_seen: 0, budget };
+    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget };
     let mut gs = Gs::default();
     let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
     // decode budget, and the walk only ever needs the current one.
-    w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, &resources, 0, None)?;
+    w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, &resources, &mut Vec::new())?;
     Ok(w.out)
 }
