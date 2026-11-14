@@ -90,11 +90,13 @@ pub enum RedactError {
         where_used(.0)
     )]
     StillUsed(Vec<usize>),
-    /// Content a page can reach is past [`DRAWN_BUDGET`] or can't be read, so the check can't
-    /// tell whether the page still draws an original under the marks. Marking it would not help.
+    /// What these pages draw, through their resources included, is past [`DRAWN_BUDGET`] or can't
+    /// be read, so the check can't tell whether they still draw an original under the marks.
+    /// Marking more would not help.
     #[error(
-        "content {} is too large (over 64 MiB) or can't be read, so PdfCraft can't check that it no longer uses what was under the marks. Nothing was changed",
-        where_used(.0)
+        "what is drawn {} is more than PdfCraft reads to check it ({} MiB) or can't be read, so PdfCraft can't confirm that nothing there still uses what was under the marks; marking more won't help. Nothing was changed",
+        where_used(.0),
+        DRAWN_BUDGET >> 20
     )]
     Unchecked(Vec<usize>),
     /// A form under the marks is drawn so that its marks can't be carried to its other draws.
@@ -470,9 +472,25 @@ fn do_names(ops: &[pdfcraft_content::Op]) -> impl Iterator<Item = Vec<u8>> + '_ 
     ops.iter().filter(|op| op.is("Do")).filter_map(|op| op.name(0).map(<[u8]>::to_vec))
 }
 
-/// Each content stream's decoded size and the names its `Do` operators use, or `None` when it
-/// can't be read or is past [`DRAWN_BUDGET`].
-type ReadStreams = HashMap<ObjRef, Option<(usize, Vec<Vec<u8>>)>>;
+/// What [`drawn_names`] read of each content stream, for the next page that reaches it: its
+/// decoded size and the names its `Do` operators use, each once, or `None` when it can't be read
+/// or is past [`DRAWN_BUDGET`]. Once the names kept pass [`DRAWN_BUDGET`] bytes, streams not yet
+/// kept are read each time they are reached.
+#[derive(Default)]
+struct ReadStreams {
+    streams: HashMap<ObjRef, StreamNames>,
+    name_bytes: usize,
+}
+
+/// A stream's decoded size and the names its `Do` operators use, each once ([`ReadStreams`]).
+type StreamNames = Option<(usize, Vec<Vec<u8>>)>;
+
+/// [`StreamNames`] for `s`.
+fn stream_names(s: &Stream) -> StreamNames {
+    let data = s.decoded_within(DRAWN_BUDGET).ok()?;
+    let names: HashSet<Vec<u8>> = do_names(&pdfcraft_content::parse(&data).ops).collect();
+    Some((data.len(), names.into_iter().collect()))
+}
 
 /// Every name a `Do` operator uses in page `index`'s contents (its streams read as one, as
 /// operators may be split between them) or in any content reachable from `roots` (its resources
@@ -496,13 +514,18 @@ fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read
         if !content_like(&s.dict) {
             continue;
         }
-        let (len, drawn) = read
-            .entry(r)
-            .or_insert_with(|| {
-                let data = s.decoded().ok().filter(|d| d.len() <= DRAWN_BUDGET)?;
-                Some((data.len(), do_names(&pdfcraft_content::parse(&data).ops).collect()))
-            })
-            .as_ref()?;
+        if !read.streams.contains_key(&r) {
+            let got = stream_names(s);
+            if read.name_bytes > DRAWN_BUDGET {
+                let (len, drawn) = got?;
+                budget = budget.checked_sub(len)?;
+                names.extend(drawn);
+                continue;
+            }
+            read.name_bytes += got.as_ref().map_or(0, |(_, n)| n.iter().map(|n| n.len() + size_of::<Vec<u8>>()).sum());
+            read.streams.insert(r, got);
+        }
+        let (len, drawn) = read.streams.get(&r)?.as_ref()?;
         budget = budget.checked_sub(*len)?;
         names.extend(drawn.iter().cloned());
     }
@@ -554,7 +577,7 @@ fn annotation_payloads(doc: &Document, d: &Dict) -> Vec<ObjRef> {
 fn check_retired(doc: &mut Document, retired: &HashSet<ObjRef>) -> Result<(), RedactError> {
     let all = pdfcraft_model::pages(doc);
     let (mut using, mut unchecked) = (Vec::new(), Vec::new());
-    let mut read = HashMap::new();
+    let mut read = ReadStreams::default();
     for (i, p) in all.iter().enumerate() {
         // What the page draws: its contents, the XObjects named by any content it can reach
         // (forms drawing from inherited resources included), its other resources, and

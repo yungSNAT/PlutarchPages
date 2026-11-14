@@ -20,7 +20,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - **Redaction** refuses when content under the marks is also used where the marks don't reach.
   Upstream goes ahead. Tests in `crates/redact` and `crates/automation`. This check runs before
   upstream's pattern guard, so 2 upstream tests in `crates/redact/tests/pattern_redaction.rs`
-  expect its `StillUsed` refusal where both would refuse.
+  expect its `StillUsed` refusal where both would refuse. A page whose drawn content is too large
+  or can't be read to check refuses with `Unchecked` instead.
 - **Copy-restricted documents** refuse text extraction through the tools, including `text_find`.
 - **An empty password** never skips the Document Open prompt or lifts restrictions. `pdfcraft-cli
   check-one` checks before it renders.

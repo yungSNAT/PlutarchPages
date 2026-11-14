@@ -3954,6 +3954,25 @@ fn a_page_too_large_to_check_is_refused_without_asking_for_more_marks() {
     assert!(matches!(&result, Err(RedactError::StillUsed(p)) if p == &[1]), "{result:?}");
 }
 
+/// What `drawn_names` keeps for later pages: a form's names once each, however often it draws
+/// them, and no more streams once it holds `DRAWN_BUDGET` bytes of names. What it returns is the
+/// same either way.
+#[test]
+fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"/A Do /A Do /B Do /A Do");
+    let doc = one_page(b"/Fm Do", "/XObject << /Fm 7 0 R >>", vec![form]);
+    let page = &pdfcraft_model::pages(&doc)[0];
+    let roots: Vec<Object> = page.dict.get(b"Resources").cloned().into_iter().collect();
+    let expected: HashSet<Vec<u8>> = [&b"Fm"[..], b"A", b"B"].iter().map(|n| n.to_vec()).collect();
+    let mut read = ReadStreams::default();
+    assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut read), Some(expected.clone()));
+    let kept = read.streams.get(&ObjRef::new(7, 0)).cloned().flatten().map(|(_, names)| names.len());
+    assert_eq!(kept, Some(2), "each name once");
+    let mut full = ReadStreams { name_bytes: DRAWN_BUDGET + 1, ..ReadStreams::default() };
+    assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut full), Some(expected));
+    assert!(full.streams.is_empty(), "nothing more kept past the budget");
+}
+
 #[test]
 fn redacting_every_inheriting_page_retires_the_parent_resources() {
     let (mut doc, kids) = inheriting_pages(20);
