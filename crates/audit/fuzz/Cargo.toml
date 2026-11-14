@@ -1,0 +1,32 @@
+[package]
+name = "pdfcraft-audit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Detached from the PdfCraft workspace: run with `cargo +nightly fuzz run content`
+# from crates/audit/.
+[workspace]
+
+# A detached workspace skips the root [patch.crates-io], so repeat the vendored
+# crates this target reaches: the fuzzer then runs the code PdfCraft ships.
+[patch.crates-io]
+hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
+hayro-syntax = { path = "../../../vendor/hayro-syntax" }
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pdfcraft-audit = { path = ".." }
+pdfcraft-cos = { path = "../../cos" }
+pdfcraft-testkit = { path = "../../testkit" }
+
+[[bin]]
+name = "content"
+path = "fuzz_targets/content.rs"
+test = false
+doc = false
+bench = false
