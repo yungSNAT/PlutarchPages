@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use super::fallback::{same_font, same_paint};
-use super::interp::{Carry, LayerScope, Origin, Pen, Shown, TextState, Ts, direction, interpret, to_frame, union};
+use super::interp::{CachedFont, Carry, FontKey, LayerScope, Origin, Pen, Shown, TextState, Ts, direction, interpret, to_frame, union};
 use super::{DecodeBudget, Dict, Document, EditError, HashMap, Matrix, ObjRef, Object, Op, Pieces, Stream, TextLine, parse, serialize_ops};
 
 impl TextLine {
@@ -278,7 +278,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
     let ops = pieces.parse().ops;
     let properties = res.get(b"Properties").and_then(|o| doc.dict(o)).unwrap_or_default();
     let mut invoked = Vec::new();
-    let shown = interpret(doc, &ops, &res, &mut cache, &mut carry, glyphs.then_some(&mut invoked), (!glyphs).then_some(&properties))?;
+    let shown = interpret(doc, &ops, &res, None, &mut cache, &mut carry, glyphs.then_some(&mut invoked), (!glyphs).then_some(&properties))?;
     let layer_scopes = Arc::<[LayerScope]>::from(carry.layer_scopes);
     let mut gaps: Vec<GlyphAdvanceGap> =
         carry.advance_gaps.into_iter().flatten().map(|gap| GlyphAdvanceGap { paint_pos: vec![gap.op], from: gap.from, to: gap.to }).collect();
@@ -387,8 +387,9 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
     let mut budget = FormBudget::new(decode);
     budget.strict = true;
     let mut forms = FormWalk::new(doc, pieces.len(), budget, false, want_gaps);
+    forms.fonts = cache;
     for (at, name, ts) in invoked {
-        forms.enter(&res, at, &name, ts, &mut carry.text_left)?;
+        forms.enter(&res, None, at, &name, ts, &mut carry.text_left)?;
     }
     lines.append(&mut forms.lines);
     gaps.append(&mut forms.gaps);
@@ -567,11 +568,16 @@ impl FormCall {
     /// it was drawn with (PDF 1.1 files). Read in place, as a page can draw a form thousands of times:
     /// a copy for each took time in the square of them.
     pub(crate) fn resources<'a>(&'a self, drawn_with: &'a Dict) -> &'a Dict {
+        self.own_resources().unwrap_or(drawn_with)
+    }
+
+    /// Its own resources, if it has them: see [`FormCall::resources`].
+    fn own_resources(&self) -> Option<&Dict> {
         let direct = || match &*self.form {
             Object::Stream(s) => s.dict.get(b"Resources").and_then(Object::as_dict),
             _ => None,
         };
-        self.own.as_deref().and_then(Object::as_dict).or_else(direct).unwrap_or(drawn_with)
+        self.own.as_deref().and_then(Object::as_dict).or_else(direct)
     }
 }
 
@@ -658,6 +664,9 @@ struct FormWalk<'a> {
     /// The `Do` that drew each form being read, outermost first: [`TextLine::drawn_by`].
     calls: Vec<usize>,
     budget: FormBudget,
+    /// The fonts read so far, kept for the whole page: a form drawn thousands of times would
+    /// otherwise read its fonts, CMaps and font programs again each time.
+    fonts: HashMap<FontKey, CachedFont>,
     /// Read `/ActualText` and named optional content as a reader does, or the glyphs alone.
     logical_text: bool,
     want_gaps: bool,
@@ -665,16 +674,34 @@ struct FormWalk<'a> {
 
 impl<'a> FormWalk<'a> {
     fn new(doc: &'a Document, next_stream: usize, budget: FormBudget, logical_text: bool, want_gaps: bool) -> Self {
-        FormWalk { doc, lines: Vec::new(), gaps: Vec::new(), next_stream, path: Vec::new(), calls: Vec::new(), budget, logical_text, want_gaps }
+        FormWalk {
+            doc,
+            lines: Vec::new(),
+            gaps: Vec::new(),
+            next_stream,
+            path: Vec::new(),
+            calls: Vec::new(),
+            budget,
+            fonts: HashMap::new(),
+            logical_text,
+            want_gaps,
+        }
     }
 
-    /// `stream` gives the stream number of the operator at an index of `ops`.
-    fn walk(&mut self, ops: &[Op], resources: &Dict, carry: &mut Carry, stream: &dyn Fn(usize) -> usize) -> Result<(), EditError> {
-        let mut cache = HashMap::new();
+    /// `stream` gives the stream number of the operator at an index of `ops`; `resources_of` the
+    /// form whose resources `resources` are, `None` for the page's.
+    fn walk(
+        &mut self,
+        ops: &[Op],
+        resources: &Dict,
+        resources_of: Option<ObjRef>,
+        carry: &mut Carry,
+        stream: &dyn Fn(usize) -> usize,
+    ) -> Result<(), EditError> {
         let mut invoked = Vec::new();
         let (mut held, none) = (None, Dict::new());
         let properties = if self.logical_text { Some(resource_dict(self.doc, resources, b"Properties", &mut held).unwrap_or(&none)) } else { None };
-        let shown = interpret(self.doc, ops, resources, &mut cache, carry, Some(&mut invoked), properties)?;
+        let shown = interpret(self.doc, ops, resources, resources_of, &mut self.fonts, carry, Some(&mut invoked), properties)?;
         for gap in carry.advance_gaps.take().into_iter().flatten() {
             let paint_pos = self.calls.iter().copied().chain(std::iter::once(gap.op)).collect();
             self.gaps.push(GlyphAdvanceGap { paint_pos, from: gap.from, to: gap.to });
@@ -685,7 +712,7 @@ impl<'a> FormWalk<'a> {
         let mut forms = invoked.into_iter().peekable();
         for s in shown {
             while let Some((at, name, ts)) = forms.next_if(|f| f.0 < s.op) {
-                self.enter(resources, at, &name, ts, &mut carry.text_left)?;
+                self.enter(resources, resources_of, at, &name, ts, &mut carry.text_left)?;
                 // Text after a form starts a new line.
                 last = None;
             }
@@ -697,14 +724,22 @@ impl<'a> FormWalk<'a> {
             add_shown(&mut self.lines, &mut last, s, si, &layer_scopes, &self.calls);
         }
         for (at, name, ts) in forms {
-            self.enter(resources, at, &name, ts, &mut carry.text_left)?;
+            self.enter(resources, resources_of, at, &name, ts, &mut carry.text_left)?;
         }
         Ok(())
     }
 
     /// Read the form `name` that the `Do` at index `at` draws with state `ts`. `text_left`: the
-    /// page's text budget, shared with the forms the page draws.
-    fn enter(&mut self, resources: &Dict, at: usize, name: &[u8], ts: Ts, text_left: &mut usize) -> Result<(), EditError> {
+    /// page's text budget, shared with the forms the page draws. `resources_of`: as for [`FormWalk::walk`].
+    fn enter(
+        &mut self,
+        resources: &Dict,
+        resources_of: Option<ObjRef>,
+        at: usize,
+        name: &[u8],
+        ts: Ts,
+        text_left: &mut usize,
+    ) -> Result<(), EditError> {
         let Some(form) = form_call(self.doc, resources, name, ts.ctm, &self.path, &mut self.budget) else { return Ok(()) };
         let ops = parse(&form.data).ops;
         // The form starts with the graphics state at its `Do`, its own matrix applied.
@@ -716,7 +751,9 @@ impl<'a> FormWalk<'a> {
             self.path.push(r);
         }
         self.calls.push(at);
-        self.walk(&ops, form.resources(resources), &mut carry, &|_| stream)?;
+        // A form with no resources of its own uses those it was drawn with, and their fonts.
+        let (resources, resources_of) = form.own_resources().map_or((resources, resources_of), |own| (own, form.obj));
+        self.walk(&ops, resources, resources_of, &mut carry, &|_| stream)?;
         self.calls.pop();
         *text_left = carry.text_left;
         if form.obj.is_some() {
@@ -744,7 +781,7 @@ pub(super) fn reading_lines(doc: &Document, page: usize) -> Result<(Vec<TextLine
     let pieces = Pieces::join(&streams.into_iter().map(|(_, data)| data).collect::<Vec<_>>());
     let ops = pieces.parse().ops;
     let stream_of = |i: usize| ops.get(i).map_or(0, |op| pieces.pieces_of(op).0);
-    w.walk(&ops, &res, &mut carry, &stream_of)?;
+    w.walk(&ops, &res, None, &mut carry, &stream_of)?;
     let mut lines = w.lines;
     // A visual-order Indic font draws pre-base vowel signs before their consonant.
     for l in lines.iter_mut().filter(|l| l.visual_order && !l.actual_text) {

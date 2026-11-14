@@ -5776,6 +5776,41 @@ fn reading_follows_form_xobjects() {
     assert!(own[0].is_form && own[0].object == Some(pdfcraft_cos::ObjRef::new(6, 0)), "{own:?}");
 }
 
+/// A form drawn many times reads each of its fonts once a page, not once a visit: a font can hold
+/// CMaps and a program of 16 MiB each. A font object two forms share is read once too, and two
+/// forms that give `/F1` different fonts each keep their own.
+#[test]
+fn a_form_drawn_many_times_reads_each_font_once() {
+    use std::collections::BTreeSet;
+    let page = stream("", &"/A Do /B Do /C Do ".repeat(200));
+    let doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /XObject << /A 5 0 R /B 6 0 R /C 7 0 R >> >> /Contents 4 0 R >>",
+        &page,
+        &stream("/Type /XObject /Subtype /Form /BBox [0 0 600 800] /Resources << /Font << /F1 8 0 R >> >>", "BT /F1 12 Tf 72 700 Td (a) Tj ET"),
+        &stream(
+            "/Type /XObject /Subtype /Form /BBox [0 0 600 800] /Resources << /Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Times-Bold >> >> >>",
+            "BT /F1 12 Tf 72 600 Td (b) Tj ET",
+        ),
+        &stream("/Type /XObject /Subtype /Form /BBox [0 0 600 800] /Resources << /Font << /F2 8 0 R >> >>", "BT /F2 12 Tf 72 500 Td (c) Tj ET"),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]);
+    let expected = BTreeSet::from([("a", "Helvetica"), ("b", "Times-Bold"), ("c", "Helvetica")].map(|(t, f)| (t.to_owned(), f.to_owned())));
+
+    text::FONT_READS.with(|c| c.set(0));
+    let glyphs = text::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).unwrap();
+    assert_eq!(text::FONT_READS.with(std::cell::Cell::get), 2, "the audit's walk reads Helvetica and the direct Times-Bold once each");
+    assert!(!glyphs.unread_forms);
+    assert_eq!(glyphs.lines.len(), 600);
+    assert_eq!(glyphs.lines.into_iter().map(|l| (l.text, l.base_font)).collect::<BTreeSet<_>>(), expected);
+
+    text::FONT_READS.with(|c| c.set(0));
+    let blocks = text::reading_blocks(&doc, 0).unwrap();
+    assert_eq!(text::FONT_READS.with(std::cell::Cell::get), 2, "export's walk reads them once each too");
+    assert_eq!(blocks.into_iter().map(|b| (b.text, b.base_font)).collect::<BTreeSet<_>>(), expected);
+}
+
 /// A page's `/XObject` and a form's `/Resources` are read wherever they are stored, and a form with
 /// none of its own, or with something else there, uses the ones it was drawn with (PDF 1.1 files).
 /// Each of these pages shows one line of text and one picture through one form.
