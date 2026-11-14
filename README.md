@@ -123,6 +123,8 @@ from public specifications like the rest of PdfCraft.
   unredacted originals of images, forms and content streams, and refuses (changing nothing) when
   content under the marks is also used where the marks don't reach, naming the pages to mark as
   well.
+- **Redaction audit** checks text and covers in nested Form XObjects in paint order. Text drawn by
+  annotation appearance streams, tiling patterns and Type3 glyph procedures is outside its coverage.
 - **Crypt filters.** A crypt filter named by a reference that can't be read never counts as
   `/Identity`, so a stream isn't saved in the clear in a file meant to be encrypted: the stream takes
   the document's filter, and a file whose `/Encrypt` dictionary can't say what protects it doesn't
