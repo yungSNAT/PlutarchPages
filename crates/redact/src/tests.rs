@@ -3905,6 +3905,74 @@ fn redacting_a_form_every_page_inherits_is_refused_and_leaves_the_pages_untouche
     assert_eq!(under(&mut saved, 49, &[[0.0, 190.0, 300.0, 220.0]]), 6);
 }
 
+/// Add `/Big` to the resources of page-tree node 2: a form past what `drawn_names` may read for a
+/// page, which then can't tell what the page draws.
+fn add_form_too_large_to_check(doc: &mut Document) {
+    let mut dict = Dict::new();
+    dict.set(b"Subtype".to_vec(), Object::name("Form"));
+    let big = doc.add(Object::Stream(Stream::flate(dict, &vec![b' '; DRAWN_BUDGET + 1])));
+    let node = ObjRef::new(2, 0);
+    let mut res = doc.get(node).as_dict().and_then(|d| d.get(b"Resources")).and_then(Object::as_dict).cloned().unwrap();
+    let mut xo = res.get(b"XObject").and_then(Object::as_dict).cloned().unwrap();
+    xo.set(b"Big".to_vec(), Object::Ref(big));
+    res.set(b"XObject".to_vec(), Object::Dict(xo));
+    doc.update_dict(node, |d| d.set(b"Resources".to_vec(), Object::Dict(res))).unwrap();
+}
+
+/// A comment's appearance under a mark goes with it, though the pages' shared resources also list
+/// it, as neither page draws it. Once those resources hold more than `drawn_names` may read, the
+/// check can't tell that: apply refuses, and says so rather than asking for those pages to be
+/// marked, which can't help.
+#[test]
+fn a_page_too_large_to_check_is_refused_without_asking_for_more_marks() {
+    for with_big in [false, true] {
+        let mut doc = pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 300 300] /Resources << /XObject << /Icon 5 0 R >> >> >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R /Annots [7 0 R] >>".to_vec(),
+            stream("", b""),
+            stream("/Type /XObject /Subtype /Form /BBox [0 0 20 20]", b"0 0 20 20 re f"),
+            b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>".to_vec(),
+            b"<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (note) /AP << /N 5 0 R >> >>".to_vec(),
+        ]);
+        if with_big {
+            add_form_too_large_to_check(&mut doc);
+        }
+        mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
+        let result = apply(&mut doc, None);
+        if with_big {
+            assert!(matches!(&result, Err(RedactError::Unchecked(p)) if p == &[0, 1]), "{result:?}");
+        } else {
+            assert_eq!(result.map(|r| r.annotations), Ok(1));
+        }
+    }
+    // A page that draws the original through its contents is still asked to be marked.
+    let (mut doc, _) = inheriting_pages(2);
+    add_form_too_large_to_check(&mut doc);
+    mark(&mut doc, 0, &[[0.0, 190.0, 300.0, 220.0]], "");
+    let result = apply(&mut doc, None);
+    assert!(matches!(&result, Err(RedactError::StillUsed(p)) if p == &[1]), "{result:?}");
+}
+
+/// What `drawn_names` keeps for later pages: a form's names once each, however often it draws
+/// them, and no more streams once it holds `DRAWN_BUDGET` bytes of names. What it returns is the
+/// same either way.
+#[test]
+fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
+    let form = stream("/Type /XObject /Subtype /Form /BBox [0 0 10 10]", b"/A Do /A Do /B Do /A Do");
+    let doc = one_page(b"/Fm Do", "/XObject << /Fm 7 0 R >>", vec![form]);
+    let page = &pdfcraft_model::pages(&doc)[0];
+    let roots: Vec<Object> = page.dict.get(b"Resources").cloned().into_iter().collect();
+    let expected: HashSet<Vec<u8>> = [&b"Fm"[..], b"A", b"B"].iter().map(|n| n.to_vec()).collect();
+    let mut read = ReadStreams::default();
+    assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut read), Some(expected.clone()));
+    let kept = read.streams.get(&ObjRef::new(7, 0)).cloned().flatten().map(|(_, names)| names.len());
+    assert_eq!(kept, Some(2), "each name once");
+    let mut full = ReadStreams { name_bytes: DRAWN_BUDGET + 1, ..ReadStreams::default() };
+    assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut full), Some(expected));
+    assert!(full.streams.is_empty(), "nothing more kept past the budget");
+}
+
 #[test]
 fn redacting_every_inheriting_page_retires_the_parent_resources() {
     let (mut doc, kids) = inheriting_pages(20);

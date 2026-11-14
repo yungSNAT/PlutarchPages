@@ -90,6 +90,15 @@ pub enum RedactError {
         where_used(.0)
     )]
     StillUsed(Vec<usize>),
+    /// What these pages draw, through their resources included, is past [`DRAWN_BUDGET`] or can't
+    /// be read, so the check can't tell whether they still draw an original under the marks.
+    /// Marking more would not help.
+    #[error(
+        "what is drawn {} is more than PdfCraft reads to check it ({} MiB) or can't be read, so PdfCraft can't confirm that nothing there still uses what was under the marks; marking more won't help. Nothing was changed",
+        where_used(.0),
+        DRAWN_BUDGET >> 20
+    )]
+    Unchecked(Vec<usize>),
     /// A form under the marks is drawn so that its marks can't be carried to its other draws.
     #[error(
         "a form under the marks is drawn {} in a way its marks can't be carried to its other appearances, so it can't be redacted safely. Nothing was changed",
@@ -463,12 +472,32 @@ fn do_names(ops: &[pdfcraft_content::Op]) -> impl Iterator<Item = Vec<u8>> + '_ 
     ops.iter().filter(|op| op.is("Do")).filter_map(|op| op.name(0).map(<[u8]>::to_vec))
 }
 
+/// What [`drawn_names`] read of each content stream, for the next page that reaches it: its
+/// decoded size and the names its `Do` operators use, each once, or `None` when it can't be read
+/// or is past [`DRAWN_BUDGET`]. Once the names kept pass [`DRAWN_BUDGET`] bytes, streams not yet
+/// kept are read each time they are reached.
+#[derive(Default)]
+struct ReadStreams {
+    streams: HashMap<ObjRef, StreamNames>,
+    name_bytes: usize,
+}
+
+/// A stream's decoded size and the names its `Do` operators use, each once ([`ReadStreams`]).
+type StreamNames = Option<(usize, Vec<Vec<u8>>)>;
+
+/// [`StreamNames`] for `s`.
+fn stream_names(s: &Stream) -> StreamNames {
+    let data = s.decoded_within(DRAWN_BUDGET).ok()?;
+    let names: HashSet<Vec<u8>> = do_names(&pdfcraft_content::parse(&data).ops).collect();
+    Some((data.len(), names.into_iter().collect()))
+}
+
 /// Every name a `Do` operator uses in page `index`'s contents (its streams read as one, as
 /// operators may be split between them) or in any content reachable from `roots` (its resources
 /// and annotation appearances, including forms that draw from the resources they inherit).
 /// `None`, so that every name counts as drawn, when some of that content can't be read or is
-/// too large to read.
-fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object]) -> Option<HashSet<Vec<u8>>> {
+/// too large to read. `read` keeps what each stream gave for the next page that reaches it.
+fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read: &mut ReadStreams) -> Option<HashSet<Vec<u8>>> {
     let (_, data) = page_streams(doc, page, index).ok()?;
     let mut names: HashSet<Vec<u8>> = do_names(&pdfcraft_content::Pieces::join(&data).parse().ops).collect();
     let mut budget = DRAWN_BUDGET.checked_sub(data.iter().map(Vec::len).sum())?;
@@ -485,9 +514,20 @@ fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object]) -> O
         if !content_like(&s.dict) {
             continue;
         }
-        let data = s.decoded().ok()?;
-        budget = budget.checked_sub(data.len())?;
-        names.extend(do_names(&pdfcraft_content::parse(&data).ops));
+        if !read.streams.contains_key(&r) {
+            let got = stream_names(s);
+            if read.name_bytes > DRAWN_BUDGET {
+                let (len, drawn) = got?;
+                budget = budget.checked_sub(len)?;
+                names.extend(drawn);
+                continue;
+            }
+            read.name_bytes += got.as_ref().map_or(0, |(_, n)| n.iter().map(|n| n.len() + size_of::<Vec<u8>>()).sum());
+            read.streams.insert(r, got);
+        }
+        let (len, drawn) = read.streams.get(&r)?.as_ref()?;
+        budget = budget.checked_sub(*len)?;
+        names.extend(drawn.iter().cloned());
     }
     Some(names)
 }
@@ -536,7 +576,8 @@ fn annotation_payloads(doc: &Document, d: &Dict) -> Vec<ObjRef> {
 /// anything else is left as it is (and then fails the final check if it still reaches them).
 fn check_retired(doc: &mut Document, retired: &HashSet<ObjRef>) -> Result<(), RedactError> {
     let all = pdfcraft_model::pages(doc);
-    let mut using = Vec::new();
+    let (mut using, mut unchecked) = (Vec::new(), Vec::new());
+    let mut read = ReadStreams::default();
     for (i, p) in all.iter().enumerate() {
         // What the page draws: its contents, the XObjects named by any content it can reach
         // (forms drawing from inherited resources included), its other resources, and
@@ -544,18 +585,36 @@ fn check_retired(doc: &mut Document, retired: &HashSet<ObjRef>) -> Result<(), Re
         let res = p.dict.get(b"Resources").and_then(|r| doc.resolve(r).as_dict().cloned());
         let appearances: Vec<Object> = annots_of(doc, &p.dict).iter().filter_map(|a| doc.resolve(a).as_dict()?.get(b"AP").cloned()).collect();
         let drawn_from: Vec<Object> = appearances.iter().cloned().chain(res.clone().map(Object::Dict)).collect();
-        let drawn = drawn_names(doc, &p.dict, i, &drawn_from);
+        let drawn = drawn_names(doc, &p.dict, i, &drawn_from, &mut read);
         let mut roots: Vec<Object> = p.dict.get(b"Contents").cloned().into_iter().chain(appearances).collect();
+        // When what the page draws is unknown, its XObjects are what it might draw.
+        let mut might_draw = None;
         if let Some(mut res) = res {
-            if let (Some(drawn), Some(xo)) = (&drawn, res.get(b"XObject").and_then(|x| doc.resolve(x).as_dict().cloned())) {
-                let used: Dict = xo.iter().filter(|(k, _)| drawn.contains(k.as_slice())).map(|(k, v)| (k.clone(), v.clone())).collect();
+            if let Some(xo) = res.get(b"XObject").and_then(|x| doc.resolve(x).as_dict().cloned()) {
+                if drawn.is_none() {
+                    might_draw = Some(Object::Dict(xo.clone()));
+                }
+                let used: Dict = xo
+                    .iter()
+                    .filter(|(k, _)| drawn.as_ref().is_some_and(|d| d.contains(k.as_slice())))
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
                 res.set(b"XObject".to_vec(), Object::Dict(used));
             }
             roots.push(Object::Dict(res));
         }
         if !reachable(doc, &roots).is_disjoint(retired) {
             using.push(i);
+        } else if let Some(xo) = might_draw {
+            roots.push(xo);
+            if !reachable(doc, &roots).is_disjoint(retired) {
+                unchecked.push(i);
+            }
         }
+    }
+    // First, as marking more pages can't get past it.
+    if !unchecked.is_empty() {
+        return Err(RedactError::Unchecked(unchecked));
     }
     if !using.is_empty() {
         return Err(RedactError::StillUsed(using));
