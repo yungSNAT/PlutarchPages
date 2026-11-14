@@ -563,7 +563,23 @@ impl Carry {
 
 /// A font resource's metrics, fallback face and vertical advance (see [`Ts`]), read once per page.
 /// The advance is an error message when the font's writing mode can't be read.
-type CachedFont = (Rc<Metrics>, Option<String>, Result<Option<f64>, String>);
+pub(super) type CachedFont = (Rc<Metrics>, Option<String>, Result<Option<f64>, String>);
+
+/// A font a page's walk has read: the font object, or a font written out in a `/Font`
+/// dictionary, by the form whose resources hold it (`None`: the page's) and its name there. What a
+/// font reads as depends on its dictionary alone, so a form drawn many times, or forms sharing a
+/// font, read it once.
+#[derive(PartialEq, Eq, Hash)]
+pub(super) enum FontKey {
+    Object(ObjRef),
+    Named(Option<ObjRef>, Vec<u8>),
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How often a walk read a font resource on this thread, for the test that pins each font to one read a page.
+    pub(crate) static FONT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
 
 /// A `Do` met while interpreting: its operator index, XObject name and the state there.
 type Invocation = (usize, Vec<u8>, Ts);
@@ -907,11 +923,14 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn interpret(
     doc: &Document,
     ops: &[Op],
     resources: &Dict,
-    cache: &mut HashMap<Vec<u8>, CachedFont>,
+    // The form whose resources `resources` are, `None` for the page's: [`FontKey::Named`].
+    resources_of: Option<ObjRef>,
+    cache: &mut HashMap<FontKey, CachedFont>,
     carry: &mut Carry,
     mut invoked: Option<&mut Vec<Invocation>>,
     // `Some(properties)`: read `/ActualText` and the optional content sequences name, looking
@@ -1006,8 +1025,15 @@ pub(super) fn interpret(
             b"Tf" => {
                 ts.size = op.num(1).unwrap_or(ts.size);
                 if let Some(name) = op.name(0) {
-                    let (m, face, vertical) = cache.entry(name.to_vec()).or_insert_with(|| {
-                        let dict = fonts_res.get(name).and_then(|f| doc.resolve(f).as_dict().cloned());
+                    let font = fonts_res.get(name);
+                    let key = match font {
+                        Some(Object::Ref(r)) => FontKey::Object(*r),
+                        _ => FontKey::Named(resources_of, name.to_vec()),
+                    };
+                    let (m, face, vertical) = cache.entry(key).or_insert_with(|| {
+                        #[cfg(test)]
+                        FONT_READS.with(|c| c.set(c.get().saturating_add(1)));
+                        let dict = font.and_then(|f| doc.resolve(f).as_dict().cloned());
                         let metrics = dict.as_ref().map_or_else(Metrics::fallback, |d| Metrics::from_dict(doc, d));
                         let vertical = dict.as_ref().map_or(Ok(None), |d| vertical_advance(doc, d).map_err(|e| e.to_string()));
                         let face = dict.filter(is_type3_fallback).map(|_| metrics.base_font.clone());
