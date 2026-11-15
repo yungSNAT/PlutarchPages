@@ -21,6 +21,38 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Whether a push to main changed only Markdown that no build or test reads. Such a push skips the
+  # gate's Windows leg and the coverage job. The gate's Linux leg, which runs every test and
+  # repository check, still runs, so release.yml still finds a passing run for the commit. vendor/
+  # is not docs: a test reads vendor/README.md and lopdf's README is its crate documentation. Nor
+  # is ATTRIBUTION.md, which `cargo xtask assets` checks.
+  changes:
+    if: github.event_name == 'push'
+    name: Docs-only push
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      docs_only: ${{ steps.diff.outputs.docs_only }}
+    steps:
+      - id: diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          # Every changed path, a rename's old one included, is Markdown outside vendor/.
+          DOCS_ONLY: >-
+            [.files[] | .filename, (.previous_filename // empty)] as $f
+            | ($f | length) > 0 and ($f | length) < 300
+            and ($f | all(endswith(".md") and (startswith("vendor/") | not) and . != "ATTRIBUTION.md"))
+        # Anything unexpected (a new branch, an API error, 300 files or more) counts as code.
+        run: |
+          docs_only=false
+          if result=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq "$DOCS_ONLY"); then
+            docs_only=$result
+          fi
+          echo "docs_only=$docs_only" | tee -a "$GITHUB_OUTPUT"
+
   # The shared gate doesn't check where git dependencies come from; release.yml runs the same job.
   git-sources:
     if: github.event.action != 'labeled' || github.event.label.name == 'full-ci'
@@ -68,13 +100,18 @@ jobs:
           PY
 
   gate:
-    if: github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+    needs: changes
+    # `changes` runs only on pushes; a skipped or failed `changes` leaves the gate as it was.
+    if: >-
+      !cancelled()
+      && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
     uses: storytold/craft-common-actions/.github/workflows/gate.yml@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
     with:
-      # Windows on main, manual runs and pull requests labelled `full-ci`. No macOS on PRs or main:
-      # the org's 5 macOS slots are kept for release builds, and release.yml builds macOS.
-      os: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && '["ubuntu-24.04","windows-latest"]' || '["ubuntu-24.04"]' }}
+      # Windows on main (unless the push is docs-only), manual runs and pull requests labelled
+      # `full-ci`. No macOS on PRs or main: the org's 5 macOS slots are kept for release builds,
+      # and release.yml builds macOS.
+      os: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && needs.changes.outputs.docs_only != 'true' && '["ubuntu-24.04","windows-latest"]' || '["ubuntu-24.04"]' }}
       # Same craft-fonts commit as release.yml and freebsd.yml.
       craft-fonts-ref: &craft-fonts-ref b076417b5880bd4154bd22f00695b1d28c6bea83
       # egui/winit/rfd, and the independent oracles (crates/oracle). The coverage job reuses the list.
@@ -94,12 +131,14 @@ jobs:
   # The gate's tests run inside the pinned shared workflow, which keeps no report, so the Linux
   # tests run once more here under instrumentation for Codecov. Not part of the gate. On a pull
   # request that repeat was about half the run's runner time, so it runs there only with `full-ci`;
-  # every push to main still reports coverage.
+  # every push to main that is not docs-only still reports coverage.
   coverage:
+    needs: changes
     if: >-
-      github.event_name != 'pull_request'
+      !cancelled() && needs.changes.outputs.docs_only != 'true'
+      && (github.event_name != 'pull_request'
       || (contains(github.event.pull_request.labels.*.name, 'full-ci')
-      && (github.event.action != 'labeled' || github.event.label.name == 'full-ci'))
+      && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')))
     name: Test coverage
     runs-on: ubuntu-24.04
     timeout-minutes: 60
