@@ -522,11 +522,16 @@ fn own_resources<'r>(own: Option<&'r (&Object, Arc<Object>)>, stream: Option<Obj
     Some(Res { dict: resolved.as_dict()?, owner: Owner::of(entry, stream) })
 }
 
-/// A `/BBox` (a form's, a shading's), normalized, or `None` when there is none that is usable.
+/// A `/BBox` (a form's, a shading's), normalized, or `None` when it is not 4 finite numbers. Any
+/// other array is refused before its items are read, so a long one costs nothing at each use.
 pub(crate) fn form_bbox(doc: &Document, dict: &Dict) -> Option<[f64; 4]> {
     let bbox = dict.get(b"BBox").map(|o| doc.resolve(o));
-    let v: Vec<f64> = bbox.as_deref().and_then(Object::as_array)?.iter().filter_map(|o| doc.resolve(o).as_f64()).collect();
-    let [x0, y0, x1, y1] = <[f64; 4]>::try_from(v).ok().filter(|b| b.iter().all(|x| x.is_finite()))?;
+    let items = bbox.as_deref().and_then(Object::as_array).filter(|a| a.len() == 4)?;
+    let mut b = [0.0; 4];
+    for (x, o) in b.iter_mut().zip(items) {
+        *x = doc.resolve(o).as_f64().filter(|x| x.is_finite())?;
+    }
+    let [x0, y0, x1, y1] = b;
     Some([x0.min(x1), y0.min(y1), x0.max(x1), y0.max(y1)])
 }
 
