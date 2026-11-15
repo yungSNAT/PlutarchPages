@@ -171,6 +171,36 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `publish = false` in every crate and app: `pdfcraft`, `pdfcraft-cos`, `craft-ui` and other names
   this workspace uses belong to unrelated crates on crates.io. Give any crate upstream adds the
   same line.
+- Redaction drops an image's original XObject when it removes or clears the image under a mark
+  (`734deb02`, for upstream issue #389, still open), clears an image partly under the marks once
+  for every draw of it, through any resource name (`23005ebd`), and redacts an image or form that
+  several pages draw with the marks of all of them (`ac75a54f`). Keep these in
+  `crates/redact/src/interp.rs` and `lib.rs`; the tests are in `crates/redact/src/tests.rs`.
+- Reduce File Size saves its copy only when it is smaller by more than a new `/ModDate` can
+  explain (`reduce_saves` in `crates/engine/src/optimizer.rs`, `2b56095f`, for upstream issue
+  #490, still open). The app and automation both call it.
+- `text_paragraphs` and `Document::text_lines` read lines and blocks from one cached pass
+  (`e522af08`, #77): `PageTextCache` in `crates/engine/src/history.rs` and `text_lines_and_blocks`
+  in `crates/edit/src/text/blocks.rs` and `crates/engine/src/document.rs`, with smaller edits to
+  `crates/edit/src/lib.rs` and `crates/engine/src/open.rs`. Keep it unless upstream caches the same
+  pass. The change is generic, so it could go upstream.
+
+## Fixed differently upstream
+
+The fork fixed these before upstream did. Upstream's `main` now has its own fix: at the next merge,
+take upstream's side, keep only the fork's tests that upstream's don't cover, then delete the entry.
+
+- Encryption keys and salts come from the OS generator, and RC4 from RustCrypto's `rc4` crate, with
+  a property test against the code it replaced (`ed0c30c3`, #37). Upstream's Protect draws from
+  `getrandom::fill` too (`crates/engine/src/edit/run.rs`), and its `crates/crypt` now holds only
+  `lib.rs` over `craft-pdf`.
+- Variation selectors stay with their character when text is edited (`fa90fd89`, #51). Upstream's
+  `98b47619` (#4899) fixes the same in `crates/edit/src/text/fallback.rs`.
+- OCR loads the ONNX models, and an existing `.rten` pair, since ocrs withdrew the `.rten` files
+  (`797d1356`, #17). Upstream's `crates/ocr/src/ocrs.rs` does the same.
+- Import Data reads a CSV whose header holds a quoted tab as CSV (`472a0d99`, #23). Upstream's
+  `crates/xfdf/src/lib.rs` has its own quoted-tab check. The same commit's Indexed colour space
+  part is upstream's `4aad36cf1`, already merged.
 
 ## Ported ahead of the next merge
 
