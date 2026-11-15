@@ -268,6 +268,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
     let mut cache = HashMap::new();
     let mut lines: Vec<TextLine> = Vec::new();
     let mut carry = Carry::new();
+    carry.state_fonts = glyphs;
     if want_gaps {
         carry.advance_gaps = Some(Vec::new());
     }
@@ -744,7 +745,9 @@ impl<'a> FormWalk<'a> {
         let ops = parse(&form.data).ops;
         // The form starts with the graphics state at its `Do`, its own matrix applied.
         let advance_gaps = self.want_gaps.then(Vec::new);
-        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, advance_gaps, ..Carry::new() };
+        // Read for the glyphs alone, it reads the fonts graphics states set too, as the page does.
+        let state_fonts = !self.logical_text;
+        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, advance_gaps, state_fonts, ..Carry::new() };
         let stream = self.next_stream;
         self.next_stream = self.next_stream.saturating_add(1);
         if let Some(r) = form.obj {

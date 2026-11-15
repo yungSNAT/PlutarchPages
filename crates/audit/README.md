@@ -39,13 +39,20 @@ paints, and by its interior colour for text no such box lies over. A Redact mark
 appearance is not text it leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
-which a viewer paints once for each tile or glyph. Such text fails the audit.
+which a viewer paints once for each tile or glyph. Such text fails the audit. A font counts
+whether `Tf` selects it or a graphics state's `/Font` sets it (`gs`), and its text is read either
+way. A Type 3 font or tiling pattern without resources of its own reads those where it is used,
+so it is checked with each set it is used with.
 
 Limits, by design and documented rather than hidden:
 
 - only filled rectangles count as covers, drawn with `re` or as a single `m`/`l` subpath whose
-  corners form an axis-aligned rectangle (not other paths, shadings or patterns), and a
-  translucent one (`/ca` below 1) is not flagged;
+  corners form an axis-aligned rectangle (not other paths, or glyphs such as a Type 3 box or a
+  full block), and shadings painted with `sh`, over the box that holds their clip and within
+  their `/BBox`; a translucent one (`/ca` below 1) is not flagged. A cover is judged by its
+  colour as set with `g`, `rg`, `k` or in a gray, RGB or CMYK colour space with `cs` and
+  `sc`/`scn`. One in a colour the audit doesn't read (a pattern's, a spot colour's, a shading's)
+  counts as dark as the text;
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;

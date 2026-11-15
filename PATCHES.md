@@ -45,7 +45,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 
 - Redaction audit checks text and covers in nested Form XObjects and annotation appearance streams
   in paint order. Keep this path when merging upstream. Text in a tiling pattern or a Type3 glyph
-  procedure fails the audit, which does not read it.
+  procedure fails the audit, which does not read it. The glyph reading it uses (`glyph_text`) also
+  reads the font an ExtGState's `/Font` sets (`Carry::state_fonts` and `select_font` in
+  `crates/edit/src/text/interp.rs`); the editor's reading still takes only `Tf` fonts.
 - Text extraction and search flag possible differences between a page's text and what it shows.
   `near_background` covers near-white solid fills over an otherwise white backdrop, with bounded
   checks for overlapping glyphs. Paths, images and complex paint leave the backdrop unknown.
