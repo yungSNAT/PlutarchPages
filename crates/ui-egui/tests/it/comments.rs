@@ -1865,6 +1865,31 @@ fn undo_from_the_menu_takes_back_typing_in_a_comment_editor() {
     assert_eq!(s.session.get(s.views[0].id).unwrap().can_undo(), None, "the document is untouched");
 }
 
+/// The editor starts with no typing history each time it opens, on the same reply or another:
+/// Undo never puts back what an earlier, cancelled edit typed.
+#[test]
+fn a_reopened_comment_editor_has_no_earlier_typing_to_undo() {
+    let mut h = harness_with_bytes(THREE_REPLIES.to_vec(), |app| {
+        app.set_option("panel", "comments").unwrap();
+        app.views[0].comments.selected = Some((0, 0));
+    });
+    for reopen in ["Reply B", "Reply C"] {
+        draft_reply(&mut h, "Reply B", "B's draft");
+        h.get_by_label("Cancel").click();
+        h.run_steps(2);
+        reply_options(&h, reopen).click();
+        h.run_steps(2);
+        h.query_all_by_label("Edit").last().expect("the reply menu's Edit, after the toolbar tab").click();
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+        h.run_steps(3);
+        let index = if reopen == "Reply B" { 2 } else { 3 };
+        assert_eq!(h.state().views[0].comments.editing, Some((0, index, reopen.to_string())), "{reopen}: nothing to undo in the editor");
+        h.get_by_label("Cancel").click();
+        h.run_steps(2);
+    }
+}
+
 #[test]
 fn the_header_names_no_replies_when_there_are_none() {
     let h = harness_with_bytes(PER_PAGE_NAMES.to_vec(), |app| {
