@@ -299,10 +299,19 @@ impl CommentView {
         }
     }
 
+    /// The inline editor's comment (page, index) and text while it holds typing the document
+    /// doesn't have: text other than the comment's saved contents, as `annotations` give them.
+    pub(crate) fn unsaved_edit(&self, annotations: &[Annotation]) -> Option<(usize, usize, &str)> {
+        let (page, index, text) = self.editing.as_ref()?;
+        let saved = annotations.iter().find(|a| (a.page, a.index) == (*page, *index)).and_then(|a| a.contents.as_deref()).unwrap_or("");
+        (text.as_str() != saved).then_some((*page, *index, text.as_str()))
+    }
+
     /// Undo or Redo just ran. Either may have put annotations back or taken them away, on any
     /// page, so a (page, index) held here may now name another one. The selection and the inline
-    /// editor close, its unsaved text with it, rather than Save writing that text over whatever
-    /// took its place.
+    /// editor close rather than Save writing over whatever took its place. Typing it held was
+    /// taken back in the editor first, or saved as the step Undo takes back
+    /// (`PdfCraftApp::close_text_editors`), so none is lost.
     pub(crate) fn history_stepped(&mut self) {
         self.clear_selection();
         self.editing = None;

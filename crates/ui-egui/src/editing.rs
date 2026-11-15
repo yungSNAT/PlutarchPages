@@ -296,6 +296,16 @@ impl PdfCraftApp {
             crate::edit_text_ui::follow_typing(&ctx, crate::content_ui::input_id(), &before, &d.text, &mut [&mut d.style.aligns]);
             return true;
         }
+        // The Comments panel's editor likewise. Past its own history it falls to the document's,
+        // which saves what it holds first (`close_text_editors`).
+        if let Some(document) = self.session.get(doc)
+            && let Some((_, _, text)) = view.comments.unsaved_edit(&document.info.annotations)
+            && let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc), text, true)
+            && let Some((_, _, text)) = view.comments.editing.as_mut()
+        {
+            *text = stepped;
+            return true;
+        }
         false
     }
 
@@ -330,6 +340,15 @@ impl PdfCraftApp {
             d.selection = None;
             crate::edit_text_ui::follow_typing(&ctx, crate::content_ui::input_id(), &before, &d.text, &mut [&mut d.style.aligns]);
             return true;
+        }
+        // The Comments panel's editor likewise: typing it holds that the document doesn't have
+        // stays, and so does the document's Redo, which saving it first would drop.
+        if let Some((_, _, text)) = view.comments.editing.as_mut() {
+            if let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc), text, false) {
+                *text = stepped;
+                return true;
+            }
+            return self.session.get(doc).is_some_and(|document| view.comments.unsaved_edit(&document.info.annotations).is_some());
         }
         false
     }
@@ -412,7 +431,12 @@ impl PdfCraftApp {
             }
             return false;
         }
-        true
+        // The Comments panel's editor likewise, saved as its Save saves it; it stays open if that
+        // fails.
+        let Some(view) = self.views.get_mut(i) else { return true };
+        let unsaved = self.session.get(id).and_then(|d| view.comments.unsaved_edit(&d.info.annotations));
+        let edit = unsaved.map(|(page, index, text)| Edit::SetAnnotationContents { page, index, text: text.to_owned() });
+        edit.is_none_or(|edit| self.apply_edit(edit))
     }
 
     /// Whether the keyboard is in a box typed into on the page: a paragraph being edited, or added
@@ -451,7 +475,10 @@ impl PdfCraftApp {
         if let Some(ed) = &view.line_editor {
             return has_typing_to_redo(ctx, crate::edit_text_ui::input_id(), &ed.text);
         }
-        view.content.draft.as_ref().is_some_and(|d| has_typing_to_redo(ctx, crate::content_ui::input_id(), &d.text))
+        if let Some(d) = &view.content.draft {
+            return has_typing_to_redo(ctx, crate::content_ui::input_id(), &d.text);
+        }
+        view.comments.editing.as_ref().is_some_and(|(_, _, text)| has_typing_to_redo(ctx, crate::comments::editor_id(view.id), text))
     }
 
     /// Typing in a box on the page (a paragraph being edited, added text) that the page doesn't
@@ -460,6 +487,13 @@ impl PdfCraftApp {
         self.active.and_then(|i| self.views.get(i)).is_some_and(|v| {
             v.line_editor.as_ref().is_some_and(|ed| ed.has_unsaved_text()) || v.content.draft.as_ref().is_some_and(|d| d.has_unapplied_typing())
         })
+    }
+
+    /// Typing in the Comments panel's editor that the document doesn't have yet, which Undo from
+    /// the menu or toolbar takes back there first ([`Self::undo_in_page_box`]).
+    pub(crate) fn comment_typing_unsaved(&self) -> bool {
+        let Some((view, document)) = self.active_ids().and_then(|(i, id)| self.views.get(i).zip(self.session.get(id))) else { return false };
+        view.comments.unsaved_edit(&document.info.annotations).is_some()
     }
 
     /// Apply any edit a view queued this frame (organize toolbar, keys).
