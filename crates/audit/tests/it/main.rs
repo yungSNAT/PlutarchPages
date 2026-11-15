@@ -169,11 +169,13 @@ fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
 /// within its own `/BBox`. A translucent one is not a cover, as a translucent rectangle isn't.
 #[test]
 fn a_shading_painted_over_text_hides_it() {
-    let resources = "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R /Boxed 8 0 R >> /XObject << /Fm 7 0 R >> /ExtGState << /Half << /ca 0.5 >> >> >>";
+    let resources =
+        "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R /Boxed 8 0 R /Odd 9 0 R >> /XObject << /Fm 7 0 R >> /ExtGState << /Half << /ca 0.5 >> >> >>";
     let objects = [
         BLACK_SHADING.as_bytes().to_vec(),
         stream_obj("/Type /XObject /Subtype /Form /BBox [100 688 320 720] /Resources << /Shading << /Sh 6 0 R >> >>", "/Sh sh"),
         BLACK_SHADING.replacen("<< ", "<< /BBox [100 688 320 720] ", 1).into_bytes(),
+        BLACK_SHADING.replacen("<< ", "<< /BBox [100 688 320 720 /X] ", 1).into_bytes(),
     ];
     for (paint, hidden) in [
         ("q 100 688 220 32 re W n /Sh sh Q", true),
@@ -190,9 +192,12 @@ fn a_shading_painted_over_text_hides_it() {
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&doc), want, "{paint}");
     }
-    let doc = page(resources, &format!("{TWO_LINES} /Sh sh"), &objects);
-    let all = covered(&doc).concat();
-    assert!(all.contains("SECRET") && all.contains("PUBLIC"), "{all}");
+    // A /BBox that is not 4 numbers is no box: the shading fills its clip, here the page.
+    for paint in ["/Sh sh", "/Odd sh"] {
+        let doc = page(resources, &format!("{TWO_LINES} {paint}"), &objects);
+        let all = covered(&doc).concat();
+        assert!(all.contains("SECRET") && all.contains("PUBLIC"), "{paint}: {all}");
+    }
     let doc = page(resources, &format!("/Sh sh {TWO_LINES}"), &objects);
     assert!(covered(&doc).is_empty(), "text painted after the shading is on it");
 }
