@@ -575,6 +575,10 @@ jobs:
           cpu: 4
           mem: 12288
           copyback: false
+          # No cached VM image or apt packages: a release restores nothing that another workflow
+          # wrote (freebsd.yml runs shared actions at @main on main, in the same cache), and a
+          # release branch saves no 1 GB copy of its own.
+          disable-cache: true
           envs: "VERSION INPUT_VERSION PDFCRAFT_VERSION PDFCRAFT_BUILD_DATE PDFCRAFT_BUILD_SHA CARGO_HOME CARGO_TARGET_DIR CARGO_INCREMENTAL CARGO_BUILD_JOBS"
           prepare: |
             # Keep rustup and its proxies outside the Cargo data directory.
