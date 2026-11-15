@@ -8666,6 +8666,38 @@ fn text_in_a_font_a_graphics_state_sets_is_listed_and_not_edited() {
     }
 }
 
+/// More than 4,096 graphics states saved at once fail text reading, as they fail the redaction
+/// audit: each saved state copies the text state, so a run of a million `q` would otherwise hold a
+/// million copies. They are counted across the page and the forms it draws, where each form is
+/// drawn; restored ones don't count.
+#[test]
+fn too_many_saved_graphics_states_fail_text_reading() {
+    let text = "BT /F1 12 Tf 40 400 Td (Plain) Tj ET";
+    for (content, fails) in [
+        (format!("{} {text}", "q ".repeat(1_000_000)), true),
+        (format!("{} {text}", "q ".repeat(4097)), true),
+        (format!("{} {text}", "q ".repeat(4096)), false),
+        (format!("{} {text}", "q Q ".repeat(100_000)), false),
+    ] {
+        let result = text::text_lines(&text_page(&content), 0);
+        assert_eq!(result.is_err(), fails, "{:?}", result.map(|lines| lines.len()));
+    }
+    let drawn = |page: &str, form: &str| {
+        let doc = build(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 600 800] /Resources << /XObject << /Fm 5 0 R >> >> /Contents 4 0 R >>",
+            &stream("", page),
+            &stream("/Type /XObject /Subtype /Form /BBox [0 0 600 800] /Resources << /Font << /F1 6 0 R >> >>", &format!("{form} {text}")),
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        ]);
+        text::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).map(|glyphs| glyphs.lines.len())
+    };
+    assert!(drawn(&format!("{}/Fm Do", "q ".repeat(2000)), &"q ".repeat(2097)).is_err());
+    assert_eq!(drawn(&format!("{}/Fm Do", "q ".repeat(2000)), &"q ".repeat(2096)).unwrap(), 1);
+    assert_eq!(drawn(&format!("/Fm Do {}", "q ".repeat(2000)), &"q ".repeat(2097)).unwrap(), 1);
+}
+
 #[test]
 fn vertical_text_drawn_one_glyph_per_tj_is_one_line() {
     // One text object, a `Tj` per glyph; and a column with a text object per glyph.

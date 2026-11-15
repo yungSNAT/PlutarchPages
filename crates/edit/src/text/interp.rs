@@ -499,6 +499,9 @@ pub(super) struct Carry {
     /// save and restore them too (ISO 32000-2 §9.4.1, as corrected by the PDF Association's
     /// errata, issue 368), as the renderer does.
     pub(super) stack: Vec<(Ts, Matrix, Matrix)>,
+    /// Graphics states the page and the forms drawing this one hold saved where it is drawn: they
+    /// count towards [`MAX_SAVED`] with `stack`.
+    pub(super) saved_outside: usize,
     pub(super) marked: Vec<Option<usize>>,
     /// The depth and name of each open `/OC` marked-content sequence.
     pub(super) layers: Vec<(usize, Vec<u8>)>,
@@ -523,6 +526,11 @@ pub(super) struct AdvanceGap {
 /// copied for every glyph showing its code, so a small page can otherwise expand into gigabytes;
 /// real pages hold far less (a whole novel is about 1 MB).
 const MAX_PAGE_TEXT: usize = 16 << 20;
+
+/// Most graphics states saved at once (`q` not yet restored) on a page, its forms included, as the
+/// redaction audit and the renderer follow. Each saved state is a copy of the text state, so a run
+/// of `q` would otherwise hold millions. Past it, reading the page's text fails.
+const MAX_SAVED: usize = 4096;
 
 impl Carry {
     pub(super) fn new() -> Self {
@@ -550,6 +558,7 @@ impl Carry {
         Carry {
             ts,
             stack: Vec::new(),
+            saved_outside: 0,
             marked: Vec::new(),
             layers: Vec::new(),
             ocr: Vec::new(),
@@ -605,8 +614,9 @@ thread_local! {
     pub(crate) static FONT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// A `Do` met while interpreting: its operator index, XObject name and the state there.
-type Invocation = (usize, Vec<u8>, Ts);
+/// A `Do` met while interpreting: its operator index, XObject name, the state there and the
+/// graphics states saved there ([`Carry::saved_outside`] for the form).
+type Invocation = (usize, Vec<u8>, Ts, usize);
 
 #[derive(Default)]
 struct MarkedContent {
@@ -1016,7 +1026,12 @@ pub(super) fn interpret(
             b"EMC" => {
                 marked.end(i, &mut out);
             }
-            b"q" => stack.push((ts.clone(), tm, tlm)),
+            b"q" => {
+                if carry.saved_outside.saturating_add(stack.len()) >= MAX_SAVED {
+                    return Err(EditError::Invalid("the page saves more graphics states at once than its text reading follows".into()));
+                }
+                stack.push((ts.clone(), tm, tlm));
+            }
             b"Q" => {
                 if let Some(saved) = stack.pop() {
                     (ts, tm, tlm) = saved;
@@ -1101,7 +1116,7 @@ pub(super) fn interpret(
             }
             b"Do" => {
                 if let (Some(list), Some(name)) = (invoked.as_deref_mut(), op.name(0)) {
-                    list.push((i, name.to_vec(), ts.clone()));
+                    list.push((i, name.to_vec(), ts.clone(), carry.saved_outside.saturating_add(stack.len())));
                 }
             }
             b"Td" | b"TD" => {
