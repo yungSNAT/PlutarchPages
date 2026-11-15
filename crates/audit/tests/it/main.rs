@@ -8,6 +8,8 @@ use pdfcraft_audit::{AuditError, FindingKind, audit_redactions};
 use pdfcraft_cos::Document;
 use pdfcraft_testkit::{Pdf, stream_obj};
 
+mod covers;
+
 /// Object 5 of every page [`page`] builds.
 const HELVETICA: &str = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
 
@@ -166,7 +168,8 @@ fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
 
 /// A shading painted with `sh` over text hides what the clip it is painted in holds: a clip set by
 /// a rectangle, by lines or by a curve, the box of the form it is painted in, or the page, and
-/// within its own `/BBox`. A translucent one is not a cover, as a translucent rectangle isn't.
+/// within its own `/BBox`. A half-transparent one leaves the text legible, as a half-transparent
+/// rectangle does.
 #[test]
 fn a_shading_painted_over_text_hides_it() {
     let resources =

@@ -8,12 +8,15 @@ let report = audit_document(&doc)?; // page_findings and document_findings
 
 The report checks for:
 
-- **faux redaction**: an opaque filled rectangle painted *after* text it overlaps, dark enough
-  against the text's colour (WCAG contrast below 3) to hide it, while the text is still
-  extractable underneath; opaque filled Square annotations count as covers too;
+- **faux redaction**: a filled rectangle, or a word of block characters (`█`, `■` and the like),
+  painted *after* text it overlaps, dark enough against the text's colour (WCAG contrast below 3)
+  to hide it, while the text is still extractable underneath; filled Square annotations count as
+  covers too. A translucent cover (`/ca` or `/CA` below 1) must also leave the text seen through it
+  below that contrast with the cover beside it, over the white or black backdrop the text reads
+  best against: black at 0.9 over black text hides it, at 0.5 it doesn't;
 - **unapplied mark**: a Redact annotation that was marked but never applied;
 - **retained advance**: a large forward `TJ` adjustment entirely under a later opaque
-  rectangle. An adjustment can preserve the removed text's exact width even after the
+  cover. An adjustment can preserve the removed text's exact width even after the
   text has gone. Ordinary text positioning can produce the same signal;
 - **earlier revisions**: counts incremental revisions that a reader can inspect;
 - **document metadata**: counts entries in the document information dictionary and
@@ -47,12 +50,15 @@ so it is checked with each set it is used with.
 Limits, by design and documented rather than hidden:
 
 - only filled rectangles count as covers, drawn with `re` or as a single `m`/`l` subpath whose
-  corners form an axis-aligned rectangle (not other paths, or glyphs such as a Type 3 box or a
-  full block), and shadings painted with `sh`, over the box that holds their clip and within
-  their `/BBox`; a translucent one (`/ca` below 1) is not flagged. A cover is judged by its
-  colour as set with `g`, `rg`, `k` or in a gray, RGB or CMYK colour space with `cs` and
-  `sc`/`scn`. One in a colour the audit doesn't read (a pattern's, a spot colour's, a shading's)
-  counts as dark as the text;
+  corners form an axis-aligned rectangle (not other paths), shadings painted with `sh`, over the
+  box that holds their clip and within their `/BBox`, and words of block characters drawn filled
+  (render mode 0, 2, 4 or 6), over the box of each word. Other glyphs, such as a Type 3 box that
+  maps to a letter, are not covers, and a run whose text doesn't split into as many words as it
+  draws counts only when it is all blocks. A cover is judged by its colour as set with `g`, `rg`,
+  `k` or in a gray, RGB or CMYK colour space with `cs` and `sc`/`scn`, a block by its text's
+  colour. One in a colour the audit doesn't read (a pattern's, a spot colour's, a shading's)
+  counts as dark as the text. A soft mask is not read: a cover painted through one counts as
+  painted without it, and text a soft mask hides is outside the covered-text check;
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
@@ -64,7 +70,8 @@ It fails closed: an undecodable content stream, malformed `/Annots`, form XObjec
 than 32 or in a cycle, a form whose text can't be read (it draws itself, doesn't decode, or comes
 past the text reader's form limits), an annotation appearance without a usable `/BBox`, text in a
 tiling pattern or a Type 3 glyph, a walk past the operator bound (2 million operators a page, its
-forms and appearances included, counted before any text is read), more than 16 MiB of text on a
+forms and appearances included, counted before any text is read), more than 4,096 graphics states
+saved at once (the renderer's own limit), more than 16 MiB of text on a
 page and its appearances, more than 50 million
 cover-against-word comparisons on a page, or more than 64 MiB of covered text in the report is an
 error, never "no findings". Errors name pages from 1.

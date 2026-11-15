@@ -8,16 +8,17 @@
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
 //! overlaps, and only when it is dark enough against the text's color to make the text
 //! unreadable (WCAG contrast below 3.0). Page backgrounds, table shading and highlight
-//! marks are therefore not flagged.
+//! marks are therefore not flagged. A translucent cover (`/ca` below 1) must also leave the text
+//! seen through it below that contrast with the cover beside it.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
 //! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
-//! that holds its clip and within its `/BBox`; other filled paths are not. A cover in a color
-//! the audit doesn't read (a pattern's, a spot color's) counts as dark as the text. A rectangle
-//! or shading drawn with a translucent ExtGState (`/ca < 1`) is not flagged; opaque
-//! filled `/Square` annotations count as covers, but annotation rectangles are compared in
-//! unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
+//! that holds its clip and within its `/BBox`, and a word of block characters (`█`, `■` and the
+//! like) drawn filled; other filled paths and glyphs are not. A cover in a color the audit doesn't
+//! read (a pattern's, a spot color's) counts as dark as the text, and one painted through a soft
+//! mask counts as unmasked. Filled `/Square` annotations count as covers too, but annotation
+//! rectangles are compared in unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
 //! XObjects, nested ones included, are checked like the page's own, in the order they are painted,
 //! and so are those of the appearances a viewer paints for the page's annotations, after the page
 //! in `/Annots` order.
@@ -25,7 +26,8 @@
 //! The audit fails closed: any content that cannot be read (an undecodable content stream,
 //! malformed annotations, form XObjects nested deeper than 32 or in a cycle, a form whose text
 //! can't be read, an appearance without a box, text in a tiling pattern or a Type 3 glyph, which
-//! it does not read) is an error, never an empty finding list.
+//! it does not read, more than 4,096 graphics states saved at once) is an error, never an empty
+//! finding list.
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
@@ -98,6 +100,8 @@ pub enum AuditError {
     Text(usize, String),
     #[error("content walk exceeded the operator bound")]
     TooManyOps,
+    #[error("content saves more graphics states at once than the audit follows")]
+    TooManyStates,
     #[error("form XObjects nest deeper than the audit follows")]
     TooDeep,
     /// Some text a form draws was not read: the form draws itself, doesn't decode, or comes past
@@ -218,9 +222,9 @@ impl Budget {
     }
 
     /// The text `cover` hides in the `lines` that `hides` ([`covered_words`]), joined with single
-    /// spaces, or `None` when they show no text. Without `copying` the text is empty and never
-    /// assembled: one long line under many covers would otherwise be copied once per cover,
-    /// outside both bounds.
+    /// spaces, or `None` when they show no text but blocks ([`shows_text`]). Without `copying` the
+    /// text is empty and never assembled: one long line under many covers would otherwise be
+    /// copied once per cover, outside both bounds.
     fn hidden_text(
         &mut self,
         lines: &[Painted],
@@ -232,9 +236,11 @@ impl Budget {
         if !copying {
             let mut hidden = false;
             for Painted { line, .. } in lines.iter().filter(|p| hides(p)) {
-                // Trimming walks the line's text (padding and all): it costs its bytes.
+                // Reading the words walks the line's text (padding and all): it costs its bytes.
                 self.spend(line.text.len() / TEXT_BYTES_PER_COMPARISON)?;
-                if !line.text.trim().is_empty() {
+                let mut words = String::new();
+                covered_words(cover, line, &mut words);
+                if shows_text(&words) {
                     hidden = true;
                     break;
                 }
@@ -251,7 +257,7 @@ impl Budget {
             }
             covered_words(cover, line, &mut covered);
         }
-        Ok((!covered.trim().is_empty()).then_some(covered))
+        Ok(shows_text(&covered).then_some(covered))
     }
 
     /// `n` units of work done against the comparison bound.
@@ -314,14 +320,17 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             lines.extend(more);
             gaps.extend(more_gaps);
         }
+        let mut rects = rects;
+        rects.extend(glyph_covers(&lines));
         budget.start_page(&lines);
-        // 1. Opaque filled rectangles over extractable text.
+        // 1. Filled rectangles and block glyphs over extractable text.
         for r in &rects {
             if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |p| is_cover(r, p))? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
             }
-            if !gaps.is_empty() {
+            // An opaque cover alone: one the gap shows through says nothing of its width.
+            if r.alpha >= 1.0 && !gaps.is_empty() {
                 budget.spend(gaps.len())?;
                 if gaps.iter().any(|gap| gap.paint_pos < r.pos && covers_gap(&r.rect, gap)) {
                     let covered_text = budget.report_text(String::new(), copying)?;
@@ -354,11 +363,8 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             };
             if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
-                AnnotationCover::Square { rect, rgb } => {
-                    p.layer <= a.layer
-                        && covers(rect, &p.line)
-                        && contrast(p.line.color, *rgb) < COVER_CONTRAST
-                        && !own.iter().any(|r| is_cover(r, p))
+                AnnotationCover::Square { rect, rgb, alpha } => {
+                    p.layer <= a.layer && covers(rect, &p.line) && hides(p.line.color, Some(*rgb), *alpha) && !own.iter().any(|r| is_cover(r, p))
                 }
             })? {
                 let covered_text = budget.report_text(covered, copying)?;
@@ -431,16 +437,74 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 }
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
-/// after the start of the line, overlaps it substantially, and is dark enough against the line's
-/// color to make the text unreadable. Light covers (table shading, highlights) over dark text fail
-/// the contrast check and are not flagged; one in a color the audit doesn't read could be as dark
-/// as the text, and is. A line can join runs painted before and after the
-/// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
-/// too.
+/// after the start of the line, overlaps it substantially, and [`hides`] the line's colour. A line
+/// can join runs painted before and after the cover; the later ones are drawn on it in the same
+/// low-contrast color, so they are unreadable too.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
     rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
         && covers(&rect.rect, &p.line)
-        && rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST)
+        && hides(p.line.color, rect.rgb, rect.alpha)
+}
+
+/// Does a cover in `rgb` (`None`: a colour the audit doesn't read) at opacity `alpha` make text in
+/// `text` unreadable? It must be dark enough against the text (WCAG contrast below 3): light covers
+/// (table shading, highlights) over dark text are not flagged, and one in a colour the audit
+/// doesn't read could be as dark as the text, and is. A translucent one must also leave too little
+/// contrast between the text seen through it and the cover beside the text: that is, over the
+/// backdrop the text reads best against (white or black), so that text it leaves legible on that
+/// backdrop is not flagged.
+fn hides(text: [f64; 3], rgb: Option<[f64; 3]>, alpha: f64) -> bool {
+    let cover = rgb.unwrap_or(text);
+    if contrast(text, cover) >= COVER_CONTRAST {
+        return false;
+    }
+    if alpha >= 1.0 {
+        return true;
+    }
+    let backdrop = if contrast(text, [1.0; 3]) >= contrast(text, [0.0; 3]) { [1.0; 3] } else { [0.0; 3] };
+    let through = |under: [f64; 3]| [0, 1, 2].map(|i| alpha * cover[i] + (1.0 - alpha) * under[i]);
+    contrast(through(text), through(backdrop)) < COVER_CONTRAST
+}
+
+/// Characters drawn as a solid box: typed or pasted over text, they hide it as a filled rectangle
+/// does.
+fn is_block(c: char) -> bool {
+    matches!(c, '\u{2587}' | '\u{2588}' | '\u{2589}' | '\u{25A0}' | '\u{25AC}' | '\u{25AE}' | '\u{25FC}' | '\u{2B1B}')
+}
+
+/// Whether `text` shows anything a cover could hide: a block character is itself a cover.
+fn shows_text(text: &str) -> bool {
+    text.chars().any(|c| !c.is_whitespace() && !is_block(c))
+}
+
+/// The covers block characters draw: the box of each word a run fills with them (render modes 0,
+/// 2, 4 and 6 fill glyphs), painted when its run is, in the line's colour and opacity. A run whose
+/// text doesn't split into as many words as it has word boxes counts only when it shows nothing
+/// but blocks. A line whose text was reordered for reading lists no runs, and gives none.
+fn glyph_covers(lines: &[Painted]) -> Vec<cover::FilledRect> {
+    let mut out = Vec::new();
+    for Painted { layer, line } in lines {
+        let alpha = line.opacity().0;
+        if !line.text.chars().any(is_block) || alpha <= 0.0 {
+            continue;
+        }
+        for (((text, ink, _), (mode, _)), order) in line.runs().zip(line.run_modes()).zip(line.run_paint_orders()) {
+            if !matches!(mode, 0 | 2 | 4 | 6) {
+                continue;
+            }
+            let words: Vec<&str> = text.split_whitespace().collect();
+            let blocks: Vec<[f64; 4]> = if words.len() == ink.len() {
+                words.iter().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| *b).collect()
+            } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
+                ink.to_vec()
+            } else {
+                Vec::new()
+            };
+            let pos: Vec<usize> = std::iter::once(*layer).chain(order).collect();
+            out.extend(blocks.into_iter().map(|rect| cover::FilledRect { rect, rgb: Some(line.color), alpha, pos: pos.clone() }));
+        }
+    }
+    out
 }
 
 /// Does `cover` hide a substantial part of what `line` draws? Three ways, any is enough:
@@ -523,7 +587,12 @@ fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 enum AnnotationCover {
     Redact([f64; 4]),
-    Square { rect: [f64; 4], rgb: [f64; 3] },
+    /// Its interior colour and opacity (`/CA`).
+    Square {
+        rect: [f64; 4],
+        rgb: [f64; 3],
+        alpha: f64,
+    },
 }
 
 /// An annotation the audit reads: its layer in paint order, the cover its dictionary describes and
@@ -562,8 +631,9 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
         let cover = match subtype(doc, dict)?.as_deref() {
             Some(b"Redact") => Some(AnnotationCover::Redact(rect)),
             Some(b"Square") if shown => {
-                let alpha = dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()).unwrap_or(1.0);
-                annotation_color(doc, dict, b"IC").filter(|_| alpha >= 1.0).map(|rgb| AnnotationCover::Square { rect, rgb })
+                let alpha =
+                    dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()).filter(|a| a.is_finite()).map_or(1.0, |a| a.clamp(0.0, 1.0));
+                annotation_color(doc, dict, b"IC").filter(|_| alpha > 0.0).map(|rgb| AnnotationCover::Square { rect, rgb, alpha })
             }
             _ => None,
         };

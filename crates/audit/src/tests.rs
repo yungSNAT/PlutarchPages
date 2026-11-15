@@ -215,7 +215,7 @@ fn black_box_without_text_is_not_a_finding() {
 
 #[test]
 fn translucent_cover_is_not_flagged() {
-    // A rectangle drawn with a translucent ExtGState does not hide the text.
+    // A black rectangle drawn at half opacity leaves black text under it legible.
     let content = b"/GS1 gs\nBT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n0 g\n100 688 220 32 re f\n";
     let page_extra = "/Resources << /Font << /F1 5 0 R >> /ExtGState << /GS1 6 0 R >> >>";
     let mut b = Builder::new();

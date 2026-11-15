@@ -9,7 +9,8 @@
 //! the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
 //! one the audit can't read and counts as dark as the text) and the non-stroking alpha from
-//! ExtGState (`gs` reading `/ca`). Form XObjects are followed read-only with a depth cap, and so
+//! ExtGState (`gs` reading `/ca`), which each rectangle records: a translucent cover can still
+//! hide text. A soft mask is not read, so a cover painted through one counts as opaque. Form XObjects are followed read-only with a depth cap, and so
 //! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
 //! scope and documented as such.
 //!
@@ -40,8 +41,12 @@ const MAX_DEPTH: usize = 32;
 /// Bound on total operators walked per page, so a hostile stream cannot spin forever.
 /// Hitting it fails the audit: a truncated walk must never report "clean".
 const MAX_OPS: usize = 2_000_000;
+/// Most graphics states saved at once (`q` not yet restored) on a page, its forms included: the
+/// renderer's own limit, past which it stops saving them. Each saved state is a copy, so a run of
+/// `q` within the operator bound would otherwise hold millions. Hitting it fails the audit.
+const MAX_SAVED: usize = 4096;
 
-/// One opaque filled rectangle, in page user space.
+/// One filled rectangle, in page user space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FilledRect {
     /// `[x0, y0, x1, y1]`, normalized so `x0 <= x1` and `y0 <= y1`.
@@ -49,6 +54,8 @@ pub struct FilledRect {
     /// The fill color as sRGB-ish `[r, g, b]` (CMYK is converted approximately), or `None` when the
     /// audit can't read it.
     pub rgb: Option<[f64; 3]>,
+    /// The non-stroking alpha (`/ca`) it is painted with, above 0 and at most 1.
+    pub alpha: f64,
     /// Paint position: its layer, the `Do` operators that drew it, outermost first, then the fill
     /// operator's index (see the module documentation).
     pub pos: Vec<usize>,
@@ -198,6 +205,8 @@ struct Walker<'a> {
     /// The fonts and patterns already looked at on this page, with the owner of the resources they
     /// were read with: a Type 3 font selected on every line is walked once for each set.
     walked: HashSet<(ObjRef, Owner)>,
+    /// Graphics states saved and not yet restored, in every stack being walked.
+    saved: usize,
 }
 
 impl<'a> Walker<'a> {
@@ -247,11 +256,18 @@ impl<'a> Walker<'a> {
                 _ => {}
             }
             match op.op.as_slice() {
-                b"q" => stack.push(gs.clone()),
+                b"q" => {
+                    if self.saved >= MAX_SAVED {
+                        return Err(AuditError::TooManyStates);
+                    }
+                    self.saved += 1;
+                    stack.push(gs.clone());
+                }
                 b"Q" => {
                     // The current path is not graphics state (ISO 32000-2 §8.4.1): `re Q f` still
                     // fills the rectangle, whose corners are already in user space.
                     if let Some(g) = stack.pop() {
+                        self.saved = self.saved.saturating_sub(1);
                         *gs = g;
                     }
                 }
@@ -329,10 +345,10 @@ impl<'a> Walker<'a> {
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
                     if let Some(r) = std::mem::replace(&mut path, Path::Empty).rect()
-                        && gs.alpha >= 1.0
+                        && gs.alpha > 0.0
                         && self.inside.is_none()
                     {
-                        self.paint(r, gs.fill, calls, i);
+                        self.paint(r, gs.fill, gs.alpha, calls, i);
                     }
                 }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
@@ -341,8 +357,8 @@ impl<'a> Walker<'a> {
                     let shading = op.name(0).and_then(|name| shadings.as_deref().and_then(Object::as_dict)?.get(name)).map(|o| self.doc.resolve(o));
                     let bbox = shading.as_deref().and_then(Object::as_dict).and_then(|d| form_bbox(self.doc, d));
                     let area = bbox.map_or(gs.clip, |b| meet(gs.clip, gs.ctm.bbox(b)));
-                    if gs.alpha >= 1.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
-                        self.paint(area, None, calls, i);
+                    if gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
+                        self.paint(area, None, gs.alpha, calls, i);
                     }
                 }
                 b"Tj" | b"TJ" | b"'" | b"\"" => {
@@ -393,10 +409,10 @@ impl<'a> Walker<'a> {
         Ok(())
     }
 
-    /// Record a cover painted over `rect` in `rgb` by the operator at index `at`.
-    fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, calls: &[usize], at: usize) {
+    /// Record a cover painted over `rect` in `rgb` at `alpha` by the operator at index `at`.
+    fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, alpha: f64, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        self.out.push(FilledRect { rect, rgb, pos });
+        self.out.push(FilledRect { rect, rgb, alpha, pos });
     }
 
     /// Follow a form XObject read-only, composing its matrix onto the current CTM. State
@@ -427,8 +443,16 @@ impl<'a> Walker<'a> {
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
         }
-        let mut sub_stack = Vec::new();
-        self.walk_ops(ops(&data), &mut sub_gs, &mut sub_stack, sub, calls)
+        self.walk_nested(ops(&data), &mut sub_gs, sub, calls)
+    }
+
+    /// Walk a stream of its own (a form, a glyph procedure, a pattern cell) with a stack of its
+    /// own: the states it leaves saved are dropped with it.
+    fn walk_nested(&mut self, ops: impl Iterator<Item = Op>, gs: &mut Gs, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+        let mut stack = Vec::new();
+        let walked = self.walk_ops(ops, gs, &mut stack, res, calls);
+        self.saved = self.saved.saturating_sub(stack.len());
+        walked
     }
 
     /// Walk the font an ExtGState's `/Font` sets (ISO 32000-2 §8.4.5) as [`Walker::walk_type3`]
@@ -507,7 +531,7 @@ impl<'a> Walker<'a> {
         let outer = self.inside.replace(unplaced);
         calls.push(at);
         // Nothing painted here is placed, so the clip is never read.
-        self.walk_ops(ops(&data), &mut Gs::new([0.0; 4]), &mut Vec::new(), res, calls)?;
+        self.walk_nested(ops(&data), &mut Gs::new([0.0; 4]), res, calls)?;
         calls.pop();
         self.inside = outer;
         Ok(())
@@ -624,7 +648,7 @@ fn ext_alpha(doc: &Document, resources: &Dict, name: &[u8]) -> f64 {
     alpha.filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0)).unwrap_or(1.0)
 }
 
-/// Every opaque filled rectangle drawn by the content of page `n` (and its form XObjects), then by
+/// Every filled rectangle drawn by the content of page `n` (and its form XObjects), then by
 /// its annotations' `appearances`, with paint positions. A page's content streams are walked once,
 /// joined, with one graphics state, so state set in an earlier stream is still in force in the
 /// later ones. Any content stream that cannot be decoded, content, forms and appearances that
@@ -648,7 +672,7 @@ pub fn filled_rects(doc: &Document, page: &Dict, crop: [f64; 4], n: usize, appea
         }
     }
     let pieces = Pieces::join(&streams);
-    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, inside: None, walked: HashSet::new() };
+    let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, inside: None, walked: HashSet::new(), saved: 0 };
     let mut gs = Gs::new(crop);
     let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
@@ -667,7 +691,7 @@ pub fn filled_rects(doc: &Document, page: &Dict, crop: [f64; 4], n: usize, appea
         // A viewer clips the appearance to its box, as a form's.
         let clip = form_bbox(doc, &form.dict).map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
         let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };
-        w.walk_ops(ops(&data), &mut gs, &mut Vec::new(), own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
+        w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
     Ok(w.out)
 }
