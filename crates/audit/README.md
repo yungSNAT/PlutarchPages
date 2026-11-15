@@ -89,4 +89,14 @@ entry point checks only covered text and unapplied marks.
 `fuzz/` is a detached cargo-fuzz crate (`cargo +nightly fuzz run content`, run from
 `crates/audit/`). Its target reads each input as a page's content, and as the content of the form,
 Type 3 glyph, tiling pattern and annotation appearance the page offers, or as a whole file when it
-starts with `%PDF`.
+starts with `%PDF`. The documents the integration tests build make its seed corpus: with
+`PDFCRAFT_AUDIT_SEEDS` naming an existing folder, `cargo test -p pdfcraft-audit --test it` saves
+each one there.
+
+```sh
+mkdir -p fuzz/corpus/content
+PDFCRAFT_AUDIT_SEEDS="$PWD/fuzz/corpus/content" cargo test -p pdfcraft-audit --test it
+cargo +nightly fuzz run content fuzz/corpus/content
+```
+
+The weekly coverage-guided fuzz workflow (`.github/workflows/cargo-fuzz.yml`) runs it this way.

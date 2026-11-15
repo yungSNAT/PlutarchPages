@@ -13,12 +13,15 @@ on:
     paths:
       - '.github/workflows/cargo-fuzz.yml'
       - 'Cargo.toml'
+      - 'crates/audit/**'
       - 'crates/content/**'
       - 'crates/cos/**'
       - 'crates/crypt/**'
+      - 'crates/edit/**'
       - 'crates/filters/**'
       - 'crates/fonts/**'
       - 'crates/js/**'
+      - 'crates/model/**'
       - 'crates/prc/**'
       - 'crates/xfa/**'
       - 'vendor/hayro-jbig2/**'
@@ -46,6 +49,7 @@ jobs:
           - { crate: js, target: formcalc }
           - { crate: xfa, target: packet }
           - { crate: prc, target: model }
+          - { crate: audit, target: content }
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -66,6 +70,8 @@ jobs:
           case "$TARGET" in
             formcalc) printf '%s\n' 'Sum(1, 2, 3)' 'if (total > 0) then total endif' > "$corpus/seed" ;;
             packet) printf '%s\n' '<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"><template xmlns="http://www.xfa.org/schema/xfa-template/3.3/"><subform name="form"><field name="total"><ui><numericEdit/></ui></field></subform></template><xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/"><xfa:data><form><total>12</total></form></xfa:data></xfa:datasets></xdp:xdp>' > "$corpus/seed" ;;
+            # The documents the audit's integration tests build (crates/audit/README.md).
+            content) PDFCRAFT_AUDIT_SEEDS="$PWD/$corpus" cargo test -p pdfcraft-audit --test it ;;
             # Odd first byte: a container of five empty sections and an empty model file.
             model) printf '\001\0\0\0\0\0\0\0\0\0\0' > "$corpus/seed" ;;
           esac

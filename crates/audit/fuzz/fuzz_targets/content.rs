@@ -17,11 +17,11 @@ use pdfcraft_testkit::Pdf;
 const MAX_INPUT: usize = 1 << 20;
 
 /// What the page offers its content, by name: Helvetica `/F1`, a Type 3 font `/T`, graphics states
-/// that set a font, an alpha and a soft mask, a form `/Fm`, a tiling pattern `/P` and a shading
-/// `/Sh`.
+/// that set a font, an alpha, a soft mask and a blend mode, a form `/Fm`, an image `/Im`, a tiling
+/// pattern `/P` and a shading `/Sh`.
 const RESOURCES: &str = "<< /Font << /F1 5 0 R /T 6 0 R >> \
-    /ExtGState << /G1 << /Font [5 0 R 12] /ca 0.5 >> /G2 << /SMask << /S /Luminosity /G 8 0 R >> >> /G3 << /Font [6 0 R 10] >> >> \
-    /XObject << /Fm 8 0 R >> /Pattern << /P 9 0 R >> \
+    /ExtGState << /G1 << /Font [5 0 R 12] /ca 0.5 >> /G2 << /SMask << /S /Luminosity /G 8 0 R >> >> /G3 << /Font [6 0 R 10] >> \
+    /G4 << /BM /Multiply >> >> /XObject << /Fm 8 0 R /Im 12 0 R >> /Pattern << /P 9 0 R >> \
     /Shading << /Sh << /ShadingType 2 /ColorSpace /DeviceGray /Coords [0 0 1 0] /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [1] /N 1 >> >> >> >>";
 
 fn document(content: &[u8]) -> Vec<u8> {
@@ -39,6 +39,7 @@ fn document(content: &[u8]) -> Vec<u8> {
         .stream("/Type /Pattern /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 10 10] /XStep 10 /YStep 10", content)
         .stream(&format!("/Type /XObject /Subtype /Form /BBox [0 0 200 50] /Resources {RESOURCES}"), content)
         .obj("<< /Type /Annot /Subtype /FreeText /Rect [100 600 500 700] /AP << /N 10 0 R >> >>")
+        .stream("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", [0u8])
         .build()
 }
 

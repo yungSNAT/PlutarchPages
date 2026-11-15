@@ -9,7 +9,7 @@ use pdfcraft_audit::{AuditError, audit_redactions};
 use pdfcraft_cos::Document;
 use pdfcraft_testkit::{Pdf, stream_obj};
 
-use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, page};
+use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page};
 
 /// Helvetica `/F1`, the block font `/B`, the form `/Fm` (which draws blocks), a black shading
 /// `/Sh`, and graphics states at opacity 0.9 (`/Most`), 0.5 (`/Half`) and 0 (`/Clear`), one that
@@ -183,5 +183,5 @@ fn annotated(content: &str, annot: &str, objects: &[Vec<u8>]) -> Document {
         .obj(HELVETICA)
         .obj(annot)
         .objs(objects);
-    Document::open(Arc::new(pdf.build())).expect("test pdf must open")
+    open(pdf.build())
 }
