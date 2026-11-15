@@ -120,7 +120,8 @@ pub struct TextLine {
     /// [`refuse_clipping_text`] reads this rather than the origin's mode alone.
     clips: bool,
     /// Why the line can't be edited: its font's writing mode (its CMap's `WMode`) couldn't be read,
-    /// so which way its glyphs advance is unknown. The line is listed as horizontal text.
+    /// so which way its glyphs advance is unknown (the line is listed as horizontal text), or a
+    /// graphics state's `/Font` set its font, which a rewrite selecting fonts with `Tf` would replace.
     unreadable_mode: Option<String>,
     /// The runs the line joins, in content order: each one's text, the end of its words in
     /// `ink`, and whether joining put a space before it. Empty when the line's text was put
@@ -142,7 +143,8 @@ pub struct TextLine {
 }
 
 impl TextLine {
-    /// Refuses editing a line whose font's writing mode couldn't be read (§9.7.4.3).
+    /// Refuses editing a line whose font's writing mode couldn't be read (§9.7.4.3), or whose font
+    /// a graphics state set (§8.4.5).
     fn ensure_editable(&self) -> Result<(), EditError> {
         self.unreadable_mode.as_ref().map_or(Ok(()), |why| Err(EditError::Invalid(why.clone())))
     }

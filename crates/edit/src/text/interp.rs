@@ -510,9 +510,6 @@ pub(super) struct Carry {
     /// Bytes of glyph text the rest of the page may still produce (see [`MAX_PAGE_TEXT`]).
     pub(super) text_left: usize,
     pub(super) advance_gaps: Option<Vec<AdvanceGap>>,
-    /// Whether a font an ExtGState's `/Font` sets is read: the glyph reading, which must see every
-    /// glyph a viewer shows. The editor reads the fonts `Tf` selects, which it can rewrite.
-    pub(super) state_fonts: bool,
 }
 
 /// A forward `TJ` displacement, from baseline start to baseline end in page user space.
@@ -560,7 +557,6 @@ impl Carry {
             layer_scopes: Vec::new(),
             text_left: MAX_PAGE_TEXT,
             advance_gaps: None,
-            state_fonts: false,
         }
     }
 }
@@ -969,7 +965,6 @@ pub(super) fn interpret(
     let fonts_res = super::resource_dict(doc, resources, b"Font", &mut held_fonts).unwrap_or(&none);
     let states = super::resource_dict(doc, resources, b"ExtGState", &mut held_states).unwrap_or(&none);
     let mut out: Vec<Shown> = Vec::new();
-    let state_fonts = carry.state_fonts;
     let mut ts = carry.ts.clone();
     let mut at_bt = (0usize, ts.clone());
     let mut stack: Vec<(Ts, Matrix, Matrix)> = std::mem::take(&mut carry.stack);
@@ -1089,9 +1084,10 @@ pub(super) fn interpret(
                         ts.dash = d;
                     }
                     ts.line_cap = line_cap(doc, params.get(b"LC")).unwrap_or(ts.line_cap);
-                    // A font the ExtGState sets, `[font size]` (§8.4.5), as `Tf` sets one: the glyph
-                    // reading sees the text a viewer shows in it. The line names the ExtGState.
-                    let set = params.get(b"Font").filter(|_| state_fonts).map(|f| doc.resolve(f));
+                    // A font the ExtGState sets, `[font size]` (§8.4.5), as `Tf` sets one: the text a
+                    // viewer shows in it is read. The line names the ExtGState, and a rewrite, which
+                    // selects fonts with `Tf`, would replace it: its lines are refused for editing.
+                    let set = params.get(b"Font").map(|f| doc.resolve(f));
                     if let (Some(name), Some([font, size])) = (op.name(0), set.as_deref().and_then(Object::as_array).map(Vec::as_slice)) {
                         ts.size = doc.resolve(size).as_f64().unwrap_or(ts.size);
                         let key = match font {
@@ -1099,6 +1095,7 @@ pub(super) fn interpret(
                             _ => FontKey::State(resources_of, name.to_vec()),
                         };
                         select_font(doc, cache, &mut ts, key, name, Some(font));
+                        ts.unreadable.get_or_insert_with(|| Rc::from("text in a font a graphics state sets (gs) can't be edited"));
                     }
                 }
             }
