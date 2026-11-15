@@ -78,9 +78,6 @@ pub struct Appearance {
     pub form: Arc<Object>,
     /// The form's `/Matrix` composed with the one that maps its box onto the annotation's.
     pub ctm: Matrix,
-    /// The annotation's opacity (`/CA`) is below 1 or its blend mode (`/BM`) isn't Normal: a viewer
-    /// paints the whole appearance so, and nothing in it is opaque.
-    pub see_through: bool,
 }
 
 /// Content the audit cannot place on the page, walked only for the text it shows.
@@ -221,8 +218,6 @@ struct Walker<'a> {
     walked: HashSet<(ObjRef, Owner)>,
     /// Graphics states saved and not yet restored, in every stack being walked.
     saved: usize,
-    /// The appearance being walked is painted see-through ([`Appearance::see_through`]).
-    see_through: bool,
     /// The layers that fill a shape other than a box (a cloudy border drawn with curves): the audit
     /// reads no cover from it.
     shaped: HashSet<usize>,
@@ -444,7 +439,7 @@ impl<'a> Walker<'a> {
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked && !self.see_through;
+        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked;
         self.out.push(FilledRect { rect, rgb, pos, opaque, image });
     }
 
@@ -742,7 +737,7 @@ const BLEND_MODES: [&[u8]; 17] = [
 /// Normal and Compatible (ISO 32000-2 §11.3.5). Of an array, which lists modes for a viewer to try
 /// in turn, the first it knows counts; an entry that names no mode it knows is Normal, as viewers
 /// paint it.
-pub(crate) fn shows_through(doc: &Document, bm: &Object) -> bool {
+fn shows_through(doc: &Document, bm: &Object) -> bool {
     let known = |o: &Object| o.as_name().filter(|name| BLEND_MODES.contains(name)).map(|name| !matches!(name, b"Normal" | b"Compatible"));
     match bm.as_array() {
         Some(modes) => modes.iter().find_map(|o| known(&doc.resolve(o))),
@@ -791,7 +786,6 @@ pub fn filled_rects(
         inside: None,
         walked: HashSet::new(),
         saved: 0,
-        see_through: false,
         shaped: HashSet::new(),
     };
     let mut gs = Gs::new(crop);
@@ -808,7 +802,7 @@ pub fn filled_rects(
         let data = w.budget.decode_strict(form)?;
         // An appearance without resources of its own reads the page's, as a form does.
         let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
-        (w.layer, w.see_through) = (a.layer, a.see_through);
+        w.layer = a.layer;
         // A viewer clips the appearance to its box, as a form's.
         let clip = form_bbox(doc, &form.dict).map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
         let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };

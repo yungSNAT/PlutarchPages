@@ -12,9 +12,10 @@ The report checks for:
   the like), painted *after* text it overlaps, while the text is still extractable underneath;
   filled Square annotations count as covers too. A cover painted fully opaque in the Normal blend
   mode hides the text whatever its colour: it replaces what lies under it, so a black box over red
-  text or a white box over black text both hide it. A translucent cover (`/ca` or `/CA` above 0
-  and below 1), a blended one (`/BM` other than Normal, as a highlight multiplied onto the page is)
-  or one painted through a soft mask hides the text when it is dark enough against the text's
+  text or a white box over black text both hide it. A translucent cover (`/ca` above 0 and below 1,
+  or a Square's interior colour at `/CA` below 1), a blended one (`/BM` other than Normal, as a
+  highlight multiplied onto the page is; of a list, the first mode known, and Normal for an unknown
+  one) or one painted through a soft mask hides the text when it is dark enough against the text's
   colour (WCAG contrast below 3): how much it hides depends on what lies under the text, which the
   audit doesn't read. A word of blocks is judged by its colour that way too;
 - **unapplied mark**: a Redact annotation that was marked but never applied;
@@ -41,9 +42,8 @@ in the order they are painted: a cover a form paints after its text hides it, as
 page paints after drawing the form. So are those of the appearance a viewer paints for each
 annotation that isn't Hidden or NoView (its normal appearance, or the state `/AS` names), mapped
 onto the annotation's rectangle and painted after the page in `/Annots` order. An appearance
-without resources of its own uses the page's. A viewer paints the whole appearance at the
-annotation's opacity (`/CA`) and blend mode (`/BM`), so below 1 or other than Normal, nothing in
-it is opaque. A Square is checked by the box its appearance paints. Its interior colour (`/IC`)
+without resources of its own uses the page's. PDFium and pdf.js paint an appearance as it is,
+whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is checked by the box its appearance paints. Its interior colour (`/IC`)
 counts where the audit has no appearance for it, or the appearance fills a shape it reads no box
 from (a cloudy border), for text no box lies over: pdf.js, PDFium, Poppler and MuPDF paint the
 appearance where there is one, so `/IC` behind a border-only appearance hides nothing. A Redact
