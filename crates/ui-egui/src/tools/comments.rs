@@ -34,7 +34,7 @@ pub(crate) use composer::{composer, submit_key};
 /// Undo history is kept under this id, which Undo and Redo from the menu step before the
 /// document's.
 pub(crate) fn editor_id(doc: pdfcraft_engine::DocId, key: (usize, usize)) -> egui::Id {
-    egui::Id::new(("comment-edit", doc, key))
+    egui::Id::unique(("comment-edit", doc, key))
 }
 #[cfg(test)]
 use geometry::handle_pos;
