@@ -13,8 +13,10 @@
 //! - a workspace crate lacks `publish = false`;
 //! - a weak-hash line in `crates/crypt/src/lib.rs` or `crates/sign/src/keys.rs` lacks `NOSONAR`;
 //! - packaging grants `xdg-data/ArtCraft`, or a Flatpak manifest named `ai.storyteller.*` is back;
-//! - once a build script reads `CRAFT_I18N_DIR`, a place in `release.yml` that sets
-//!   `CRAFT_FONTS_DIR` doesn't also set `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1`.
+//! - once a build script reads `CRAFT_I18N_DIR`, a place in `release.yml` or `ci.yml` that sets
+//!   `CRAFT_FONTS_DIR` doesn't also set `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1`, or a job there
+//!   that checks out craft-i18n (the web build's too, which takes no fonts) doesn't set them; the
+//!   shared `checkout-craft-i18n` action sets both for its job.
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -25,6 +27,10 @@ use anyhow::{Context, Result, bail};
 
 const COLOUR_BASELINE: &str = "xtask/baselines/named-colours.txt";
 const RELEASE: &str = ".github/workflows/release.yml";
+const CI: &str = ".github/workflows/ci.yml";
+/// The shared action that checks out craft-i18n and sets `CRAFT_I18N_DIR` and
+/// `CRAFT_I18N_REQUIRED=1` for the rest of its job.
+const CHECKOUT_I18N: &str = "storytold/craft-common-actions/actions/checkout-craft-i18n@";
 const WEAK_HASH_FILES: [&str; 2] = ["crates/crypt/src/lib.rs", "crates/sign/src/keys.rs"];
 const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
 /// The value `UPDATE_APP` gives its `repo` field.
@@ -741,28 +747,53 @@ fn i18n_is_a_build_input(tree: &Tree) -> bool {
 }
 
 /// Upstream's catalogues come from craft-i18n through `CRAFT_I18N_DIR`, and a build without it
-/// is English only unless `CRAFT_I18N_REQUIRED=1`. Each place a release build gets its fonts
-/// must get its translations too.
+/// is English only unless `CRAFT_I18N_REQUIRED=1`. Each place a release or CI build gets its fonts
+/// must get its translations too, and so must each job that checks them out: the web build takes
+/// no fonts, and without the variables it would ship English only.
 fn release_i18n(tree: &Tree) -> Vec<String> {
     if !i18n_is_a_build_input(tree) {
         return Vec::new();
     }
     let Some(text) = tree.get(RELEASE) else { return vec![format!("{RELEASE} is missing")] };
-    let lines: Vec<&str> = text.lines().collect();
-    let fonts: Vec<usize> = (0..lines.len()).filter(|&i| set_to(lines[i], "CRAFT_FONTS_DIR").is_some()).collect();
-    if fonts.is_empty() {
+    if !text.lines().any(|l| set_to(l, "CRAFT_FONTS_DIR").is_some()) {
         return vec![format!("{RELEASE}: nothing sets CRAFT_FONTS_DIR, so no build can be checked for CRAFT_I18N_DIR")];
     }
+    let mut out = builds_without_i18n(RELEASE, text);
+    out.extend(tree.get(CI).map(|ci| builds_without_i18n(CI, ci)).unwrap_or_default());
+    out
+}
+
+/// The places in workflow `path` that build without the translations: a line setting
+/// `CRAFT_FONTS_DIR` with neither both variables beside it nor [`CHECKOUT_I18N`] in its job, and
+/// a craft-i18n checkout whose job sets neither.
+fn builds_without_i18n(path: &str, text: &str) -> Vec<String> {
+    let lines: Vec<&str> = text.lines().collect();
+    let sets_both = |block: &[&str]| {
+        block.iter().any(|l| set_to(l, "CRAFT_I18N_DIR").is_some_and(|v| !v.is_empty()))
+            && block.iter().any(|l| set_to(l, "CRAFT_I18N_REQUIRED").is_some_and(|value| value.trim() == "1"))
+    };
+    let shared = |job: &[&str]| job.iter().any(|l| l.trim_start().strip_prefix("uses:").is_some_and(|u| u.trim().starts_with(CHECKOUT_I18N)));
     let mut out = Vec::new();
-    for i in fonts {
-        let block = block_around(&lines, i);
-        let dir = block.iter().any(|l| set_to(l, "CRAFT_I18N_DIR").is_some_and(|v| !v.is_empty()));
-        let required = block.iter().any(|l| set_to(l, "CRAFT_I18N_REQUIRED").is_some_and(|value| value.trim() == "1"));
-        if !(dir && required) {
-            out.push(format!("{RELEASE}:{}: CRAFT_FONTS_DIR is set without CRAFT_I18N_DIR and CRAFT_I18N_REQUIRED=1 beside it", i + 1));
+    for (i, line) in lines.iter().enumerate() {
+        if set_to(line, "CRAFT_FONTS_DIR").is_some() && !sets_both(&block_around(&lines, i)) && !shared(job_around(&lines, i)) {
+            out.push(format!("{path}:{}: CRAFT_FONTS_DIR is set without CRAFT_I18N_DIR and CRAFT_I18N_REQUIRED=1 beside it", i + 1));
+        }
+        let checkout = line.trim_start().strip_prefix("repository:").map(|r| r.trim().trim_matches(['"', '\'']));
+        if checkout == Some("storytold/craft-i18n") && !sets_both(job_around(&lines, i)) {
+            out.push(format!("{path}:{}: craft-i18n is checked out without CRAFT_I18N_DIR and CRAFT_I18N_REQUIRED=1 in its job", i + 1));
         }
     }
     out
+}
+
+/// The job holding line `i` of a workflow: from the key under `jobs:` (indented 2) before it to
+/// the next line indented no more than that key. The whole file when `i` is in no job.
+fn job_around<'a, 'b>(lines: &'b [&'a str], i: usize) -> &'b [&'a str] {
+    let indent = |l: &str| l.len() - l.trim_start().len();
+    let key = |l: &&str| indent(l) == 2 && l.trim_end().ends_with(':') && !l.trim_start().starts_with('#');
+    let Some(start) = lines[..=i].iter().rposition(key) else { return lines };
+    let end = lines[start + 1..].iter().position(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#') && indent(l) <= 2);
+    &lines[start..end.map_or(lines.len(), |n| start + 1 + n)]
 }
 
 /// The value in a release YAML env entry, shell export or leading shell assignment.
@@ -1078,6 +1109,35 @@ mod tests {
         fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{}", inline_env(script)).as_str())], "release.yml:14");
         fails(release_i18n, &[build, (RELEASE, format!("{with}  freebsd:\n    steps:\n{script}").as_str())], "release.yml:14");
         fails(release_i18n, &[build, (RELEASE, "jobs: {}\n")], "nothing sets CRAFT_FONTS_DIR");
+    }
+
+    /// CI builds with fonts need the translations too, which the shared action can set for the job,
+    /// and a job that checks craft-i18n out must set them, as the web build does without fonts.
+    #[test]
+    fn ci_and_web_builds_require_their_translations() {
+        let build = ("crates/ui-egui/build.rs", "let dir = std::env::var_os(\"CRAFT_I18N_DIR\");");
+        let i18n_env = "      CRAFT_I18N_DIR: ${{ github.workspace }}/craft-i18n\n      CRAFT_I18N_REQUIRED: \"1\"\n";
+        let fonts = format!("jobs:\n  linux:\n    env:\n      CRAFT_FONTS_DIR: f\n{i18n_env}    steps:\n      - run: cargo build\n");
+        let web = |env: &str| {
+            format!(
+                "{fonts}  web:\n    env:\n{env}    steps:\n      - uses: actions/checkout@0\n        with:\n          repository: storytold/craft-i18n\n"
+            )
+        };
+        passes(release_i18n, &[build, (RELEASE, web(i18n_env).as_str())]);
+        fails(release_i18n, &[build, (RELEASE, web("      VERSION: x\n").as_str())], "release.yml:15: craft-i18n is checked out");
+        let release = (RELEASE, fonts.as_str());
+
+        let shared = "      - name: Check out craft-i18n\n        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@2b3fb9dc # main\n";
+        let coverage = |env: &str, steps: &str| {
+            format!("on:\n  push:\njobs:\n  coverage:\n    env:\n      CRAFT_FONTS_DIR: f\n{env}    steps:\n{steps}      - run: cargo test\n")
+        };
+        passes(release_i18n, &[build, release, (CI, coverage("", shared).as_str())]);
+        passes(release_i18n, &[build, release, (CI, coverage(i18n_env, "").as_str())]);
+        fails(release_i18n, &[build, release, (CI, coverage("", "").as_str())], "ci.yml:6");
+        fails(release_i18n, &[build, release, (CI, coverage("", &shared.replace("        uses", "        # uses")).as_str())], "ci.yml:6");
+        let elsewhere = format!("{}  other:\n    steps:\n{shared}", coverage("", ""));
+        fails(release_i18n, &[build, release, (CI, elsewhere.as_str())], "ci.yml:6");
+        passes(release_i18n, &[release, (CI, coverage("", "").as_str())]);
     }
 
     #[test]
