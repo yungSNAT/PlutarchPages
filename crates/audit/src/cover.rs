@@ -366,19 +366,7 @@ impl<'a> Walker<'a> {
                     };
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
-                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
-                    let filled = std::mem::replace(&mut path, Path::Empty);
-                    if gs.alpha > 0.0 && self.inside.is_none() {
-                        let shape = !matches!(filled, Path::Empty);
-                        match filled.rect() {
-                            Some(r) => self.paint(r, gs.fill, gs, false, calls, i),
-                            None if shape => {
-                                self.shaped.insert(self.layer);
-                            }
-                            None => {}
-                        }
-                    }
-                }
+                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i),
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
                     let shadings = resources.get(b"Shading").map(|o| self.doc.resolve(o));
@@ -435,6 +423,21 @@ impl<'a> Walker<'a> {
             }
         }
         Ok(())
+    }
+
+    /// Record the cover the fill at index `at` paints with `path`, or, for a shape the audit reads no
+    /// box from, that this layer fills one.
+    fn fill(&mut self, path: Path, gs: &Gs, calls: &[usize], at: usize) {
+        if gs.alpha > 0.0 && self.inside.is_none() {
+            let shape = !matches!(path, Path::Empty);
+            match path.rect() {
+                Some(r) => self.paint(r, gs.fill, gs, false, calls, at),
+                None if shape => {
+                    self.shaped.insert(self.layer);
+                }
+                None => {}
+            }
+        }
     }
 
     /// Record a cover painted over `rect` in `rgb` by the operator at index `at`, with the graphics
