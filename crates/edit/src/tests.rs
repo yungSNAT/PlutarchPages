@@ -8624,6 +8624,48 @@ fn a_cyclic_cmap_falls_back_to_horizontal_and_only_refuses_its_own_lines() {
     assert_eq!(texts, ["AB", "Changed"]);
 }
 
+/// Text in a font a graphics state's `/Font` sets (`gs`, no `Tf`) is listed in that font, before
+/// any `Tf` or after one, and only its own lines are refused for editing: a rewrite names fonts by
+/// `Tf`, which would replace the state's font.
+#[test]
+fn text_in_a_font_a_graphics_state_sets_is_listed_and_not_edited() {
+    for content in
+        ["BT /GS1 gs 40 500 Td (A) Tj ET BT /F1 12 Tf 40 400 Td (Plain) Tj ET", "BT /F1 12 Tf 40 400 Td (Plain) Tj ET BT /GS1 gs 40 500 Td (A) Tj ET"]
+    {
+        let mut doc = text_page(content);
+        // Helvetica that shows code 65 as B, so the line reads B only in the state's font.
+        let differences = Dict::from_iter([(b"Differences".to_vec(), Object::Array(vec![Object::Int(65), Object::name("B")]))]);
+        let font = doc.add(Object::Dict(Dict::from_iter([
+            (b"Type".to_vec(), Object::name("Font")),
+            (b"Subtype".to_vec(), Object::name("Type1")),
+            (b"BaseFont".to_vec(), Object::name("Helvetica")),
+            (b"Encoding".to_vec(), Object::Dict(differences)),
+        ])));
+        let page = &pdfcraft_model::pages(&doc)[0];
+        let (p, mut res) = (page.obj, page.dict.get(b"Resources").and_then(Object::as_dict).cloned().unwrap());
+        let state = Dict::from_iter([(b"Font".to_vec(), Object::Array(vec![Object::Ref(font), Object::Int(12)]))]);
+        res.set(b"ExtGState".to_vec(), Object::Dict(Dict::from_iter([(b"GS1".to_vec(), Object::Dict(state))])));
+        doc.update_dict(p, |d| d.set(b"Resources".to_vec(), Object::Dict(res))).unwrap();
+        let texts = |doc: &Document| {
+            let mut texts: Vec<String> = text::text_lines(doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+            texts.sort();
+            texts
+        };
+        assert_eq!(texts(&doc), ["B", "Plain"], "{content}");
+        let line = |doc: &Document, t: &str| text::text_lines(doc, 0).unwrap().iter().position(|l| l.text == t).unwrap();
+        let before = pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap();
+        let stated = line(&doc, "B");
+        assert!(text::replace_line(&mut doc, 0, stated, "C").is_err(), "{content}");
+        let block = text::text_blocks(&doc, 0).unwrap().iter().position(|b| b.text == "B").unwrap();
+        assert!(text::replace_block(&mut doc, 0, block, "C").is_err(), "{content}");
+        assert!(move_objects(&mut doc, 0, &[ObjectTarget { kind: ObjectKind::Text, index: block }], [5.0, 5.0]).is_err(), "{content}");
+        assert_eq!(pdfcraft_cos::write_full(&doc, &SaveOptions::default()).unwrap(), before, "{content}");
+        let plain = line(&doc, "Plain");
+        text::replace_line(&mut doc, 0, plain, "Changed").unwrap();
+        assert_eq!(texts(&doc), ["B", "Changed"], "{content}");
+    }
+}
+
 #[test]
 fn vertical_text_drawn_one_glyph_per_tj_is_one_line() {
     // One text object, a `Tj` per glyph; and a column with a text object per glyph.
