@@ -458,7 +458,9 @@ impl<'a> Walker<'a> {
         let get = |key: &[u8], short: &[u8]| image.get(key).or_else(|| image.get(short)).map(|o| self.doc.resolve(o));
         let stencil = get(b"ImageMask", b"IM").is_some_and(|o| matches!(*o, Object::Bool(true)));
         let alpha_in_data = image.get(b"SMaskInData").and_then(|o| self.doc.resolve(o).as_int()).is_some_and(|n| n != 0);
-        let own_mask = image.contains(b"SMask") || image.contains(b"Mask") || alpha_in_data;
+        // An entry that is null is no mask (ISO 32000-2 §7.3.9).
+        let mask = |key: &[u8]| image.get(key).is_some_and(|o| !matches!(*self.doc.resolve(o), Object::Null));
+        let own_mask = mask(b"SMask") || mask(b"Mask") || alpha_in_data;
         let area = meet(gs.clip, gs.ctm.bbox([0.0, 0.0, 1.0, 1.0]));
         if !own_mask && gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
             self.paint(area, if stencil { gs.fill } else { None }, gs, true, calls, at);
@@ -715,12 +717,38 @@ fn ext_state(doc: &Document, resources: &Dict, name: &[u8]) -> (Option<f64>, Opt
     (alpha, get(b"BM").map(|bm| shows_through(doc, &bm)), get(b"SMask").map(|m| m.as_dict().is_some()))
 }
 
+/// The blend modes ISO 32000-2 defines (§11.3.5).
+const BLEND_MODES: [&[u8]; 17] = [
+    b"Normal",
+    b"Compatible",
+    b"Multiply",
+    b"Screen",
+    b"Overlay",
+    b"Darken",
+    b"Lighten",
+    b"ColorDodge",
+    b"ColorBurn",
+    b"HardLight",
+    b"SoftLight",
+    b"Difference",
+    b"Exclusion",
+    b"Hue",
+    b"Saturation",
+    b"Color",
+    b"Luminosity",
+];
+
 /// Whether the blend mode a `/BM` entry names lets what lies under a fill show through: any but
-/// Normal and Compatible (ISO 32000-2 §11.3.5); of an array, which lists modes for a viewer to try
-/// in turn, the first. An entry that names none is no blend mode, and shows nothing through.
+/// Normal and Compatible (ISO 32000-2 §11.3.5). Of an array, which lists modes for a viewer to try
+/// in turn, the first it knows counts; an entry that names no mode it knows is Normal, as viewers
+/// paint it.
 pub(crate) fn shows_through(doc: &Document, bm: &Object) -> bool {
-    let first = bm.as_array().and_then(|a| a.first()).map(|o| doc.resolve(o));
-    first.as_deref().unwrap_or(bm).as_name().is_some_and(|name| !matches!(name, b"Normal" | b"Compatible"))
+    let known = |o: &Object| o.as_name().filter(|name| BLEND_MODES.contains(name)).map(|name| !matches!(name, b"Normal" | b"Compatible"));
+    match bm.as_array() {
+        Some(modes) => modes.iter().find_map(|o| known(&doc.resolve(o))),
+        None => known(bm),
+    }
+    .unwrap_or(false)
 }
 
 /// Every filled rectangle drawn by the content of page `n` (and its form XObjects), then by
