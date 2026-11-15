@@ -1780,12 +1780,13 @@ fn draft_reply(h: &mut Harness<'static, PdfCraftApp>, text: &str, draft: &str) {
     h.run_steps(2);
 }
 
-/// A reply's inline editor, left open with a draft past its own Undo history, never saves the
-/// draft over another reply and never loses it. Undo saves the draft to its own reply, as a step
-/// Undo takes back and Redo puts back, then closes the editor: the step can put a reply back in
-/// its place or take one away, and the editor would have saved the draft over whichever reply
-/// took that place. Redo leaves an unsaved draft open: saving it first would drop the Redo.
-/// Undo used to close the editor and drop the draft (R0646).
+/// A reply's inline editor, left open with a draft, never saves the draft over another reply and
+/// never loses it. The editor's own typing history follows its reply when a reply above it is
+/// deleted, so Undo takes the typing back first. Past that history, Undo saves the draft to its
+/// own reply, as a step Undo takes back and Redo puts back, then closes the editor: the step can
+/// put a reply back in its place or take one away, and the editor would have saved the draft over
+/// whichever reply took that place. Redo leaves an unsaved draft open: saving it first would drop
+/// the Redo. Undo used to close the editor and drop the draft (R0646).
 #[test]
 fn undo_and_redo_keep_a_reply_draft_left_open() {
     let mut h = harness_with_bytes(THREE_REPLIES.to_vec(), |app| {
@@ -1804,6 +1805,16 @@ fn undo_and_redo_keep_a_reply_draft_left_open() {
     assert_eq!(texts(&h), ["The comment", "Reply B", "Reply C"]);
     assert_eq!(h.state().views[0].comments.editing, Some((0, 1, "B's draft".to_string())), "the editor follows B up");
 
+    h.state_mut().undo();
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].comments.editing, Some((0, 1, "Reply B".to_string())), "undo takes the typing back in the editor");
+    assert_eq!(texts(&h), ["The comment", "Reply B", "Reply C"], "and leaves A deleted");
+    h.state_mut().redo();
+    h.run_steps(3);
+    assert_eq!(h.state().views[0].comments.editing, Some((0, 1, "B's draft".to_string())), "redo puts the typing back");
+
+    // Past the editor's own history (here, its state is gone), Undo saves the draft first.
+    h.ctx.data_mut(|d| d.clear());
     h.state_mut().undo();
     h.run_steps(3);
     assert_eq!(texts(&h), ["The comment", "Reply B", "Reply C"], "undo takes back the draft, saved to B first");
