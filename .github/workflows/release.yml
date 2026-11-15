@@ -2,7 +2,10 @@ name: Release
 
 # Builds unsigned Windows, Linux, macOS, FreeBSD and web packages. A push to `release` also drafts
 # the GitHub release; publishing the draft is a person's decision. A push to `ryan/release-*` is a
-# dry run: it builds and tests the same packages and drafts nothing.
+# dry run: it builds and tests the same packages and drafts nothing. A manual run is a dry run too,
+# and `targets` limits it to the packages being worked on, as each full run takes 300 to 700
+# runner-minutes (macOS counted at 10). Before pushing to `release`, make one full dry run of the
+# commit: a push to `ryan/release-*`, or a manual run with `targets` empty.
 on:
   push:
     branches: [release, "ryan/release-*"]
@@ -10,6 +13,10 @@ on:
     inputs:
       version:
         description: "Version override for a test run, e.g. 0.2.0-rc.1 (empty: Cargo.toml)"
+        type: string
+        default: ""
+      targets:
+        description: "Build only these: windows linux macos riscv64 freebsd web (linux includes Flatpak and Arch; empty: all)"
         type: string
         default: ""
 
@@ -39,6 +46,8 @@ jobs:
       date: ${{ steps.resolve.outputs.date }}
       prerelease: ${{ steps.resolve.outputs.prerelease }}
       i18n: ${{ steps.resolve.outputs.i18n }}
+      # The selected targets, separated by spaces.
+      targets: ${{ steps.resolve.outputs.targets }}
     steps:
       # A push to release builds and drafts only a commit whose ci.yml run on a push to main passed,
       # so an untested commit can't reach a release. Every build job needs this one. Dry runs skip it.
@@ -59,7 +68,17 @@ jobs:
         shell: bash
         env:
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TARGETS: ${{ inputs.targets }}
         run: |
+          all="windows linux macos riscv64 freebsd web"
+          read -ra targets <<<"${INPUT_TARGETS//,/ }"
+          [ "${#targets[@]}" -gt 0 ] || read -ra targets <<<"$all"
+          for t in "${targets[@]}"; do
+            if [[ " $all " != *" $t "* ]]; then
+              echo "::error::unknown target '$t'; choose from: $all"
+              exit 1
+            fi
+          done
           . packaging/env.sh
           v="${INPUT_VERSION#v}"
           v="${v:-$VERSION}"
@@ -80,11 +99,13 @@ jobs:
             echo "date=$(date -u +%Y-%m-%d)"
             echo "prerelease=$pre"
             echo "i18n=$i18n"
+            echo "targets=${targets[*]}"
           } >>"$GITHUB_OUTPUT"
 
   windows:
     name: Windows ${{ matrix.arch }}
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' windows ')
     runs-on: windows-latest
     timeout-minutes: 90
     strategy:
@@ -204,6 +225,7 @@ jobs:
   linux:
     name: Linux ${{ matrix.arch }}
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' linux ')
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
@@ -276,6 +298,7 @@ jobs:
   macos:
     name: macOS universal
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' macos ')
     runs-on: macos-15
     timeout-minutes: 120
     env:
@@ -410,6 +433,7 @@ jobs:
   linux-riscv64:
     name: Linux riscv64
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' riscv64 ')
     # Not 22.04 like the other Linux jobs: Ubuntu never built jammy's ncurses security update for
     # riscv64, so the amd64 and riscv64 libtinfo6 can't match and the cross dependencies don't install.
     runs-on: ubuntu-24.04
@@ -509,6 +533,7 @@ jobs:
   freebsd:
     name: FreeBSD ${{ matrix.arch }}
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' freebsd ')
     runs-on: ubuntu-latest
     timeout-minutes: 300
     strategy:
@@ -658,6 +683,7 @@ jobs:
   web:
     name: Web (wasm)
     needs: [version]
+    if: contains(format(' {0} ', needs.version.outputs.targets), ' web ')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -718,6 +744,7 @@ jobs:
           if-no-files-found: error
 
   # Runs on dry runs too, which never reach the draft job: a missing or stray file fails here first.
+  # A run limited by `targets` skips it, as its build jobs are skipped.
   assets:
     name: Check the package list
     needs: [version, windows, windows-install, linux, macos, flatpak, arch, linux-riscv64, freebsd, web]
