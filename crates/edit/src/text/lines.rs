@@ -37,7 +37,14 @@ impl TextLine {
     /// sequence, in content order: one per run of [`TextLine::runs`], also when the line was
     /// reordered and that lists none.
     pub fn run_modes(&self) -> impl Iterator<Item = (i64, bool)> + '_ {
-        self.modes.iter().map(|(mode, ocr, _)| (*mode, *ocr))
+        self.modes.iter().map(|(mode, ocr, _, _)| (*mode, *ocr))
+    }
+
+    /// Each run's paint position, as [`TextLine::paint_order`] gives the line's, in content order:
+    /// one per run of [`TextLine::run_modes`]. A run joined to a line can be painted long after the
+    /// line starts.
+    pub fn run_paint_orders(&self) -> impl Iterator<Item = Vec<usize>> + '_ {
+        self.modes.iter().map(|&(_, _, _, op)| self.drawn_by.iter().copied().chain(std::iter::once(op)).collect())
     }
 
     /// For each line, whether optional content hides each run of [`TextLine::run_modes`].
@@ -58,7 +65,7 @@ impl TextLine {
                     }
                     hidden
                 });
-                line.modes.iter().map(|(_, _, index)| scopes[*index]).collect()
+                line.modes.iter().map(|(_, _, index, _)| scopes[*index]).collect()
             })
             .collect()
     }
@@ -327,7 +334,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
             l.frame = union(l.frame, s.frame);
             l.ink.extend(s.ink.iter().copied());
             l.runs.push((s.text.clone(), l.ink.len(), spaced));
-            l.modes.push((s.state.render_mode, s.ocr_layer, s.oc));
+            l.modes.push((s.state.render_mode, s.ocr_layer, s.oc, s.op));
             l.ops.push(s.op);
             l.ops.extend(s.extra_ops.iter().copied());
             l.decodable &= s.decodable;
@@ -362,7 +369,7 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
                 clips: s.state.render_mode >= 4,
                 unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
                 runs: vec![(s.text.clone(), s.ink.len(), false)],
-                modes: vec![(s.state.render_mode, s.ocr_layer, s.oc)],
+                modes: vec![(s.state.render_mode, s.ocr_layer, s.oc, s.op)],
                 layer_scopes: Arc::clone(&layer_scopes),
                 soft_break: s.soft_break,
                 hard_break: s.hard_break,
@@ -460,7 +467,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
         l.frame = union(l.frame, s.frame);
         l.ink.extend(s.ink.iter().copied());
         l.runs.push((s.text.clone(), l.ink.len(), spaced));
-        l.modes.push((s.state.render_mode, s.ocr_layer, s.oc));
+        l.modes.push((s.state.render_mode, s.ocr_layer, s.oc, s.op));
         l.ops.push(s.op);
         l.ops.extend(s.extra_ops.iter().copied());
         l.decodable &= s.decodable;
@@ -494,7 +501,7 @@ fn add_shown(lines: &mut Vec<TextLine>, last: &mut Option<Pen>, s: Shown, stream
             clips: s.state.render_mode >= 4,
             unreadable_mode: s.state.unreadable.as_deref().map(str::to_owned),
             runs: vec![(s.text.clone(), s.ink.len(), false)],
-            modes: vec![(s.state.render_mode, s.ocr_layer, s.oc)],
+            modes: vec![(s.state.render_mode, s.ocr_layer, s.oc, s.op)],
             layer_scopes: Arc::clone(layer_scopes),
             soft_break: s.soft_break,
             hard_break: s.hard_break,

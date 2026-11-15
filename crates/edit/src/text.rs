@@ -126,10 +126,10 @@ pub struct TextLine {
     /// `ink`, and whether joining put a space before it. Empty when the line's text was put
     /// into another order (see [`TextLine::runs`]).
     runs: Vec<(String, usize, bool)>,
-    /// Each run's text rendering mode (`Tr`), whether it is in an `/OCR` marked-content sequence
-    /// and the index of its optional-content condition, in content order.
-    /// Kept when `runs` is emptied.
-    modes: Vec<(i64, bool, usize)>,
+    /// Each run's text rendering mode (`Tr`), whether it is in an `/OCR` marked-content sequence,
+    /// the index of its optional-content condition and the operator that shows it (as `ops`
+    /// indexes them), in content order. Kept when `runs` is emptied.
+    modes: Vec<(i64, bool, usize, usize)>,
     layer_scopes: std::sync::Arc<[LayerScope]>,
     /// This line continues the previous one because a rewrite wrapped it (`/PCSoft`).
     soft_break: bool,
