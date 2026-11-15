@@ -11,11 +11,10 @@ The report checks for:
 - **faux redaction**: a filled rectangle, or a word of block characters (`█`, `■` and the like),
   painted *after* text it overlaps, dark enough against the text's colour (WCAG contrast below 3)
   to hide it, while the text is still extractable underneath; filled Square annotations count as
-  covers too. A translucent cover (`/ca` or `/CA` below 1) must also leave the text seen through it
-  below that contrast with the cover beside it, over the white or black backdrop the text reads
-  best against: black at 0.9 over black text hides it, at 0.5 it doesn't;
+  covers too. A translucent cover (`/ca` or `/CA` above 0 and below 1) counts as opaque: how much
+  it hides depends on what lies under the text, which the audit doesn't read;
 - **unapplied mark**: a Redact annotation that was marked but never applied;
-- **retained advance**: a large forward `TJ` adjustment entirely under a later opaque
+- **retained advance**: a large forward `TJ` adjustment entirely under a later
   cover. An adjustment can preserve the removed text's exact width even after the
   text has gone. Ordinary text positioning can produce the same signal;
 - **earlier revisions**: counts incremental revisions that a reader can inspect;

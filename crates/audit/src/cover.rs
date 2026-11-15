@@ -9,8 +9,9 @@
 //! the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
 //! one the audit can't read and counts as dark as the text) and the non-stroking alpha from
-//! ExtGState (`gs` reading `/ca`), which each rectangle records: a translucent cover can still
-//! hide text. A soft mask is not read, so a cover painted through one counts as opaque. Form XObjects are followed read-only with a depth cap, and so
+//! ExtGState (`gs` reading `/ca`): a fully transparent fill paints no cover, and a translucent one
+//! counts as opaque, since how much it hides depends on a backdrop the audit doesn't read. A soft
+//! mask is not read either, so a cover painted through one counts as unmasked. Form XObjects are followed read-only with a depth cap, and so
 //! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
 //! scope and documented as such.
 //!
@@ -54,8 +55,6 @@ pub struct FilledRect {
     /// The fill color as sRGB-ish `[r, g, b]` (CMYK is converted approximately), or `None` when the
     /// audit can't read it.
     pub rgb: Option<[f64; 3]>,
-    /// The non-stroking alpha (`/ca`) it is painted with, above 0 and at most 1.
-    pub alpha: f64,
     /// Paint position: its layer, the `Do` operators that drew it, outermost first, then the fill
     /// operator's index (see the module documentation).
     pub pos: Vec<usize>,
@@ -303,7 +302,8 @@ impl<'a> Walker<'a> {
                 }
                 b"gs" => {
                     if let Some(name) = op.name(0) {
-                        gs.alpha = ext_alpha(self.doc, resources, name);
+                        // A state without `/ca` leaves the alpha as it was (ISO 32000-2 §8.4.5).
+                        gs.alpha = ext_alpha(self.doc, resources, name).unwrap_or(gs.alpha);
                         self.walk_state_font(name, i, res, calls)?;
                     }
                 }
@@ -348,7 +348,7 @@ impl<'a> Walker<'a> {
                         && gs.alpha > 0.0
                         && self.inside.is_none()
                     {
-                        self.paint(r, gs.fill, gs.alpha, calls, i);
+                        self.paint(r, gs.fill, calls, i);
                     }
                 }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
@@ -358,7 +358,7 @@ impl<'a> Walker<'a> {
                     let bbox = shading.as_deref().and_then(Object::as_dict).and_then(|d| form_bbox(self.doc, d));
                     let area = bbox.map_or(gs.clip, |b| meet(gs.clip, gs.ctm.bbox(b)));
                     if gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
-                        self.paint(area, None, gs.alpha, calls, i);
+                        self.paint(area, None, calls, i);
                     }
                 }
                 b"Tj" | b"TJ" | b"'" | b"\"" => {
@@ -409,10 +409,10 @@ impl<'a> Walker<'a> {
         Ok(())
     }
 
-    /// Record a cover painted over `rect` in `rgb` at `alpha` by the operator at index `at`.
-    fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, alpha: f64, calls: &[usize], at: usize) {
+    /// Record a cover painted over `rect` in `rgb` by the operator at index `at`.
+    fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        self.out.push(FilledRect { rect, rgb, alpha, pos });
+        self.out.push(FilledRect { rect, rgb, pos });
     }
 
     /// Follow a form XObject read-only, composing its matrix onto the current CTM. State
@@ -639,13 +639,13 @@ fn user_point(gs: &Gs, op: &Op) -> Option<[f64; 2]> {
     Some([x, y])
 }
 
-/// The non-stroking alpha (`/ca`) of a named ExtGState, defaulting to opaque.
-fn ext_alpha(doc: &Document, resources: &Dict, name: &[u8]) -> f64 {
+/// The non-stroking alpha (`/ca`) a named ExtGState sets, if it sets one.
+fn ext_alpha(doc: &Document, resources: &Dict, name: &[u8]) -> Option<f64> {
     // Borrowed, not copied: a `gs` must not cost the size of the whole ExtGState table.
     let states = resources.get(b"ExtGState").map(|o| doc.resolve(o));
     let state = states.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| doc.resolve(o));
     let alpha = state.as_deref().and_then(Object::as_dict).and_then(|d| d.get(b"ca").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()));
-    alpha.filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0)).unwrap_or(1.0)
+    alpha.filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0))
 }
 
 /// Every filled rectangle drawn by the content of page `n` (and its form XObjects), then by
@@ -674,11 +674,11 @@ pub fn filled_rects(doc: &Document, page: &Dict, crop: [f64; 4], n: usize, appea
     let pieces = Pieces::join(&streams);
     let mut w = Walker { doc, out: Vec::new(), ops_seen: 0, budget, page: n, layer: 0, inside: None, walked: HashSet::new(), saved: 0 };
     let mut gs = Gs::new(crop);
-    let mut stack = Vec::new();
     // Read one operator at a time: the joined stream can hold millions of them within the
-    // decode budget, and the walk only ever needs the current one.
+    // decode budget, and the walk only ever needs the current one. The states the page leaves
+    // saved go with it: a viewer paints each appearance from a fresh graphics state.
     let page = Res { dict: &resources, owner: Owner::Page };
-    w.walk_ops(ops(pieces.data()), &mut gs, &mut stack, page, &mut Vec::new())?;
+    w.walk_nested(ops(pieces.data()), &mut gs, page, &mut Vec::new())?;
     for a in appearances {
         let Object::Stream(form) = &*a.form else { return Err(AuditError::BadAppearance(n)) };
         if !w.budget.enter_form() {

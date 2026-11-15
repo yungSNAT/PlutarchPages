@@ -8,8 +8,8 @@
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
 //! overlaps, and only when it is dark enough against the text's color to make the text
 //! unreadable (WCAG contrast below 3.0). Page backgrounds, table shading and highlight
-//! marks are therefore not flagged. A translucent cover (`/ca` below 1) must also leave the text
-//! seen through it below that contrast with the cover beside it.
+//! marks are therefore not flagged. A translucent cover (`/ca` above 0 and below 1) counts as
+//! opaque: how much it hides depends on the backdrop, which the audit doesn't read.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
@@ -321,7 +321,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             gaps.extend(more_gaps);
         }
         let mut rects = rects;
-        rects.extend(glyph_covers(&lines));
+        add_glyph_covers(&lines, &mut rects);
         budget.start_page(&lines);
         // 1. Filled rectangles and block glyphs over extractable text.
         for r in &rects {
@@ -329,8 +329,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
             }
-            // An opaque cover alone: one the gap shows through says nothing of its width.
-            if r.alpha >= 1.0 && !gaps.is_empty() {
+            if !gaps.is_empty() {
                 budget.spend(gaps.len())?;
                 if gaps.iter().any(|gap| gap.paint_pos < r.pos && covers_gap(&r.rect, gap)) {
                     let covered_text = budget.report_text(String::new(), copying)?;
@@ -363,8 +362,11 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             };
             if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
-                AnnotationCover::Square { rect, rgb, alpha } => {
-                    p.layer <= a.layer && covers(rect, &p.line) && hides(p.line.color, Some(*rgb), *alpha) && !own.iter().any(|r| is_cover(r, p))
+                AnnotationCover::Square { rect, rgb } => {
+                    p.layer <= a.layer
+                        && covers(rect, &p.line)
+                        && contrast(p.line.color, *rgb) < COVER_CONTRAST
+                        && !own.iter().any(|r| is_cover(r, p))
                 }
             })? {
                 let covered_text = budget.report_text(covered, copying)?;
@@ -437,33 +439,16 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 }
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
-/// after the start of the line, overlaps it substantially, and [`hides`] the line's colour. A line
-/// can join runs painted before and after the cover; the later ones are drawn on it in the same
-/// low-contrast color, so they are unreadable too.
+/// after the start of the line, overlaps it substantially, and is dark enough against the line's
+/// color to make the text unreadable. Light covers (table shading, highlights) over dark text fail
+/// the contrast check and are not flagged; one in a color the audit doesn't read could be as dark
+/// as the text, and is. A line can join runs painted before and after the
+/// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
+/// too.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
     rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
         && covers(&rect.rect, &p.line)
-        && hides(p.line.color, rect.rgb, rect.alpha)
-}
-
-/// Does a cover in `rgb` (`None`: a colour the audit doesn't read) at opacity `alpha` make text in
-/// `text` unreadable? It must be dark enough against the text (WCAG contrast below 3): light covers
-/// (table shading, highlights) over dark text are not flagged, and one in a colour the audit
-/// doesn't read could be as dark as the text, and is. A translucent one must also leave too little
-/// contrast between the text seen through it and the cover beside the text: that is, over the
-/// backdrop the text reads best against (white or black), so that text it leaves legible on that
-/// backdrop is not flagged.
-fn hides(text: [f64; 3], rgb: Option<[f64; 3]>, alpha: f64) -> bool {
-    let cover = rgb.unwrap_or(text);
-    if contrast(text, cover) >= COVER_CONTRAST {
-        return false;
-    }
-    if alpha >= 1.0 {
-        return true;
-    }
-    let backdrop = if contrast(text, [1.0; 3]) >= contrast(text, [0.0; 3]) { [1.0; 3] } else { [0.0; 3] };
-    let through = |under: [f64; 3]| [0, 1, 2].map(|i| alpha * cover[i] + (1.0 - alpha) * under[i]);
-    contrast(through(text), through(backdrop)) < COVER_CONTRAST
+        && rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST)
 }
 
 /// Characters drawn as a solid box: typed or pasted over text, they hide it as a filled rectangle
@@ -477,34 +462,29 @@ fn shows_text(text: &str) -> bool {
     text.chars().any(|c| !c.is_whitespace() && !is_block(c))
 }
 
-/// The covers block characters draw: the box of each word a run fills with them (render modes 0,
-/// 2, 4 and 6 fill glyphs), painted when its run is, in the line's colour and opacity. A run whose
-/// text doesn't split into as many words as it has word boxes counts only when it shows nothing
-/// but blocks. A line whose text was reordered for reading lists no runs, and gives none.
-fn glyph_covers(lines: &[Painted]) -> Vec<cover::FilledRect> {
-    let mut out = Vec::new();
+/// Add the covers block characters draw to `out`: the box of each word a run fills with them
+/// (render modes 0, 2, 4 and 6 fill glyphs), painted when its run is, in the line's colour, unless
+/// the line is fully transparent. A run whose text doesn't split into as many words as it has word
+/// boxes counts only when it shows nothing but blocks. A line whose text was reordered for reading
+/// lists no runs, and gives none.
+fn add_glyph_covers(lines: &[Painted], out: &mut Vec<cover::FilledRect>) {
     for Painted { layer, line } in lines {
-        let alpha = line.opacity().0;
-        if !line.text.chars().any(is_block) || alpha <= 0.0 {
+        if !line.text.chars().any(is_block) || line.opacity().0 <= 0.0 {
             continue;
         }
         for (((text, ink, _), (mode, _)), order) in line.runs().zip(line.run_modes()).zip(line.run_paint_orders()) {
             if !matches!(mode, 0 | 2 | 4 | 6) {
                 continue;
             }
-            let words: Vec<&str> = text.split_whitespace().collect();
-            let blocks: Vec<[f64; 4]> = if words.len() == ink.len() {
-                words.iter().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| *b).collect()
-            } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
-                ink.to_vec()
-            } else {
-                Vec::new()
-            };
             let pos: Vec<usize> = std::iter::once(*layer).chain(order).collect();
-            out.extend(blocks.into_iter().map(|rect| cover::FilledRect { rect, rgb: Some(line.color), alpha, pos: pos.clone() }));
+            let cover = |rect: &[f64; 4]| cover::FilledRect { rect: *rect, rgb: Some(line.color), pos: pos.clone() };
+            if text.split_whitespace().count() == ink.len() {
+                out.extend(text.split_whitespace().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| cover(b)));
+            } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
+                out.extend(ink.iter().map(cover));
+            }
         }
     }
-    out
 }
 
 /// Does `cover` hide a substantial part of what `line` draws? Three ways, any is enough:
@@ -587,11 +567,10 @@ fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 enum AnnotationCover {
     Redact([f64; 4]),
-    /// Its interior colour and opacity (`/CA`).
+    /// Its interior colour.
     Square {
         rect: [f64; 4],
         rgb: [f64; 3],
-        alpha: f64,
     },
 }
 
@@ -631,9 +610,12 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
         let cover = match subtype(doc, dict)?.as_deref() {
             Some(b"Redact") => Some(AnnotationCover::Redact(rect)),
             Some(b"Square") if shown => {
-                let alpha =
-                    dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()).filter(|a| a.is_finite()).map_or(1.0, |a| a.clamp(0.0, 1.0));
-                annotation_color(doc, dict, b"IC").filter(|_| alpha > 0.0).map(|rgb| AnnotationCover::Square { rect, rgb, alpha })
+                // A translucent one counts as opaque, as a translucent rectangle does; a fully
+                // transparent one (`/CA 0`) paints nothing.
+                let ca = dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64());
+                annotation_color(doc, dict, b"IC")
+                    .filter(|_| ca.is_none_or(|a| !a.is_finite() || a > 0.0))
+                    .map(|rgb| AnnotationCover::Square { rect, rgb })
             }
             _ => None,
         };
