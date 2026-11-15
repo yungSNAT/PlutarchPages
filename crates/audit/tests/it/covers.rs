@@ -200,13 +200,18 @@ const OVER_SECRET: &str = "220 0 0 32 100 688 cm";
 fn an_image_painted_over_text_hides_it() {
     let resources = "<< /Font << /F1 5 0 R >> /XObject << /Im 6 0 R /Soft 7 0 R /Keyed 8 0 R /Stencil 9 0 R /Fm 10 0 R >> \
                      /ExtGState << /Clear << /ca 0 >> >> >>";
-    let image = |extra: &str| stream_obj(&format!("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 {extra}"), "0");
+    let image = |extra: &str| {
+        stream_obj(&format!("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 {extra}"), "0")
+    };
     let objects = [
         image(""),
         image("/SMask 6 0 R"),
         image("/Mask [0 255]"),
         stream_obj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask true", "0"),
-        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /XObject << /Im 6 0 R >> >>", format!("q {OVER_SECRET} /Im Do Q")),
+        stream_obj(
+            "/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /XObject << /Im 6 0 R >> >>",
+            format!("q {OVER_SECRET} /Im Do Q"),
+        ),
     ];
     let ocr = "BT 3 Tr /F1 24 Tf 100 700 Td (SECRET) Tj ET";
     for (content, hidden) in [

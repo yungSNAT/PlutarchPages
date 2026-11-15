@@ -128,12 +128,14 @@ const BLACK_SHADING: &str = "<< /ShadingType 2 /ColorSpace /DeviceGray /Coords [
                              /Function << /FunctionType 2 /Domain [0 1] /C0 [0] /C1 [0] /N 1 >> >>";
 
 /// A cover painted in a colour set with `cs` and `sc` or `scn` is judged by that colour, not by
-/// the last `g`, `rg` or `k`: black over the black text hides it whatever `g` said before, and
-/// white doesn't. DeviceCMYK starts black, by name or through a resource, and an ICC-based CMYK space
-/// starts at 0 0 0 0, white; the other spaces start black.
+/// the last `g`, `rg` or `k`: multiplied onto the page, so that its colour decides, black over the
+/// black text hides it whatever `g` said before, and white doesn't. DeviceCMYK starts black, by name
+/// or through a resource, and an ICC-based CMYK space starts at 0 0 0 0, white; the other spaces
+/// start black.
 #[test]
 fn a_colour_a_colour_space_sets_is_the_covers() {
-    let resources = "<< /Font << /F1 5 0 R >> /ColorSpace << /Icc [/ICCBased 6 0 R] /Rgb /DeviceRGB /Cmyk /DeviceCMYK /Icc4 [/ICCBased 7 0 R] >> >>";
+    let resources = "<< /Font << /F1 5 0 R >> /ColorSpace << /Icc [/ICCBased 6 0 R] /Rgb /DeviceRGB /Cmyk /DeviceCMYK /Icc4 [/ICCBased 7 0 R] >> \
+                     /ExtGState << /M << /BM /Multiply >> >> >>";
     for (fill, hidden) in [
         ("1 g /DeviceGray cs 0 sc", true),
         ("1 g /DeviceRGB cs 0 0 0 sc", true),
@@ -147,7 +149,7 @@ fn a_colour_a_colour_space_sets_is_the_covers() {
         ("0 g /DeviceRGB cs 1 1 1 sc", false),
         ("0 g /Icc cs 1 sc", false),
     ] {
-        let doc = page(resources, &format!("{TWO_LINES} {fill} 100 688 220 32 re f"), &[stream_obj("/N 1", ""), stream_obj("/N 4", "")]);
+        let doc = page(resources, &format!("{TWO_LINES} /M gs {fill} 100 688 220 32 re f"), &[stream_obj("/N 1", ""), stream_obj("/N 4", "")]);
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&doc), want, "{fill}");
     }
