@@ -299,8 +299,8 @@ impl PdfCraftApp {
         // The Comments panel's editor likewise. Past its own history it falls to the document's,
         // which saves what it holds first (`close_text_editors`).
         if let Some(document) = self.session.get(doc)
-            && let Some((page, index, text)) = view.comments.unsaved_edit(&document.info.annotations)
-            && let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc, (page, index)), text, true)
+            && let Some((_, _, text)) = view.comments.unsaved_edit(&document.info.annotations)
+            && let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc), text, true)
             && let Some((_, _, text)) = view.comments.editing.as_mut()
         {
             *text = stepped;
@@ -343,8 +343,8 @@ impl PdfCraftApp {
         }
         // The Comments panel's editor likewise: typing it holds that the document doesn't have
         // stays, and so does the document's Redo, which saving it first would drop.
-        if let Some((page, index, text)) = view.comments.editing.as_mut() {
-            if let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc, (*page, *index)), text, false) {
+        if let Some((_, _, text)) = view.comments.editing.as_mut() {
+            if let Some(stepped) = typing_step(&ctx, crate::comments::editor_id(doc), text, false) {
                 *text = stepped;
                 return true;
             }
@@ -478,10 +478,7 @@ impl PdfCraftApp {
         if let Some(d) = &view.content.draft {
             return has_typing_to_redo(ctx, crate::content_ui::input_id(), &d.text);
         }
-        view.comments
-            .editing
-            .as_ref()
-            .is_some_and(|(page, index, text)| has_typing_to_redo(ctx, crate::comments::editor_id(view.id, (*page, *index)), text))
+        view.comments.editing.as_ref().is_some_and(|(_, _, text)| has_typing_to_redo(ctx, crate::comments::editor_id(view.id), text))
     }
 
     /// Typing in a box on the page (a paragraph being edited, added text) that the page doesn't
