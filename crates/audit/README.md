@@ -31,6 +31,10 @@ metadata finding. Check those signals before sharing the file. Page backgrounds 
 shading painted before the text, and highlights multiplied or painted translucent onto it, are
 excluded from the covered-text check.
 
+[The redaction head-to-head](../../docs/redaction-head-to-head.md) runs this audit, the released
+pdfcraft and PlutarchPages audits, and reads 5 other open source PDF tools' redaction code, on 10
+unsafe and 4 safe files (15 November 2026).
+
 A rectangle covers a text line when it hides at least half of one of the line's words, at
 least 40% of the area of the words the line draws, or at least 40% of the line's box together
 with a positive-area intersection with one of its words. The gap an applied redaction leaves (a `TJ` adjustment where the text was) is in the line's box but
