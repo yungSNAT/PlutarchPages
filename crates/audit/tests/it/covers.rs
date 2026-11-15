@@ -198,7 +198,7 @@ const OVER_SECRET: &str = "220 0 0 32 100 688 cm";
 /// still hides it.
 #[test]
 fn an_image_painted_over_text_hides_it() {
-    let resources = "<< /Font << /F1 5 0 R >> /XObject << /Im 6 0 R /Soft 7 0 R /Keyed 8 0 R /Stencil 9 0 R /Fm 10 0 R >> \
+    let resources = "<< /Font << /F1 5 0 R >> /XObject << /Im 6 0 R /Soft 7 0 R /Keyed 8 0 R /Stencil 9 0 R /Fm 10 0 R /NullMask 11 0 R >> \
                      /ExtGState << /Clear << /ca 0 >> >> >>";
     let image = |extra: &str| {
         stream_obj(&format!("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 {extra}"), "0")
@@ -212,6 +212,8 @@ fn an_image_painted_over_text_hides_it() {
             "/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /XObject << /Im 6 0 R >> >>",
             format!("q {OVER_SECRET} /Im Do Q"),
         ),
+        image("/SMask 12 0 R /Mask 12 0 R"),
+        b"null".to_vec(),
     ];
     let ocr = "BT 3 Tr /F1 24 Tf 100 700 Td (SECRET) Tj ET";
     for (content, hidden) in [
@@ -226,6 +228,7 @@ fn an_image_painted_over_text_hides_it() {
         (format!("{TWO_LINES} q /Clear gs {OVER_SECRET} /Im Do Q"), false),
         (format!("{TWO_LINES} q {OVER_SECRET} /Soft Do Q"), false),
         (format!("{TWO_LINES} q {OVER_SECRET} /Keyed Do Q"), false),
+        (format!("{TWO_LINES} q {OVER_SECRET} /NullMask Do Q"), true),
         (format!("{ocr} q {OVER_SECRET} /Im Do Q"), false),
         (format!("{ocr} 0 g 100 688 220 32 re f"), true),
     ] {
@@ -248,7 +251,7 @@ fn an_image_painted_over_text_hides_it() {
 #[test]
 fn an_opaque_cover_hides_text_whatever_its_colour() {
     let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Multiply << /BM /Multiply >> /Plain << /BM /Normal >> \
-                     /Listed << /BM [/Multiply /Normal] >> /Masked << /SMask << /Type /Mask /S /Luminosity /G 6 0 R >> >> \
+                     /Listed << /BM [/Multiply /Normal] >> /Unknown << /BM [/Unknown /Normal] >> /Odd << /BM /Unknown >> /Masked << /SMask << /Type /Mask /S /Luminosity /G 6 0 R >> >> \
                      /Unmasked << /SMask /None >> >> >>";
     let group = stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency /CS /DeviceGray >>", "1 g 0 0 612 792 re f");
     let objects = [group];
@@ -261,6 +264,8 @@ fn an_opaque_cover_hides_text_whatever_its_colour() {
         (format!("{TWO_LINES} q /Plain gs 1 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs 1 1 0 rg {cover} Q"), false),
         (format!("{TWO_LINES} q /Listed gs 1 1 0 rg {cover} Q"), false),
+        (format!("{TWO_LINES} q /Unknown gs 1 g {cover} Q"), true),
+        (format!("{TWO_LINES} q /Multiply gs /Odd gs 1 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs 0 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs /Plain gs 1 1 0 rg {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs Q 1 1 0 rg {cover}"), true),
