@@ -246,8 +246,11 @@ fn an_image_painted_over_text_hides_it() {
 /// A cover painted fully opaque in the Normal blend mode replaces what lies under it (ISO 32000-2
 /// §11.3.5), so it hides text whatever the two colours: black over red text, white, light grey or
 /// yellow over black. One blended (a highlight multiplied onto the page), painted through a soft
-/// mask or at an annotation's opacity below 1 hides it only when it is dark against the text. A later
-/// graphics state or a restore that sets the Normal mode or no soft mask makes covers opaque again.
+/// mask or as a Square's interior colour at its opacity below 1 hides it only when it is dark against
+/// the text; of a list of blend modes the first known one counts, and an unknown one is Normal. A
+/// later graphics state or a restore that sets the Normal mode or no soft mask makes covers opaque
+/// again. An annotation's `/CA` and `/BM` don't change its appearance, which PDFium and pdf.js paint
+/// as it is.
 #[test]
 fn an_opaque_cover_hides_text_whatever_its_colour() {
     let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Multiply << /BM /Multiply >> /Plain << /BM /Normal >> \
@@ -275,15 +278,15 @@ fn an_opaque_cover_hides_text_whatever_its_colour() {
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&page(resources, &content, &objects)), want, "{content}");
     }
-    for (square, hidden) in [("/IC [1 1 1]", true), ("/IC [1 1 0]", true), ("/IC [1 1 0] /BM /Multiply", false), ("/IC [1 1 0] /CA 0.5", false)] {
+    for (square, hidden) in [("/IC [1 1 1]", true), ("/IC [1 1 0]", true), ("/IC [1 1 0] /BM /Multiply", true), ("/IC [1 1 0] /CA 0.5", false)] {
         let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Square /Rect [100 688 320 720] {square} >>"), &[]);
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&doc), want, "{square}");
     }
     for (annot, data, hidden) in [
         ("", "1 1 0 rg 0 0 220 32 re f", true),
-        ("/CA 0.4", "1 1 0 rg 0 0 220 32 re f", false),
-        ("/BM /Multiply", "1 1 0 rg 0 0 220 32 re f", false),
+        ("/CA 0.4", "1 1 0 rg 0 0 220 32 re f", true),
+        ("/BM /Multiply", "1 1 0 rg 0 0 220 32 re f", true),
         ("", "/M gs 1 1 0 rg 0 0 220 32 re f", false),
         ("/CA 0.4", "0 g 0 0 220 32 re f", true),
     ] {
