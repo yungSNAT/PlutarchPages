@@ -1,7 +1,8 @@
-//! Covers other than an opaque filled rectangle: block characters drawn over text, translucent
-//! covers and covers painted through a soft mask, with copying allowed or withheld; and the audit's
-//! bounds on saved graphics states and malformed boxes. Contributor-original fixtures, built in
-//! code.
+//! Covers other than an opaque black filled rectangle: block characters drawn over text, images,
+//! opaque covers of any colour, translucent and blended covers and covers painted through a soft
+//! mask, with copying allowed or withheld; Square annotations and their appearances; and the
+//! audit's bounds on saved graphics states and malformed boxes. Contributor-original fixtures,
+//! built in code.
 
 use std::sync::Arc;
 
@@ -184,4 +185,116 @@ fn annotated(content: &str, annot: &str, objects: &[Vec<u8>]) -> Document {
         .obj(annot)
         .objs(objects);
     Document::open(Arc::new(pdf.build())).expect("test pdf must open")
+}
+
+/// The CTM that places an image's unit square where the other tests paint their cover over SECRET.
+const OVER_SECRET: &str = "220 0 0 32 100 688 cm";
+
+/// An image painted over text hides it as a filled rectangle does, over the box the CTM places it
+/// in, within the clip: an image XObject, an inline image or an image mask, on the page, in a form
+/// or in an annotation's appearance. One painted first, beside the text, clipped away or fully
+/// transparent doesn't, nor does one with a mask of its own, which lets what lies under it show
+/// where the mask says. Over invisible text an image is what an OCR tool's scan is; a rectangle
+/// still hides it.
+#[test]
+fn an_image_painted_over_text_hides_it() {
+    let resources = "<< /Font << /F1 5 0 R >> /XObject << /Im 6 0 R /Soft 7 0 R /Keyed 8 0 R /Stencil 9 0 R /Fm 10 0 R >> \
+                     /ExtGState << /Clear << /ca 0 >> >> >>";
+    let image = |extra: &str| stream_obj(&format!("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 {extra}"), "0");
+    let objects = [
+        image(""),
+        image("/SMask 6 0 R"),
+        image("/Mask [0 255]"),
+        stream_obj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask true", "0"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /XObject << /Im 6 0 R >> >>", format!("q {OVER_SECRET} /Im Do Q")),
+    ];
+    let ocr = "BT 3 Tr /F1 24 Tf 100 700 Td (SECRET) Tj ET";
+    for (content, hidden) in [
+        (format!("{TWO_LINES} q {OVER_SECRET} /Im Do Q"), true),
+        (format!("{TWO_LINES} q {OVER_SECRET} BI /W 1 /H 1 /CS /G /BPC 8 ID 0 EI Q"), true),
+        (format!("{TWO_LINES} q {OVER_SECRET} BI /W 1 /H 1 /IM true ID 0 EI Q"), true),
+        (format!("{TWO_LINES} q {OVER_SECRET} /Stencil Do Q"), true),
+        (format!("{TWO_LINES} /Fm Do"), true),
+        (format!("q {OVER_SECRET} /Im Do Q {TWO_LINES}"), false),
+        (format!("{TWO_LINES} q 220 0 0 32 100 400 cm /Im Do Q"), false),
+        (format!("{TWO_LINES} q 0 0 10 10 re W n {OVER_SECRET} /Im Do Q"), false),
+        (format!("{TWO_LINES} q /Clear gs {OVER_SECRET} /Im Do Q"), false),
+        (format!("{TWO_LINES} q {OVER_SECRET} /Soft Do Q"), false),
+        (format!("{TWO_LINES} q {OVER_SECRET} /Keyed Do Q"), false),
+        (format!("{ocr} q {OVER_SECRET} /Im Do Q"), false),
+        (format!("{ocr} 0 g 100 688 220 32 re f"), true),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &content, &objects)), want, "{content}");
+    }
+    let stamp = annotated(
+        TWO_LINES,
+        "<< /Type /Annot /Subtype /Stamp /Rect [100 688 320 720] /AP << /N 7 0 R >> >>",
+        &[stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 1 1] /Resources << /XObject << /Im 8 0 R >> >>", "/Im Do"), image("")],
+    );
+    assert_eq!(covered(&stamp), ["SECRET"]);
+}
+
+/// A cover painted fully opaque in the Normal blend mode replaces what lies under it (ISO 32000-2
+/// §11.3.5), so it hides text whatever the two colours: black over red text, white, light grey or
+/// yellow over black. One blended (a highlight multiplied onto the page), painted through a soft
+/// mask or at an annotation's opacity below 1 hides it only when it is dark against the text. A later
+/// graphics state or a restore that sets the Normal mode or no soft mask makes covers opaque again.
+#[test]
+fn an_opaque_cover_hides_text_whatever_its_colour() {
+    let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Multiply << /BM /Multiply >> /Plain << /BM /Normal >> \
+                     /Listed << /BM [/Multiply /Normal] >> /Masked << /SMask << /Type /Mask /S /Luminosity /G 6 0 R >> >> \
+                     /Unmasked << /SMask /None >> >> >>";
+    let group = stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency /CS /DeviceGray >>", "1 g 0 0 612 792 re f");
+    let objects = [group];
+    let cover = "100 688 220 32 re f";
+    for (content, hidden) in [
+        (format!("BT 1 0 0 rg /F1 24 Tf 100 700 Td (SECRET) Tj ET 0 g {cover}"), true),
+        (format!("{TWO_LINES} 1 g {cover}"), true),
+        (format!("{TWO_LINES} 0.9 g {cover}"), true),
+        (format!("{TWO_LINES} 1 1 0 rg {cover}"), true),
+        (format!("{TWO_LINES} q /Plain gs 1 g {cover} Q"), true),
+        (format!("{TWO_LINES} q /Multiply gs 1 1 0 rg {cover} Q"), false),
+        (format!("{TWO_LINES} q /Listed gs 1 1 0 rg {cover} Q"), false),
+        (format!("{TWO_LINES} q /Multiply gs 0 g {cover} Q"), true),
+        (format!("{TWO_LINES} q /Multiply gs /Plain gs 1 1 0 rg {cover} Q"), true),
+        (format!("{TWO_LINES} q /Multiply gs Q 1 1 0 rg {cover}"), true),
+        (format!("{TWO_LINES} q /Masked gs 1 g {cover} Q"), false),
+        (format!("{TWO_LINES} q /Masked gs /Unmasked gs 1 g {cover} Q"), true),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &content, &objects)), want, "{content}");
+    }
+    for (square, hidden) in [("/IC [1 1 1]", true), ("/IC [1 1 0]", true), ("/IC [1 1 0] /BM /Multiply", false), ("/IC [1 1 0] /CA 0.5", false)] {
+        let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Square /Rect [100 688 320 720] {square} >>"), &[]);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "{square}");
+    }
+    for (annot, data, hidden) in [
+        ("", "1 1 0 rg 0 0 220 32 re f", true),
+        ("/CA 0.4", "1 1 0 rg 0 0 220 32 re f", false),
+        ("/BM /Multiply", "1 1 0 rg 0 0 220 32 re f", false),
+        ("", "/M gs 1 1 0 rg 0 0 220 32 re f", false),
+        ("/CA 0.4", "0 g 0 0 220 32 re f", true),
+    ] {
+        let ap = stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 220 32] /Resources << /ExtGState << /M << /BM /Multiply >> >> >>", data);
+        let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Highlight /Rect [100 688 320 720] {annot} /AP << /N 7 0 R >> >>"), &[ap]);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "{annot} {data}");
+    }
+}
+
+/// A viewer paints a Square's appearance where it has one, and makes one from its interior colour
+/// only where it has none (pdf.js, PDFium, Poppler and MuPDF): a black `/IC` behind a border-only
+/// appearance hides nothing. Without an appearance, or with one for a state `/AS` doesn't name, the
+/// interior colour is the cover.
+#[test]
+fn a_squares_appearance_is_painted_instead_of_its_interior_colour() {
+    let doc = |ap: &str| {
+        let border = stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 220 32]", "0 g 2 w 1 1 218 30 re S");
+        annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Square /Rect [100 688 320 720] /IC [0] {ap} >>"), &[border])
+    };
+    assert_eq!(covered(&doc("/AP << /N 7 0 R >>")), Vec::<String>::new());
+    assert_eq!(covered(&doc("")), ["SECRET"]);
+    assert_eq!(covered(&doc("/AP << /N << /On 7 0 R >> >>")), ["SECRET"]);
 }
