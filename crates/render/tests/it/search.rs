@@ -643,7 +643,7 @@ fn find_joins_a_word_divided_at_a_line_end_soft_hyphen() {
 
 /// Horizontal glyphs of `size` points, one per character, each line `lead` points below the
 /// last and starting at `x`: (x, first line's top, text) per line.
-fn laid_out(lines: &[(f32, f32, &str)], size: f32) -> PageText {
+fn laid_out_at(lines: &[(f32, f32, &str)], size: f32) -> PageText {
     let mut glyphs = Vec::new();
     for &(x0, top, text) in lines {
         for (k, c) in text.chars().enumerate() {
@@ -663,7 +663,7 @@ fn laid_out(lines: &[(f32, f32, &str)], size: f32) -> PageText {
 #[test]
 fn a_chinese_or_japanese_word_divided_by_a_line_end_is_found_on_both_lines() {
     // "検知機構" wraps after "検知" (pdf.js #15340); "ソレノイド" after "ソレ".
-    let text = laid_out(&[(10.0, 10.0, "装置の検知"), (10.0, 25.0, "機構です"), (10.0, 40.0, "ソレ"), (10.0, 55.0, "ノイド")], 10.0);
+    let text = laid_out_at(&[(10.0, 10.0, "装置の検知"), (10.0, 25.0, "機構です"), (10.0, 40.0, "ソレ"), (10.0, 55.0, "ノイド")], 10.0);
     assert_eq!(text.line_of.iter().copied().max(), Some(3));
     let hits = text.find("検知機構");
     assert_eq!(hits, vec![3..7]);
@@ -679,28 +679,28 @@ fn a_chinese_or_japanese_word_divided_by_a_line_end_is_found_on_both_lines() {
 #[test]
 fn a_line_break_stays_a_space_beside_latin_or_hangul_and_between_side_by_side_text() {
     // Latin and Korean separate words with spaces: the line end is one.
-    let latin = laid_out(&[(10.0, 10.0, "abc"), (10.0, 25.0, "def")], 10.0);
+    let latin = laid_out_at(&[(10.0, 10.0, "abc"), (10.0, 25.0, "def")], 10.0);
     assert_eq!(latin.find("abc def"), vec![0..6]);
     assert!(latin.find("abcdef").is_empty());
-    let mixed = laid_out(&[(10.0, 10.0, "PDF"), (10.0, 25.0, "検知")], 10.0);
+    let mixed = laid_out_at(&[(10.0, 10.0, "PDF"), (10.0, 25.0, "検知")], 10.0);
     assert_eq!(mixed.find("PDF 検知"), vec![0..5]);
     assert!(mixed.find("PDF検知").is_empty());
-    let hangul = laid_out(&[(10.0, 10.0, "한국"), (10.0, 25.0, "어")], 10.0);
+    let hangul = laid_out_at(&[(10.0, 10.0, "한국"), (10.0, 25.0, "어")], 10.0);
     assert_eq!(hangul.find("한국 어"), vec![0..3]);
     assert!(hangul.find("한국어").is_empty());
     // Two cells on one row read as two lines, but the second does not continue the first.
-    let row = laid_out(&[(10.0, 10.0, "東京"), (200.0, 10.0, "大阪")], 10.0);
+    let row = laid_out_at(&[(10.0, 10.0, "東京"), (200.0, 10.0, "大阪")], 10.0);
     assert_eq!(row.line_of, vec![0, 0, 1, 1]);
     assert!(row.find("東京大阪").is_empty());
     assert_eq!(row.find("東京 大阪"), vec![0..4]);
     // Nor does a cell set lower and further along the row: a wrapped line starts back behind the
     // end of the line before it.
-    let staggered = laid_out(&[(10.0, 10.0, "東京"), (200.0, 17.0, "大阪")], 10.0);
+    let staggered = laid_out_at(&[(10.0, 10.0, "東京"), (200.0, 17.0, "大阪")], 10.0);
     assert_eq!(staggered.line_of, vec![0, 0, 1, 1]);
     assert!(staggered.find("東京大阪").is_empty());
     assert_eq!(staggered.find("東京 大阪"), vec![0..4]);
     // Fullwidth Latin letters and digits are Latin text set wide: their line end is a word break.
-    let wide = laid_out(&[(10.0, 10.0, "ＡＢ"), (10.0, 25.0, "ＣＤ"), (10.0, 40.0, "１２"), (10.0, 55.0, "３４")], 10.0);
+    let wide = laid_out_at(&[(10.0, 10.0, "ＡＢ"), (10.0, 25.0, "ＣＤ"), (10.0, 40.0, "１２"), (10.0, 55.0, "３４")], 10.0);
     assert!(wide.find_opts("ＡＢＣＤ", true, false).is_empty());
     assert_eq!(wide.find_opts("ＡＢ ＣＤ", true, false), vec![0..4]);
     assert!(wide.find("１２３４").is_empty());
@@ -809,12 +809,12 @@ fn each_unspaced_range_joins_and_spaced_scripts_do_not() {
         '\u{30000}', // Han extension B, compatibility supplement, extension G
     ];
     for c in joined {
-        let text = laid_out(&[(10.0, 10.0, &format!("中{c}")), (10.0, 25.0, &format!("{c}中"))], 10.0);
+        let text = laid_out_at(&[(10.0, 10.0, &format!("中{c}")), (10.0, 25.0, &format!("{c}中"))], 10.0);
         assert_eq!(text.find_opts(&format!("中{c}{c}中"), true, false), vec![0..4], "U+{:04X}", c as u32);
     }
     let spaced = ['\u{AC00}', '\u{3200}', '\u{3260}', '\u{FF10}', '\u{FF21}', '\u{FF41}', '\u{FFA1}', '\u{A000}', 'a'];
     for c in spaced {
-        let text = laid_out(&[(10.0, 10.0, &format!("中{c}")), (10.0, 25.0, &format!("{c}中"))], 10.0);
+        let text = laid_out_at(&[(10.0, 10.0, &format!("中{c}")), (10.0, 25.0, &format!("{c}中"))], 10.0);
         assert!(text.find_opts(&format!("中{c}{c}中"), true, false).is_empty(), "U+{:04X}", c as u32);
         assert_eq!(text.find_opts(&format!("中{c} {c}中"), true, false), vec![0..4], "U+{:04X}", c as u32);
     }
@@ -825,7 +825,7 @@ fn each_unspaced_range_joins_and_spaced_scripts_do_not() {
 /// width space, all on one page. Each break reads as nothing, and plain Latin line ends stay spaces.
 #[test]
 fn a_soft_hyphen_and_a_chinese_or_japanese_line_end_combine() {
-    let text = laid_out(
+    let text = laid_out_at(
         &[
             (10.0, 10.0, "装置の検\u{AD}"),
             (10.0, 25.0, "知機構の"),
@@ -904,7 +904,7 @@ fn a_chinese_or_japanese_word_divided_in_turned_text_is_found_on_both_lines() {
 /// the same glyph or in glyphs of their own.
 #[test]
 fn a_soft_hyphen_line_end_joins_past_invisible_characters() {
-    let hyphen = laid_out(&[(10.0, 10.0, "Mitar\u{AD}\u{200B}"), (10.0, 25.0, "beiterinnen")], 10.0);
+    let hyphen = laid_out_at(&[(10.0, 10.0, "Mitar\u{AD}\u{200B}"), (10.0, 25.0, "beiterinnen")], 10.0);
     assert_eq!(hyphen.find("Mitarbeiterinnen"), vec![0..18]);
     let mut text = page(&["Mitar\u{AD}", "\u{2060}", "beiterinnen"]);
     text.line_of = vec![0, 0, 1];
@@ -915,7 +915,7 @@ fn a_soft_hyphen_line_end_joins_past_invisible_characters() {
 /// glyph: the line still runs on to the next.
 #[test]
 fn a_variation_selector_at_a_line_end_keeps_the_line_running_on() {
-    let selector = laid_out(&[(10.0, 10.0, "葛\u{E0100}"), (10.0, 25.0, "飾区")], 10.0);
+    let selector = laid_out_at(&[(10.0, 10.0, "葛\u{E0100}"), (10.0, 25.0, "飾区")], 10.0);
     assert_eq!(selector.find("葛\u{E0100}飾区"), vec![0..4]);
     assert!(selector.find("葛\u{E0100} 飾区").is_empty());
 }
@@ -923,7 +923,7 @@ fn a_variation_selector_at_a_line_end_keeps_the_line_running_on() {
 /// A wrapped line is near the one before: a block far down the page keeps its word break.
 #[test]
 fn a_line_end_does_not_join_a_block_far_below() {
-    let far = laid_out(&[(10.0, 10.0, "検知"), (10.0, 200.0, "機構")], 10.0);
+    let far = laid_out_at(&[(10.0, 10.0, "検知"), (10.0, 200.0, "機構")], 10.0);
     assert!(far.find("検知機構").is_empty());
     assert_eq!(far.find("検知 機構"), vec![0..4]);
 }
@@ -932,7 +932,7 @@ fn a_line_end_does_not_join_a_block_far_below() {
 /// its word break, wherever it sits.
 #[test]
 fn a_line_end_does_not_join_a_line_in_another_direction() {
-    let mut across = laid_out(&[(10.0, 10.0, "検知"), (10.0, 25.0, "機構")], 10.0);
+    let mut across = laid_out_at(&[(10.0, 10.0, "検知"), (10.0, 25.0, "機構")], 10.0);
     for g in across.glyphs.iter_mut().skip(2) {
         g.direction = [0.0, 1.0];
     }
@@ -943,7 +943,7 @@ fn a_line_end_does_not_join_a_line_in_another_direction() {
 /// A line of one character starts level with the one before, not behind it, and still runs on.
 #[test]
 fn lines_of_one_character_run_on() {
-    let single = laid_out(&[(10.0, 10.0, "検"), (10.0, 25.0, "知"), (10.0, 40.0, "機")], 10.0);
+    let single = laid_out_at(&[(10.0, 10.0, "検"), (10.0, 25.0, "知"), (10.0, 40.0, "機")], 10.0);
     assert_eq!(single.find("検知機"), vec![0..3]);
 }
 
@@ -1000,7 +1000,7 @@ fn a_word_divided_between_vertical_columns_of_a_page_is_found_in_both() {
 /// on: the break is measured on the glyphs that draw the characters either side of it.
 #[test]
 fn a_line_end_after_an_invisible_glyph_with_no_height_still_joins() {
-    let mut text = laid_out(&[(10.0, 10.0, "検知\u{200B}"), (10.0, 25.0, "機構")], 10.0);
+    let mut text = laid_out_at(&[(10.0, 10.0, "検知\u{200B}"), (10.0, 25.0, "機構")], 10.0);
     if let Some(g) = text.glyphs.get_mut(2) {
         g.rect = [30.0, 15.0, 30.0, 15.0];
         g.quad = [[30.0, 15.0]; 4];
@@ -1013,7 +1013,7 @@ fn a_line_end_after_an_invisible_glyph_with_no_height_still_joins() {
 #[test]
 fn a_long_run_of_variation_selectors_is_searched_quickly() {
     let selectors: String = std::iter::once('葛').chain(std::iter::repeat_n('\u{FE00}', 200_000)).collect();
-    let text = laid_out(&[(10.0, 10.0, &selectors)], 0.001);
+    let text = laid_out_at(&[(10.0, 10.0, &selectors)], 0.001);
     let started = std::time::Instant::now();
     assert!(text.find("飾").is_empty());
     assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
@@ -1023,7 +1023,7 @@ fn a_long_run_of_variation_selectors_is_searched_quickly() {
 /// searchable text, and the line still runs on: the break is measured on the letter it follows.
 #[test]
 fn a_line_end_after_a_zero_height_variation_selector_glyph_still_joins() {
-    let mut text = laid_out(&[(10.0, 10.0, "葛\u{E0100}"), (10.0, 25.0, "飾区")], 10.0);
+    let mut text = laid_out_at(&[(10.0, 10.0, "葛\u{E0100}"), (10.0, 25.0, "飾区")], 10.0);
     if let Some(g) = text.glyphs.get_mut(1) {
         g.rect = [20.0, 15.0, 20.0, 15.0];
         g.quad = [[20.0, 15.0]; 4];
@@ -1036,7 +1036,7 @@ fn a_line_end_after_a_zero_height_variation_selector_glyph_still_joins() {
 #[test]
 fn a_line_end_after_many_invisible_glyphs_still_joins() {
     let line: String = std::iter::once('検').chain(std::iter::once('知')).chain(std::iter::repeat_n('\u{200B}', 40)).collect();
-    let mut text = laid_out(&[(10.0, 10.0, &line), (10.0, 25.0, "機構")], 10.0);
+    let mut text = laid_out_at(&[(10.0, 10.0, &line), (10.0, 25.0, "機構")], 10.0);
     for g in text.glyphs.iter_mut().skip(2).take(40) {
         let [x, y] = [g.rect[0], g.rect[1]];
         g.rect = [x, y, x, y];
