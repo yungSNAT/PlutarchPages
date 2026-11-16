@@ -12,9 +12,10 @@
 //! one the audit can't read and counts as dark as the text), and from ExtGState (`gs`) the
 //! non-stroking alpha (`/ca`), the blend mode (`/BM`) and whether a soft mask (`/SMask`) is set. A
 //! fully transparent fill paints no cover. One painted fully opaque in the Normal blend mode without
-//! a soft mask is opaque, and hides text whatever its colour. Any other (translucent, blended or
-//! through a soft mask) counts as a cover as dark as it is: how much it hides depends on a backdrop
-//! and a mask the audit doesn't read. Form XObjects are followed read-only with a depth cap, and so
+//! a soft mask is opaque, and hides text whatever its colour. A translucent one in the Normal blend
+//! mode keeps its alpha, so the audit can mix it with the text and what lies around the text. A
+//! blended one, or one painted through a soft mask, counts as a cover as dark as it is: how much it
+//! hides depends on colours and a mask the audit doesn't read. Form XObjects are followed read-only with a depth cap, and so
 //! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
 //! scope and documented as such; the layers whose content fills one are reported.
 //!
@@ -64,6 +65,9 @@ pub struct FilledRect {
     /// Painted fully opaque, in the Normal blend mode and without a soft mask: it hides what lies
     /// under it whatever its colour (ISO 32000-2 §11.3.5).
     pub opaque: bool,
+    /// The alpha it is painted with, when that alone decides how much of what lies under it shows:
+    /// in the Normal blend mode without a soft mask. `None` when blended or masked.
+    pub alpha: Option<f64>,
     /// Painted by an image.
     pub image: bool,
 }
@@ -439,8 +443,8 @@ impl<'a> Walker<'a> {
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked;
-        self.out.push(FilledRect { rect, rgb, pos, opaque, image });
+        let alpha = (!gs.blended && !gs.masked).then_some(gs.alpha);
+        self.out.push(FilledRect { rect, rgb, pos, opaque: alpha.is_some_and(|a| a >= 1.0), alpha, image });
     }
 
     /// Record the cover the image `image` (its dictionary) makes, painted by the operator at index

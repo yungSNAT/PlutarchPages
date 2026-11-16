@@ -13,10 +13,10 @@ use pdfcraft_testkit::{Pdf, stream_obj};
 use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page};
 
 /// Helvetica `/F1`, the block font `/B`, the form `/Fm` (which draws blocks), a black shading
-/// `/Sh`, and graphics states at opacity 0.9 (`/Most`), 0.5 (`/Half`) and 0 (`/Clear`), one that
-/// sets no opacity (`/Wide`) and one with a soft mask.
+/// `/Sh`, and graphics states at opacity 0.9 (`/Most`), 0.5 (`/Half`), 0.2 (`/Faint`) and 0
+/// (`/Clear`), one that sets no opacity (`/Wide`) and one with a soft mask.
 const RESOURCES: &str = "<< /Font << /F1 5 0 R /B 6 0 R >> /XObject << /Fm 9 0 R >> /Shading << /Sh 10 0 R >> \
-    /ExtGState << /Most << /ca 0.9 >> /Half << /ca 0.5 >> /Clear << /ca 0 >> /Wide << /LW 4 >> \
+    /ExtGState << /Most << /ca 0.9 >> /Half << /ca 0.5 >> /Faint << /ca 0.2 >> /Clear << /ca 0 >> /Wide << /LW 4 >> \
     /Masked << /SMask << /Type /Mask /S /Luminosity /G 11 0 R >> >> >> >>";
 
 /// Objects 6 to 11 for [`RESOURCES`]: a font whose `A` is U+2588 FULL BLOCK, a full em wide, its
@@ -68,30 +68,45 @@ fn block_characters_drawn_over_text_hide_it() {
     }
 }
 
-/// A translucent cover counts as opaque: how much it hides depends on what lies under the text,
-/// which the audit doesn't read. Black at 0.5 over black text on grey leaves contrast about 2, and
-/// 2 such covers one on the other let even less through. A light one never hides dark text, and a
-/// fully transparent one paints nothing, until a state that sets `/ca` again. A rectangle, a
-/// shading and a Square annotation alike.
+/// A translucent rectangle hides text when the text and what lies around it, both seen through it,
+/// differ by a contrast below 3. Black at 0.5 over black text on the white page leaves it legible
+/// (about 5), on grey not (about 2), and 2 such covers one on the other let too little through for
+/// the second to leave it legible. Grey at 0.2 is faint (R3368), and white at 0.9 hides black text.
+/// Where the audit can't read what lies under the text (a box over part of the line, a curve on the
+/// page), the cover is judged by its colour alone, as a shading, an image, a blended cover or a
+/// Square annotation is. A light one never hides dark text, and a fully transparent one paints
+/// nothing, until a state that sets `/ca` again.
 #[test]
-fn a_translucent_cover_counts_as_opaque() {
+fn a_translucent_cover_is_judged_against_what_lies_under_the_text() {
     for (paint, hidden) in [
         ("q /Most gs 100 688 220 32 re f Q", true),
         ("q /Most gs 100 688 220 32 re W n /Sh sh Q", true),
-        ("q /Half gs 100 688 220 32 re f Q", true),
+        ("q /Half gs 100 688 220 32 re f Q", false),
         ("q /Half gs 100 688 220 32 re W n /Sh sh Q", true),
+        ("q /Faint gs 0.3 g 100 688 220 32 re f Q", false),
+        ("q /Most gs 1 g 100 688 220 32 re f Q", true),
+        ("q /Half gs 1 g 100 688 220 32 re f Q", false),
         ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", false),
         ("q /Clear gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs 100 688 220 32 re f Q", false),
-        ("q /Clear gs /Wide gs /Half gs 100 688 220 32 re f Q", true),
+        ("q /Clear gs /Wide gs /Most gs 100 688 220 32 re f Q", true),
     ] {
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&page(RESOURCES, &format!("{TWO_LINES} {paint}"), &objects())), want, "{paint}");
     }
-    let grey = format!("0.5 g 0 0 612 792 re f 0 g {TWO_LINES} q /Half gs 100 688 220 32 re f Q");
-    assert_eq!(covered(&page(RESOURCES, &grey, &objects())), ["SECRET"]);
+    let half = "q /Half gs 100 688 220 32 re f Q";
+    for (under, hidden) in [
+        ("0.5 g 0 0 612 792 re f 0 g", true),
+        ("0.9 g 0 0 612 792 re f 0 g", false),
+        ("0.5 g 100 650 40 100 re f 0 g", true),
+        ("0.9 g 500 50 m 550 50 l 525 90 l f 0 g", true),
+        ("q /Faint gs 0 0 612 792 re f Q", false),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(RESOURCES, &format!("{under} {TWO_LINES} {half}"), &objects())), want, "{under}");
+    }
     let stacked = format!("{TWO_LINES} q /Half gs 100 688 220 32 re f 100 688 220 32 re f Q");
-    assert_eq!(covered(&page(RESOURCES, &stacked, &objects())), ["SECRET", "SECRET"]);
+    assert_eq!(covered(&page(RESOURCES, &stacked, &objects())), ["SECRET"]);
     for (square, hidden) in [("/IC [0] /CA 0.9", true), ("/IC [0] /CA 0.5", true), ("/IC [1 1 0] /CA 0.9", false), ("/IC [0] /CA 0", false)] {
         let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Square /Rect [100 688 320 720] {square} >>"), &[]);
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };

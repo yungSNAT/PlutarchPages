@@ -219,8 +219,8 @@ fn black_box_without_text_is_not_a_finding() {
 
 #[test]
 fn translucent_cover_is_flagged() {
-    // A black rectangle drawn at half opacity over black text counts as opaque: on a grey page it
-    // would leave the text illegible, and the audit doesn't read what lies under the text.
+    // Text and a black rectangle both drawn at half opacity: the audit doesn't mix translucent
+    // text with what lies under it, so the cover is judged by its colour alone.
     let content = b"/GS1 gs\nBT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n0 g\n100 688 220 32 re f\n";
     let page_extra = "/Resources << /Font << /F1 5 0 R >> /ExtGState << /GS1 6 0 R >> >>";
     let mut b = Builder::new();
