@@ -7202,8 +7202,9 @@ fn page_re_w_n_clip_hides_text_from_reading_until_q() {
     assert_eq!(texts, ["INSIDE", "AFTER"]);
 }
 
-/// The clip hides text from reading only: the editor edits what the file holds, and the redaction
-/// audit's glyph reading must still find words a clip hides, inside a form or on the page.
+/// The clip hides text from reading only: the editor edits what the page's own streams hold, a
+/// clipped word included, and the redaction audit's glyph reading must still find words a clip
+/// hides, inside a form or on the page. The editor reads no form's text, clipped or not.
 #[test]
 fn clipped_text_stays_in_the_editor_and_glyph_readings() {
     let page = stream("", "q 0 0 50 50 re W n BT /F1 12 Tf 100 100 Td (HIDDEN) Tj ET /Fm Do Q");
@@ -7221,7 +7222,7 @@ fn clipped_text_stays_in_the_editor_and_glyph_readings() {
     let editor: Vec<String> = text::text_lines(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
     let glyphs = text::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).unwrap();
     let glyphs: Vec<&str> = glyphs.lines.iter().map(|l| l.text.as_str()).collect();
-    assert_eq!(editor, ["HIDDEN", "OUTSIDE"]);
+    assert_eq!(editor, ["HIDDEN"]);
     assert_eq!(glyphs, ["HIDDEN", "OUTSIDE"]);
 }
 
