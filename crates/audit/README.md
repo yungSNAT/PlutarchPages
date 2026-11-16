@@ -32,6 +32,10 @@ metadata finding. Check those signals before sharing the file. Page backgrounds 
 shading painted before the text, and highlights multiplied or painted translucent onto it, are
 excluded from the covered-text check.
 
+[The redaction head-to-head](../../docs/redaction-head-to-head.md) runs this audit, the released
+pdfcraft and PlutarchPages audits, and reads 5 other open source PDF tools' redaction code, on 10
+unsafe and 4 safe files (15 November 2026).
+
 A rectangle covers a text line when it hides at least half of one of the line's words, at
 least 40% of the area of the words the line draws, or at least 40% of the line's box together
 with a positive-area intersection with one of its words. The gap an applied redaction leaves (a `TJ` adjustment where the text was) is in the line's box but
@@ -43,11 +47,12 @@ page paints after drawing the form. So are those of the appearance a viewer pain
 annotation that isn't Hidden or NoView (its normal appearance, or the state `/AS` names), mapped
 onto the annotation's rectangle and painted after the page in `/Annots` order. An appearance
 without resources of its own uses the page's. PDFium and pdf.js paint an appearance as it is,
-whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is checked by the box its appearance paints. Its interior colour (`/IC`)
-counts where the audit has no appearance for it, or the appearance fills a shape it reads no box
-from (a cloudy border), for text no box lies over: pdf.js, PDFium, Poppler and MuPDF paint the
-appearance where there is one, so `/IC` behind a border-only appearance hides nothing. A Redact
-mark's own appearance is not text it leaves under it.
+whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is checked by the
+box its appearance paints. Its interior colour (`/IC`) counts where the audit has no appearance
+for it, or the appearance fills a shape it reads no box from (a cloudy border), for text no box
+lies over: pdf.js, PDFium, Poppler and MuPDF paint the appearance where there is one, so `/IC`
+behind a border-only appearance hides nothing. A Redact mark's own appearance is not text it
+leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
 which a viewer paints once for each tile or glyph. Such text fails the audit. A font counts
