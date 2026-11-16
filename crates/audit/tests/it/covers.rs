@@ -13,15 +13,20 @@ use pdfcraft_testkit::{Pdf, stream_obj};
 use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page};
 
 /// Helvetica `/F1`, the block font `/B`, the form `/Fm` (which draws blocks), a black shading
-/// `/Sh`, and graphics states at opacity 0.9 (`/Most`), 0.5 (`/Half`) and 0 (`/Clear`), one that
-/// sets no opacity (`/Wide`) and one with a soft mask.
-const RESOURCES: &str = "<< /Font << /F1 5 0 R /B 6 0 R >> /XObject << /Fm 9 0 R >> /Shading << /Sh 10 0 R >> \
-    /ExtGState << /Most << /ca 0.9 >> /Half << /ca 0.5 >> /Clear << /ca 0 >> /Wide << /LW 4 >> \
+/// `/Sh`, the forms of [`objects`], and graphics states at opacity 1 (`/Full`), 0.9 (`/Most`), 0.5
+/// (`/Half`), 0.2 (`/Faint`) and 0 (`/Clear`), one that sets no opacity (`/Wide`) and one with a
+/// soft mask.
+const RESOURCES: &str = "<< /Font << /F1 5 0 R /B 6 0 R >> \
+    /XObject << /Fm 9 0 R /Im 12 0 R /Fh 13 0 R /Fp 14 0 R /Fw 15 0 R /Fg 16 0 R /Fn 17 0 R >> /Shading << /Sh 10 0 R >> \
+    /ExtGState << /Full << /ca 1 >> /Most << /ca 0.9 >> /Half << /ca 0.5 >> /Faint << /ca 0.2 >> /Clear << /ca 0 >> /Wide << /LW 4 >> \
     /Masked << /SMask << /Type /Mask /S /Luminosity /G 11 0 R >> >> >> >>";
 
-/// Objects 6 to 11 for [`RESOURCES`]: a font whose `A` is U+2588 FULL BLOCK, a full em wide, its
-/// `/ToUnicode` and descriptor, a form drawing six blocks over SECRET, a black shading and a soft
-/// mask's group.
+/// Objects 6 to 17 for [`RESOURCES`]: a font whose `A` is U+2588 FULL BLOCK, a full em wide, its
+/// `/ToUnicode` and descriptor, a form drawing six blocks over SECRET, a black shading, a soft
+/// mask's group, a black pixel with a colour key mask of its own, and forms over SECRET: a
+/// transparency group filling a black box (`/Fh`), a plain form doing so (`/Fp`), a plain form
+/// filling a white box at opacity 1 (`/Fw`), a group doing so (`/Fg`) and a group drawing `/Fw`
+/// (`/Fn`).
 fn objects() -> Vec<Vec<u8>> {
     vec![
         b"<< /Type /Font /Subtype /TrueType /BaseFont /Blocks /FirstChar 65 /LastChar 65 /Widths [1000] /FontDescriptor 8 0 R /ToUnicode 7 0 R >>"
@@ -37,6 +42,12 @@ fn objects() -> Vec<Vec<u8>> {
         stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources << /Font << /B 6 0 R >> >>", BLOCKS),
         BLACK_SHADING.as_bytes().to_vec(),
         stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency /CS /DeviceGray >>", "1 g 0 0 612 792 re f"),
+        stream_obj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Mask [255 255]", "\0"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency >>", "0 g 100 688 220 32 re f"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", "0 g 100 688 220 32 re f"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", "/Full gs 1 g 100 688 220 32 re f"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency >>", "/Full gs 1 g 100 688 220 32 re f"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency >>", "/Fw Do"),
     ]
 }
 
@@ -68,30 +79,58 @@ fn block_characters_drawn_over_text_hide_it() {
     }
 }
 
-/// A translucent cover counts as opaque: how much it hides depends on what lies under the text,
-/// which the audit doesn't read. Black at 0.5 over black text on grey leaves contrast about 2, and
-/// 2 such covers one on the other let even less through. A light one never hides dark text, and a
-/// fully transparent one paints nothing, until a state that sets `/ca` again. A rectangle, a
-/// shading and a Square annotation alike.
+/// A translucent rectangle hides text when the text and what lies around it, both seen through it,
+/// differ by a contrast below 3. Black at 0.5 over black text on the white page leaves it legible
+/// (about 5), on grey not (about 2), and 2 such covers one on the other let too little through for
+/// the second to leave it legible. Grey at 0.2 is faint (R3368); white or yellow at 0.9 hides black
+/// text, and yellow at 0.5 (a highlight) leaves it legible.
+/// Where the audit can't read what lies under the text (a box over part of the line, a curve on the
+/// page), the cover is judged by its colour alone, as a shading, an image, a blended cover or a
+/// Square annotation is. A fully transparent one paints nothing, until a state that sets `/ca`
+/// again.
 #[test]
-fn a_translucent_cover_counts_as_opaque() {
+fn a_translucent_cover_is_judged_against_what_lies_under_the_text() {
     for (paint, hidden) in [
         ("q /Most gs 100 688 220 32 re f Q", true),
         ("q /Most gs 100 688 220 32 re W n /Sh sh Q", true),
-        ("q /Half gs 100 688 220 32 re f Q", true),
+        ("q /Half gs 100 688 220 32 re f Q", false),
         ("q /Half gs 100 688 220 32 re W n /Sh sh Q", true),
-        ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", false),
+        ("q /Faint gs 0.3 g 100 688 220 32 re f Q", false),
+        ("q /Most gs 1 g 100 688 220 32 re f Q", true),
+        ("q /Half gs 1 g 100 688 220 32 re f Q", false),
+        ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", true),
+        ("q /Half gs 1 1 0 rg 100 688 220 32 re f Q", false),
+        // A transparency group drawn translucent: its fills show with an alpha the audit does not
+        // work out, whatever opacity they set, at any depth, so they are judged by colour.
+        ("q /Half gs /Fh Do Q", true),
+        ("q /Half gs /Fg Do Q", false),
+        ("q /Half gs /Fn Do Q", false),
+        // A plain form's content is painted as the page's own would be.
+        ("q /Half gs /Fp Do Q", false),
+        ("q /Half gs /Fw Do Q", true),
         ("q /Clear gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs 100 688 220 32 re f Q", false),
-        ("q /Clear gs /Wide gs /Half gs 100 688 220 32 re f Q", true),
+        ("q /Clear gs /Wide gs /Most gs 100 688 220 32 re f Q", true),
     ] {
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&page(RESOURCES, &format!("{TWO_LINES} {paint}"), &objects())), want, "{paint}");
     }
-    let grey = format!("0.5 g 0 0 612 792 re f 0 g {TWO_LINES} q /Half gs 100 688 220 32 re f Q");
-    assert_eq!(covered(&page(RESOURCES, &grey, &objects())), ["SECRET"]);
+    let half = "q /Half gs 100 688 220 32 re f Q";
+    for (under, hidden) in [
+        ("0.5 g 0 0 612 792 re f 0 g", true),
+        ("0.9 g 0 0 612 792 re f 0 g", false),
+        ("0.5 g 100 650 40 100 re f 0 g", true),
+        ("0.9 g 500 50 m 550 50 l 525 90 l f 0 g", true),
+        // A stroke, or an image with a mask of its own, under the text: what lies there is not read.
+        ("0 G 40 w 100 704 m 320 704 l S", true),
+        ("q 220 0 0 32 100 688 cm /Im Do Q", true),
+        ("q /Faint gs 0 0 612 792 re f Q", false),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(RESOURCES, &format!("{under} {TWO_LINES} {half}"), &objects())), want, "{under}");
+    }
     let stacked = format!("{TWO_LINES} q /Half gs 100 688 220 32 re f 100 688 220 32 re f Q");
-    assert_eq!(covered(&page(RESOURCES, &stacked, &objects())), ["SECRET", "SECRET"]);
+    assert_eq!(covered(&page(RESOURCES, &stacked, &objects())), ["SECRET"]);
     for (square, hidden) in [("/IC [0] /CA 0.9", true), ("/IC [0] /CA 0.5", true), ("/IC [1 1 0] /CA 0.9", false), ("/IC [0] /CA 0", false)] {
         let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Square /Rect [100 688 320 720] {square} >>"), &[]);
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };

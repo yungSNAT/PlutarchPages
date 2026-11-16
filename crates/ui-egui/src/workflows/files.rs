@@ -960,11 +960,26 @@ impl PdfCraftApp {
         let stem = doc.name.trim_end_matches(".pdf").trim_end_matches(".PDF").to_string();
         let ext = format.extension();
         let folder = doc.path.clone();
-        let bytes = doc.export_office(format);
+        // Export stops reading at its bounds on hostile files: say which pages lost text or images.
+        let export = doc.export_office_checked(format);
+        let warning = (!export.truncated_pages.is_empty()).then(|| {
+            let pages = export.truncated_pages.iter().map(|p| p.saturating_add(1).to_string()).collect::<Vec<_>>().join(", ");
+            crate::i18n::fmt(
+                tl!("Text or images were left out on pages {pages} because the document exceeds the export limits."),
+                &[("pages", &pages)],
+            )
+        });
+        let bytes = export.bytes;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let write = move |app: &mut Self, path: std::path::PathBuf| match crate::editing::write_atomically(&path.to_string_lossy(), &bytes) {
-                Ok(()) => app.notify_fmt("Exported to {path}", &[("path", &path.display().to_string())]),
+                Ok(()) => {
+                    let done = crate::i18n::fmt(tl!("Exported to {path}"), &[("path", &path.display().to_string())]);
+                    app.notify(match &warning {
+                        Some(warning) => format!("{done}. {warning}"),
+                        None => done,
+                    });
+                }
                 Err(e) => app.notify_fmt("Couldn't write {name}: {e}", &[("name", &path.display().to_string()), ("e", &e.to_string())]),
             };
             match self.save_override.clone() {
@@ -980,8 +995,13 @@ impl PdfCraftApp {
             }
         }
         #[cfg(target_arch = "wasm32")]
-        if let Err(e) = crate::editing::download(&format!("{stem}.{ext}"), &bytes) {
-            self.notify_error(e);
+        match crate::editing::download(&format!("{stem}.{ext}"), &bytes) {
+            Err(e) => self.notify_error(e),
+            Ok(()) => {
+                if let Some(warning) = warning {
+                    self.notify(warning);
+                }
+            }
         }
     }
 
