@@ -3474,10 +3474,10 @@ fn an_image_a_form_drew_through_the_pages_resources_does_not_survive() {
 const NO_RESOURCES: [&str; 3] = ["", "/Resources null", "/Resources 99 0 R"];
 
 /// The page draws an image under the mark and, outside it, a form without /Resources of its own
-/// that draws the same image through the page's: the page keeps the name, whether the form lies
-/// wholly outside the mark or is entered and left as it was.
+/// that draws the same image through the page's, whether the form lies wholly outside the mark or
+/// is entered and left as it was: the page still shows the image there, so the fork refuses.
 #[test]
-fn an_image_a_form_draws_again_through_the_pages_resources_is_kept() {
+fn an_image_a_form_draws_again_through_the_pages_resources_is_refused() {
     for bbox in ["[0 0 100 100]", "[0 0 300 300]"] {
         for none in NO_RESOURCES {
             let mut doc = one_page(
@@ -3489,19 +3489,15 @@ fn an_image_a_form_draws_again_through_the_pages_resources_is_kept() {
                 ],
             );
             mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
-            let r = apply(&mut doc, None).unwrap();
-            assert_eq!((r.images_removed, r.forms_rewritten), (1, 0), "{bbox} {none}: {r:?}");
-            let saved = Document::open(Arc::new(write_full(&doc, &SaveOptions::default()).unwrap())).unwrap();
-            assert!(content(&saved, 0).contains("/FmBare Do"), "{bbox} {none}");
-            assert_eq!(named_image(&saved, 0, b"Im1").as_deref(), Some(&b"PUBIMGSHOWNAGAIN"[..]), "{bbox} {none}: the form still draws it");
+            assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]), "{bbox} {none}");
         }
     }
 }
 
 /// The same one level down: a form with resources of its own draws the image under the mark and,
-/// outside it, a form without any that draws it again through the first form's.
+/// outside it, a form without any that draws it again through the first form's. Refused.
 #[test]
-fn an_image_a_nested_form_draws_again_through_its_callers_resources_is_kept() {
+fn an_image_a_nested_form_draws_again_through_its_callers_resources_is_refused() {
     for none in NO_RESOURCES {
         let mut doc = one_page(
             b"/FmOwn Do",
@@ -3516,17 +3512,7 @@ fn an_image_a_nested_form_draws_again_through_its_callers_resources_is_kept() {
             ],
         );
         mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
-        let r = apply(&mut doc, None).unwrap();
-        assert_eq!((r.images_removed, r.forms_rewritten), (1, 1), "{none}: {r:?}");
-        let saved = Document::open(Arc::new(write_full(&doc, &SaveOptions::default()).unwrap())).unwrap();
-        assert!(content(&saved, 0).contains("/PCRedacted1 Do"), "{none}");
-        let form = named_stream(&saved, 0, b"PCRedacted1").expect("the rewritten form");
-        assert!(form.decoded().unwrap().windows(10).any(|w| w == b"/FmBare Do"), "{none}");
-        let res = saved.resolve(form.dict.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
-        let xo = saved.resolve(res.get(b"XObject").unwrap()).as_dict().cloned().unwrap();
-        let image = xo.get(b"Im1").and_then(Object::as_ref).unwrap_or_else(|| panic!("{none}: the rewritten form still names /Im1"));
-        let Object::Stream(image) = &*saved.get(image) else { panic!("/Im1 is a stream") };
-        assert_eq!(decoded_image(&saved, image).unwrap(), b"PUBIMGSHOWNAGAIN", "{none}");
+        assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]), "{none}");
     }
 }
 
@@ -3722,9 +3708,10 @@ fn form_entries(bbox: [i64; 4]) -> Vec<(&'static str, Object)> {
 /// A form outside the mark draws the image again through the page's resources, its content behind
 /// a predictor whose `/DecodeParms` are given by reference. Both checks of whether the page still
 /// draws it read the form through them, the page's (`resource_ops`) and the unlinking one at the
-/// end (`names_content_draws`): the page keeps the image for the form.
+/// end (`names_content_draws`), and so does the fork's check of what the page still shows: the
+/// form draws the image outside the mark, so the fork refuses.
 #[test]
-fn an_image_a_form_with_parameters_by_reference_draws_again_is_kept() {
+fn an_image_a_form_with_parameters_by_reference_draws_again_is_refused() {
     let mut doc = one_page(
         b"q 50 0 0 50 20 230 cm /Im1 Do Q /FmBare Do",
         "/XObject << /FmBare 7 0 R /Im1 8 0 R >>",
@@ -3736,17 +3723,15 @@ fn an_image_a_form_with_parameters_by_reference_draws_again_is_kept() {
     let form = behind_parms_by_reference(&mut doc, &form_entries([0, 0, 100, 100]), b"q 50 0 0 50 20 20 cm /Im1 Do Q");
     doc.set(ObjRef::new(7, 0), form);
     mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!(r.images_removed, 1, "{r:?}");
-    let saved = Document::open(Arc::new(write_full(&doc, &SaveOptions::default()).unwrap())).unwrap();
-    assert_eq!(named_image(&saved, 0, b"Im1").as_deref(), Some(&b"PUBIMGSHOWNAGAIN"[..]), "the form still draws it");
+    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]));
 }
 
 /// A surviving form outside the mark shares the page's resources and draws the image itself, its
 /// content behind a predictor whose `/DecodeParms` are given by reference: unlinking the redacted
-/// image from the forms' resources reads it through them, and keeps the image the form draws.
+/// image from the forms' resources reads it through them, as the fork's check does: the form still
+/// draws the image outside the mark, so the fork refuses.
 #[test]
-fn an_image_a_surviving_form_with_parameters_by_reference_draws_is_kept() {
+fn an_image_a_surviving_form_with_parameters_by_reference_draws_is_refused() {
     let mut doc = pdf(vec![
         b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
@@ -3761,8 +3746,7 @@ fn an_image_a_surviving_form_with_parameters_by_reference_draws_is_kept() {
     let form = behind_parms_by_reference(&mut doc, &entries, b"q 50 0 0 50 200 200 cm /Im Do Q");
     doc.set(ObjRef::new(7, 0), form);
     mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 120.0]], "");
-    assert_eq!(apply(&mut doc, None).unwrap().images_removed, 1);
-    assert!(surviving_references::full_save_holds(&doc, b"IMAGESECRET"), "the image the form still draws outside the mark");
+    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]));
 }
 
 /// A form without resources of its own crosses the mark and draws an image, or text, under it,
@@ -3808,10 +3792,10 @@ fn what_a_form_with_parameters_by_reference_draws_under_the_mark_is_removed() {
 /// of its own either when its copy of the page's loses nothing, which takes a form drawing itself
 /// (here off the page, so outside the mark), and then goes on drawing through the page's: itself
 /// and, through a form it draws unchanged, the image under the mark again outside it. The page's
-/// check of what it still draws follows the rewritten form under its new name, so the page keeps
-/// both names for it.
+/// check of what it still draws follows the rewritten form, and so does the fork's: the unchanged
+/// form still draws the image outside the mark, so the fork refuses.
 #[test]
-fn an_image_a_rewritten_form_draws_again_through_the_pages_resources_is_kept() {
+fn an_image_a_rewritten_form_draws_again_through_the_pages_resources_is_refused() {
     let mut doc = one_page(
         b"q 50 0 0 50 20 230 cm /Im1 Do Q /FmBare Do",
         "/XObject << /FmBare 7 0 R /Inner 8 0 R /Im1 9 0 R >>",
@@ -3825,17 +3809,7 @@ fn an_image_a_rewritten_form_draws_again_through_the_pages_resources_is_kept() {
         ],
     );
     mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!((r.images_removed, r.forms_rewritten), (1, 1), "{r:?}");
-    let saved = Document::open(Arc::new(write_full(&doc, &SaveOptions::default()).unwrap())).unwrap();
-    let page = content(&saved, 0);
-    let drawn: Vec<Vec<u8>> =
-        pdfcraft_content::parse(page.as_bytes()).ops.iter().filter(|op| op.is("Do")).filter_map(|op| op.last_name().map(<[u8]>::to_vec)).collect();
-    assert!(drawn.len() == 1 && drawn[0] != b"FmBare", "the form is drawn under its new name: {page}");
-    let rewritten = named_stream(&saved, 0, &drawn[0]).unwrap();
-    assert!(!rewritten.dict.contains(b"Resources"), "the rewritten form keeps no resources of its own");
-    assert!(named_stream(&saved, 0, b"FmBare").is_some(), "the rewritten form still draws the original");
-    assert_eq!(named_image(&saved, 0, b"Im1").as_deref(), Some(&b"PUBIMGSHOWNAGAIN"[..]), "the unchanged form still draws it");
+    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]));
 }
 
 /// The walk of what content draws through its resources charges the forms it reads to the
