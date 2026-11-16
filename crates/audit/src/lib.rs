@@ -624,15 +624,15 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
         // Hidden and NoView annotations are never drawn on screen.
         let flags = dict.get(b"F").and_then(|f| doc.resolve(f).as_int()).unwrap_or(0);
         let shown = flags & 2 == 0 && flags & 32 == 0;
-        // A viewer paints the annotation at its opacity and in its blend mode (ISO 32000-2 §12.5.2).
+        // The opacity a viewer gives the appearance it makes from a Square's interior colour. One the
+        // annotation has is painted as it is: PDFium and pdf.js apply neither `/CA` nor `/BM` to it.
         let ca = dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()).filter(|a| a.is_finite());
-        let see_through = ca.is_some_and(|a| a < 1.0) || dict.get(b"BM").is_some_and(|bm| cover::shows_through(doc, &doc.resolve(bm)));
         let cover = match subtype(doc, dict)?.as_deref() {
             Some(b"Redact") => Some(AnnotationCover::Redact(rect)),
             Some(b"Square") if shown => {
                 // A translucent one counts as a translucent rectangle does; a fully transparent one
                 // (`/CA 0`) paints nothing.
-                let opaque = !see_through;
+                let opaque = ca.is_none_or(|a| a >= 1.0);
                 annotation_color(doc, dict, b"IC").filter(|_| ca.is_none_or(|a| a > 0.0)).map(|rgb| AnnotationCover::Square { rect, rgb, opaque })
             }
             _ => None,
@@ -644,7 +644,7 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
             if appearances > pdfcraft_cos::MAX_PAGE_FORMS {
                 return Err(AuditError::TooManyForms);
             }
-            appearance(doc, dict, rect, n, layer, see_through)?
+            appearance(doc, dict, rect, n, layer)?
         } else {
             None
         };
@@ -658,16 +658,8 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
 /// The appearance a viewer paints for an annotation at `rect` (ISO 32000-2 §12.5.5): its normal
 /// appearance, or of those it has for each state the one `/AS` names, its box mapped onto `rect`.
 /// `None` when there is none, or it can show nothing (its box or `rect` has no area). One without a
-/// usable `/BBox` fails the audit: where it draws can't be worked out. `see_through` as
-/// [`cover::Appearance::see_through`].
-fn appearance(
-    doc: &Document,
-    dict: &Dict,
-    rect: [f64; 4],
-    n: usize,
-    layer: usize,
-    see_through: bool,
-) -> Result<Option<cover::Appearance>, AuditError> {
+/// usable `/BBox` fails the audit: where it draws can't be worked out.
+fn appearance(doc: &Document, dict: &Dict, rect: [f64; 4], n: usize, layer: usize) -> Result<Option<cover::Appearance>, AuditError> {
     let ap = dict.get(b"AP").map(|o| doc.resolve(o));
     let Some(normal) = ap.as_deref().and_then(Object::as_dict).and_then(|d| d.get(b"N")) else { return Ok(None) };
     // A dictionary (not a stream, whose dictionary `as_dict` would also give) holds one per state.
@@ -691,7 +683,7 @@ fn appearance(
     Ok(shows.then(|| {
         let (sx, sy) = ((rect[2] - rect[0]) / w, (rect[3] - rect[1]) / h);
         let fit = Matrix([sx, 0.0, 0.0, sy, rect[0] - bx0 * sx, rect[1] - by0 * sy]);
-        cover::Appearance { layer, contents, form: std::sync::Arc::clone(&resolved), ctm: matrix.then(&fit), see_through }
+        cover::Appearance { layer, contents, form: std::sync::Arc::clone(&resolved), ctm: matrix.then(&fit) }
     }))
 }
 
