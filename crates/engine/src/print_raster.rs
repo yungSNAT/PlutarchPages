@@ -89,10 +89,13 @@ struct Picture {
     dpi: f64,
 }
 
+/// The layers as the vector print sets them, or `None` when the document has no Print entries.
+type PrintLayers = Option<Vec<Layer>>;
+
 /// `src`'s bytes reduced to what prints under `content` (`pdfcraft_print::keep_printed`), and
 /// the layers as the vector print sets them: as shown, then the Print event's auto state.
-fn printed(src: &ExportSource, layers: &[Layer], content: Content) -> Result<(Arc<Vec<u8>>, Option<Vec<Layer>>), String> {
-    let (bytes, layers) = guard(|| -> Result<(Vec<u8>, Option<Vec<Layer>>), String> {
+fn printed(src: &ExportSource, layers: &[Layer], content: Content) -> Result<(Arc<Vec<u8>>, PrintLayers), String> {
+    let (bytes, layers) = guard(|| -> Result<(Vec<u8>, PrintLayers), String> {
         let mut cos = pdfcraft_cos::Document::open_with_password(src.bytes.clone(), src.config.password.as_deref()).map_err(|e| e.to_string())?;
         pdfcraft_print::keep_printed(&mut cos, content);
         let printing = print_layer_states(&cos, layers);

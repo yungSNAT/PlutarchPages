@@ -59,7 +59,17 @@ mod tests {
     use super::*;
 
     fn item(title: &str, page: Option<usize>, children: Vec<OutlineItem>) -> OutlineItem {
-        OutlineItem { title: title.into(), page, view: pdfcraft_render::DestView::Top, children, open: true, color: None, bold: false, italic: false }
+        OutlineItem {
+            title: title.into(),
+            page,
+            view: pdfcraft_render::DestView::Top,
+            action: None,
+            children,
+            open: true,
+            color: None,
+            bold: false,
+            italic: false,
+        }
     }
 
     #[test]
