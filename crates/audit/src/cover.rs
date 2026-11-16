@@ -734,16 +734,12 @@ const BLEND_MODES: [&[u8]; 17] = [
 ];
 
 /// Whether the blend mode a `/BM` entry names lets what lies under a fill show through: any but
-/// Normal and Compatible (ISO 32000-2 §11.3.5). Of an array, which lists modes for a viewer to try
-/// in turn, the first it knows counts; an entry that names no mode it knows is Normal, as viewers
-/// paint it.
+/// Normal and Compatible (ISO 32000-2 §11.3.5). Of an array, which lists modes for a viewer to try in
+/// turn, the first entry counts, as PDFium reads it (pdf.js would try the next where it doesn't know
+/// the first); a mode it doesn't know is Normal, as viewers paint it.
 fn shows_through(doc: &Document, bm: &Object) -> bool {
-    let known = |o: &Object| o.as_name().filter(|name| BLEND_MODES.contains(name)).map(|name| !matches!(name, b"Normal" | b"Compatible"));
-    match bm.as_array() {
-        Some(modes) => modes.iter().find_map(|o| known(&doc.resolve(o))),
-        None => known(bm),
-    }
-    .unwrap_or(false)
+    let first = bm.as_array().and_then(|a| a.first()).map(|o| doc.resolve(o));
+    first.as_deref().unwrap_or(bm).as_name().is_some_and(|name| BLEND_MODES.contains(&name) && !matches!(name, b"Normal" | b"Compatible"))
 }
 
 /// Every filled rectangle drawn by the content of page `n` (and its form XObjects), then by
