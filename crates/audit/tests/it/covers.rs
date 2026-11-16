@@ -247,14 +247,14 @@ fn an_image_painted_over_text_hides_it() {
 /// §11.3.5), so it hides text whatever the two colours: black over red text, white, light grey or
 /// yellow over black. One blended (a highlight multiplied onto the page), painted through a soft
 /// mask or as a Square's interior colour at its opacity below 1 hides it only when it is dark against
-/// the text; of a list of blend modes the first known one counts, and an unknown one is Normal. A
-/// later graphics state or a restore that sets the Normal mode or no soft mask makes covers opaque
-/// again. An annotation's `/CA` and `/BM` don't change its appearance, which PDFium and pdf.js paint
-/// as it is.
+/// the text; of a list of blend modes the first counts, as PDFium reads it, and an unknown one is
+/// Normal. A later graphics state or a restore that sets the Normal mode or no soft mask makes covers
+/// opaque again. An annotation's `/CA` and `/BM` don't change its appearance, which PDFium and pdf.js
+/// paint as it is.
 #[test]
 fn an_opaque_cover_hides_text_whatever_its_colour() {
     let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Multiply << /BM /Multiply >> /Plain << /BM /Normal >> \
-                     /Listed << /BM [/Multiply /Normal] >> /Unknown << /BM [/Unknown /Normal] >> /Odd << /BM /Unknown >> /Masked << /SMask << /Type /Mask /S /Luminosity /G 6 0 R >> >> \
+                     /Listed << /BM [/Multiply /Normal] >> /Unknown << /BM [/Unknown /Normal] >> /Mixed << /BM [/Unknown /Multiply] >> /Odd << /BM /Unknown >> /Masked << /SMask << /Type /Mask /S /Luminosity /G 6 0 R >> >> \
                      /Unmasked << /SMask /None >> >> >>";
     let group = stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency /CS /DeviceGray >>", "1 g 0 0 612 792 re f");
     let objects = [group];
@@ -268,6 +268,7 @@ fn an_opaque_cover_hides_text_whatever_its_colour() {
         (format!("{TWO_LINES} q /Multiply gs 1 1 0 rg {cover} Q"), false),
         (format!("{TWO_LINES} q /Listed gs 1 1 0 rg {cover} Q"), false),
         (format!("{TWO_LINES} q /Unknown gs 1 g {cover} Q"), true),
+        (format!("{TWO_LINES} q /Mixed gs 1 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs /Odd gs 1 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs 0 g {cover} Q"), true),
         (format!("{TWO_LINES} q /Multiply gs /Plain gs 1 1 0 rg {cover} Q"), true),
