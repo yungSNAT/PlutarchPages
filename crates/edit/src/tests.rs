@@ -2425,7 +2425,8 @@ fn a_variation_selector_survives_line_and_block_edits() {
             if paragraph { text::replace_block(&mut doc, 0, 0, replacement) } else { text::replace_line(&mut doc, 0, 0, replacement) }
                 .unwrap_or_else(|e| panic!("{replacement:?}: {e}"));
             let doc = reopen(&doc);
-            let read = if paragraph { text::text_blocks(&doc, 0).unwrap()[0].text.clone() } else { text::text_lines(&doc, 0).unwrap()[0].text.clone() };
+            let read =
+                if paragraph { text::text_blocks(&doc, 0).unwrap()[0].text.clone() } else { text::text_lines(&doc, 0).unwrap()[0].text.clone() };
             assert_eq!(read, replacement, "{replacement:?}, paragraph {paragraph}");
         }
     }
