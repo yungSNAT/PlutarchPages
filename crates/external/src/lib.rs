@@ -721,4 +721,40 @@ mod tests {
         let home = env.lines().find_map(|l| l.strip_prefix("HOME="));
         assert!(home.is_some_and(|h| h.ends_with("/home")) && home != std::env::var("HOME").ok().as_deref(), "{home:?}");
     }
+
+    /// The temporary folder is shared on Unix: a conversion's folder, and the document staged in
+    /// it, are for its owner alone.
+    #[cfg(unix)]
+    #[test]
+    fn the_conversion_folder_is_the_owners_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let stage = Stage::new().unwrap();
+        let mode = std::fs::metadata(stage.dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{mode:o}");
+    }
+
+    /// LibreOffice may write its result under another name first, in the output folder or its
+    /// temporary one: growth there stops it too, with a size error, as growth of the result does.
+    #[cfg(unix)]
+    #[test]
+    fn an_office_conversion_growing_under_another_name_is_stopped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        // Read as the version, so no `--version` run is needed.
+        std::fs::write(dir.path().join("version.ini"), "MsiProductVersion=26.2.5.2\n").unwrap();
+        let limits = Limits { timeout: Duration::from_secs(20), max_input: 1 << 20, max_output: 4096 };
+        let cancel = AtomicBool::new(false);
+        for target in ["\"$outdir/part.tmp\"", "\"$TMPDIR/lu1.tmp\""] {
+            let soffice = dir.path().join("soffice");
+            let args = "prev=; for a in \"$@\"; do [ \"$prev\" = --outdir ] && outdir=\"$a\"; prev=\"$a\"; done";
+            std::fs::write(&soffice, format!("#!/bin/sh\n{args}\nhead -c 100000 /dev/zero > {target}\nsleep 30\n")).unwrap();
+            std::fs::set_permissions(&soffice, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let started = Instant::now();
+            let r = office_to_pdf(&soffice, "letter.docx", b"PK", &limits, &cancel);
+            assert!(
+                matches!(&r, Err(ExternalError::InvalidOutput(m)) if m.contains("larger")) && started.elapsed() < Duration::from_secs(10),
+                "{target}: {r:?}"
+            );
+        }
+    }
 }
