@@ -329,7 +329,7 @@ fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
 /// that `EI` as the image's end, and the operators before it become image data.
 #[test]
 fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
-    for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC"] {
+    for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC", b" Q /Span << /A#45I 1 >> BDC EMC"] {
         // ASCIIHex, so the samples end at `>` and not with the spacing before the terminator.
         let mut src = b"q BI /F /AHx ID 7F> EI".to_vec();
         src.extend_from_slice(tail);
@@ -345,6 +345,11 @@ fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
             "{label}"
         );
     }
+    // A byte written as an escape that ends in `E`, then an `I`: the `I` is respelt too.
+    let op = Op::new("gs", vec![Object::Name(vec![0x0E, b'I'])]);
+    let written = serialize_ops(std::slice::from_ref(&op));
+    assert_eq!(written, b"/#0E#49 gs\n");
+    assert_eq!(parse(&written).ops[0].operands, op.operands);
 }
 
 fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {

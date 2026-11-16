@@ -612,8 +612,8 @@ fn write_operand(o: &Object, out: &mut Vec<u8>) {
         _ => {
             let start = out.len();
             serialize(o, out);
-            // Escapes end in a digit, a lower-case letter or a delimiter, and `I` is no hex digit,
-            // so each `EI` here is a literal `I` after an `E`: only the `I` needs another spelling.
+            // The `E` may be a literal or end a name's escape (`#0E`), but `I` is no hex digit and no
+            // string escape ends in it, so the `I` of each `EI` is a literal: only it is respelt.
             let escape: &[u8] = match o {
                 Object::Name(_) => b"#49",
                 Object::String(_) => b"\\111",
