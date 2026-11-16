@@ -71,11 +71,12 @@ fn block_characters_drawn_over_text_hide_it() {
 /// A translucent rectangle hides text when the text and what lies around it, both seen through it,
 /// differ by a contrast below 3. Black at 0.5 over black text on the white page leaves it legible
 /// (about 5), on grey not (about 2), and 2 such covers one on the other let too little through for
-/// the second to leave it legible. Grey at 0.2 is faint (R3368), and white at 0.9 hides black text.
+/// the second to leave it legible. Grey at 0.2 is faint (R3368); white or yellow at 0.9 hides black
+/// text, and yellow at 0.5 (a highlight) leaves it legible.
 /// Where the audit can't read what lies under the text (a box over part of the line, a curve on the
 /// page), the cover is judged by its colour alone, as a shading, an image, a blended cover or a
-/// Square annotation is. A light one never hides dark text, and a fully transparent one paints
-/// nothing, until a state that sets `/ca` again.
+/// Square annotation is. A fully transparent one paints nothing, until a state that sets `/ca`
+/// again.
 #[test]
 fn a_translucent_cover_is_judged_against_what_lies_under_the_text() {
     for (paint, hidden) in [
@@ -86,7 +87,8 @@ fn a_translucent_cover_is_judged_against_what_lies_under_the_text() {
         ("q /Faint gs 0.3 g 100 688 220 32 re f Q", false),
         ("q /Most gs 1 g 100 688 220 32 re f Q", true),
         ("q /Half gs 1 g 100 688 220 32 re f Q", false),
-        ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", false),
+        ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", true),
+        ("q /Half gs 1 1 0 rg 100 688 220 32 re f Q", false),
         ("q /Clear gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs /Most gs 100 688 220 32 re f Q", true),

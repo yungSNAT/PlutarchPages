@@ -33,8 +33,8 @@ The report checks for:
 
 A properly applied redaction can still have a retained advance, earlier revision or
 metadata finding. Check those signals before sharing the file. Page backgrounds and table
-shading painted before the text, and highlights multiplied or painted translucent onto it, are
-excluded from the covered-text check.
+shading painted before the text, and highlights multiplied onto it or translucent enough to
+leave it readable, are excluded from the covered-text check.
 
 [The redaction head-to-head](../../docs/redaction-head-to-head.md) runs this audit, the released
 pdfcraft and PlutarchPages audits, and reads 5 other open source PDF tools' redaction code, on 10

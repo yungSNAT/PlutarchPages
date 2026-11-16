@@ -505,9 +505,9 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
 /// after the start of the line, overlaps it substantially, and hides it: it is opaque, or leaves
-/// the text unreadable ([`leaves_unreadable`]). Light translucent or blended covers (highlights)
-/// over dark text fail the contrast check and are not flagged; one in a color the audit doesn't
-/// read could be as dark as the text, and is. An image doesn't hide invisible text:
+/// the text unreadable ([`leaves_unreadable`]). Highlights over dark text, light and blended or
+/// translucent enough to let the text show, fail the contrast check and are not flagged; one in a
+/// color the audit doesn't read could be as dark as the text, and is. An image doesn't hide invisible text:
 /// that is what an OCR layer under its scan is. A line can join runs painted before and after the
 /// cover, and the finding reports the runs under it, those painted on top too: in the line's color
 /// on a dark cover they are unreadable, but on a light one they can show.
