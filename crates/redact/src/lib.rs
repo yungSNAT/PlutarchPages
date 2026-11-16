@@ -634,10 +634,12 @@ fn annotation_payloads(doc: &Document, d: &Dict) -> Vec<ObjRef> {
 
 /// Fail closed when an original that redaction replaced or removed (an image, a form, a content
 /// stream) could still be saved with the file: a page draws it outside the marks (those pages
-/// are named), or something else still refers to it. Resource entries for it that no content
-/// names, such as those inherited from the page tree, are dropped first: each page and page-tree
-/// node gets its own copy of its resources without them, so a resource dictionary shared with
-/// anything else is left as it is (and then fails the final check if it still reaches them).
+/// are named), or something else still refers to it ([`check_retired_unreachable`], after the
+/// metadata scrub, which may remove an XMP packet that refers to it). Resource entries for it
+/// that no content names, such as those inherited from the page tree, are dropped first: each
+/// page and page-tree node gets its own copy of its resources without them, so a resource
+/// dictionary shared with anything else is left as it is (and then fails the final check if it
+/// still reaches them).
 fn check_retired(doc: &mut Document, retired: &HashSet<ObjRef>) -> Result<(), RedactError> {
     let all = pdfcraft_model::pages(doc);
     let (mut using, mut unchecked) = (Vec::new(), Vec::new());
@@ -703,6 +705,12 @@ fn check_retired(doc: &mut Document, retired: &HashSet<ObjRef>) -> Result<(), Re
             doc.update_dict(h, |d| d.set(b"Resources".to_vec(), Object::Dict(pruned)))?;
         }
     }
+    Ok(())
+}
+
+/// The end of [`check_retired`], run once the metadata scrub has removed what it removes: nothing
+/// the trailer reaches may still refer to a retired original.
+fn check_retired_unreachable(doc: &Document, retired: &HashSet<ObjRef>) -> Result<(), RedactError> {
     let roots: Vec<Object> = [&b"Root"[..], b"Info", b"Encrypt"].iter().filter_map(|k| doc.trailer().get(k).cloned()).collect();
     if reachable(doc, &roots).is_disjoint(retired) { Ok(()) } else { Err(RedactError::StillUsed(Vec::new())) }
 }
@@ -1064,6 +1072,7 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
     let scrubbed = metadata::scrub(doc, &removed_text, !removed_cut)?;
     report.metadata = scrubbed.removed;
     report.identification = scrubbed.identification;
+    check_retired_unreachable(doc, &retired)?;
     // Last of what leaves: an image that left with any of the above, the metadata removed just
     // now included, is a user of a dictionary too. Storing images again changes no page's content
     // or pattern cells, so the checks above hold for what follows.
