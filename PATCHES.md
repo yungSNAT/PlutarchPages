@@ -203,9 +203,6 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Flatpak: no `--talk-name=org.freedesktop.Flatpak`, which upstream added so its update helper can
   run `flatpak-spawn --host`; that is a way out of the sandbox. `crates/ui-egui/tests/flatpak_updates.rs`
   checks the fork's 2 manifests for it. Flatpak users install a new bundle by hand.
-- The redaction audit's glyph reading keeps text a clip hides: upstream's #3503 skips it in
-  `FormWalk::walk` (`crates/edit/src/text/lines.rs`), which here applies only when
-  `logical_text` is set, as the text is still in the file.
 - Optimizer: Discard form actions and Discard external cross-references are upstream's
   (`form_actions.rs`, `external_refs.rs`). External cross-references then also runs this fork's
   sweep (`crates/optimize/src/actions.rs`), which removes `GoToR` and `Launch` actions upstream

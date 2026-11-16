@@ -178,7 +178,7 @@ pub(crate) fn stream_reads_as_stored(doc: &Document, h: &SecurityHandler, s: &St
         return false;
     }
     let _scope = FollowScope::enter();
-    let named = named_crypt_filter(doc, &s.dict);
+    let named = held_crypt_name(doc, h, &s.dict, crypt_place(doc, &s.dict));
     let ty = s.dict.get(b"Type").map(|t| followed(doc, t));
     let kind = match (&named, ty.as_deref().and_then(Object::as_name)) {
         (Some(n), _) => StreamKind::Named(n),
@@ -203,6 +203,14 @@ fn crypt_place(doc: &Document, dict: &Dict) -> Option<usize> {
         f if is_crypt(doc, f) => Some(0),
         _ => None,
     }
+}
+
+/// The crypt filter named at `place` in `dict`'s `/Filter` chain ([`crypt_place`]), when it is
+/// `/Identity` or `h`'s `/CF` holds it. A name `/CF` doesn't hold says no more about the stream than
+/// a reference to nothing.
+fn held_crypt_name(doc: &Document, h: &SecurityHandler, dict: &Dict, place: Option<usize>) -> Option<Vec<u8>> {
+    let held = |n: &Vec<u8>| n == b"Identity" || h.dict().crypt_filters.iter().any(|(f, _)| f == n);
+    place.and_then(|i| crypt_name(doc, dict, i)).filter(held)
 }
 
 /// The crypt filter that `/Crypt` at place `i` of a stream's chain names (`/DecodeParms /Name`),
@@ -388,9 +396,7 @@ fn stream(
         return Object::Stream(Stream { dict: walked(&s.dict), raw: s.raw.clone() });
     }
     let place = crypt_place(doc, &s.dict);
-    // A name `/CF` doesn't hold says no more about the stream than a reference to nothing.
-    let held = |n: &Vec<u8>| n == b"Identity" || h.dict().crypt_filters.iter().any(|(f, _)| f == n);
-    let mut named = place.and_then(|i| crypt_name(doc, &s.dict, i)).filter(held);
+    let mut named = held_crypt_name(doc, h, &s.dict, place);
     // `/Crypt` that names nothing readable follows the document's filter: `/Identity` would read
     // ciphertext as data, and write the stream in the clear. A save takes it out, or the null that
     // a full save writes for a reference to nothing would make it `/Identity` from then on.

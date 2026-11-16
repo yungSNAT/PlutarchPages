@@ -1033,6 +1033,7 @@ impl<'a> FormWalk<'a> {
         let clip = match (&ts.clip, &form.bbox) {
             (Some(outer), Some(own)) => Some(clip_within(outer, own)),
             (outer, own) => outer.clone().or_else(|| own.clone()),
+        };
         let advance_gaps = self.want_gaps.then(Vec::new);
         let mut carry =
             Carry { ts: Ts { ctm: form.ctm, clip, ..ts }, text_left: *text_left, advance_gaps, saved_outside: saved, ..Carry::new() };

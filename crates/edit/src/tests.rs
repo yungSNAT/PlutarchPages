@@ -7202,6 +7202,31 @@ fn page_re_w_n_clip_hides_text_from_reading_until_q() {
     assert_eq!(texts, ["INSIDE", "AFTER"]);
 }
 
+/// The clip hides text from reading only: the editor edits what the file holds, and the redaction
+/// audit's glyph reading must still find words a clip hides, inside a form or on the page.
+#[test]
+fn clipped_text_stays_in_the_editor_and_glyph_readings() {
+    let page = stream("", "q 0 0 50 50 re W n BT /F1 12 Tf 100 100 Td (HIDDEN) Tj ET /Fm Do Q");
+    let fm = stream(
+        "/Type /XObject /Subtype /Form /BBox [0 0 50 50] /Resources << /Font << /F1 6 0 R >> >>",
+        "BT /F1 12 Tf 100 100 Td (OUTSIDE) Tj ET",
+    );
+    let doc = build(&[
+        "<< /Type /Catalog /Pages 2 0 R >>",
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /Font << /F1 6 0 R >> /XObject << /Fm 5 0 R >> >> /Contents 4 0 R >>",
+        &page,
+        &fm,
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]);
+    assert!(text::reading_blocks(&doc, 0).unwrap().is_empty());
+    let editor: Vec<String> = text::text_lines(&doc, 0).unwrap().into_iter().map(|l| l.text).collect();
+    let glyphs = text::glyph_text(&doc, &pdfcraft_model::pages(&doc)[0], false).unwrap();
+    let glyphs: Vec<&str> = glyphs.lines.iter().map(|l| l.text.as_str()).collect();
+    assert_eq!(editor, ["HIDDEN", "OUTSIDE"]);
+    assert_eq!(glyphs, ["HIDDEN", "OUTSIDE"]);
+}
+
 /// The text `reading_blocks` reads on a 400 × 400 pt page drawing `content` with Helvetica as
 /// `/F1`, and forms `/Fa` and `/Fb` (objects 6 and 7) with the given dictionary entries and content.
 fn read_clipped(content: &str, forms: [(&str, &str); 2]) -> Vec<String> {

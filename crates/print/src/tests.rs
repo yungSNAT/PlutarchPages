@@ -1708,6 +1708,8 @@ fn a_picture_replaces_its_page_on_the_sheet_and_the_other_pages_stay_vector() {
         let [x0, y0, x1, y1] = crop.map(|v| v as i64);
         assert_eq!(corners, [[x0, y0], [x0, y1], [x1, y0], [x1, y1]], "sheet {i}");
     }
+}
+
 #[test]
 fn a_selected_area_prints_alone_fitted_or_at_actual_size() {
     // Page 1 is 200×300; the area is its 100×50 block whose corner is at (40, 200).
