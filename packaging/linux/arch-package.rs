@@ -8,8 +8,9 @@
 //! Build it with `rustc --edition=2024 -D warnings packaging/linux/arch-package.rs -o arch-package`
 //! (with `-C target-feature=+crt-static` to run it where there is no Rust), then from the workspace
 //! root run `arch-package <x86_64|aarch64> [TARBALL]`: it reads Cargo.toml and the default DIST in
-//! the current directory, where arch-package.sh found them from its own path. Elsewhere it needs
-//! both `PDFCRAFT_VERSION` and `DIST`, and refuses rather than guess.
+//! the current directory, where arch-package.sh found them from its own path. It knows the root by
+//! packaging/linux/arch-package.rs; elsewhere it needs both `PDFCRAFT_VERSION` and `DIST`, and
+//! refuses rather than guess.
 //!
 //! The version is `PDFCRAFT_VERSION`, or `[workspace.package] version` in Cargo.toml, and the output
 //! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL, when not given or empty, is
@@ -79,19 +80,22 @@ fn arch_package() -> Result {
             std::process::exit(2);
         }
     };
+    let at_root = Path::new("packaging/linux/arch-package.rs").is_file();
+    let outside = "not at the PlutarchPages workspace root: run from it, or set PDFCRAFT_VERSION and DIST";
     let version = match env::var("PDFCRAFT_VERSION") {
         Ok(version) if !version.is_empty() => version,
         Err(env::VarError::NotUnicode(_)) => return Err("PDFCRAFT_VERSION is not UTF-8".into()),
+        _ if !at_root => return Err(outside.into()),
         _ => fs::read_to_string("Cargo.toml")
             .ok()
             .and_then(|manifest| workspace_version(&manifest))
             .filter(|version| !version.is_empty())
-            .ok_or("could not read [workspace.package] version from Cargo.toml (run from the workspace root)")?,
+            .ok_or("could not read [workspace.package] version from Cargo.toml")?,
     };
     let dist = match env::var_os("DIST").filter(|dist| !dist.is_empty()) {
         Some(dist) => PathBuf::from(dist),
-        None if Path::new("Cargo.toml").is_file() => PathBuf::from("dist/release"),
-        None => return Err("DIST is not set and there is no Cargo.toml here (run from the workspace root)".into()),
+        None if at_root => PathBuf::from("dist/release"),
+        None => return Err(outside.into()),
     };
     fs::create_dir_all(&dist)?;
     let archive =
