@@ -460,6 +460,7 @@ impl PrintDraft {
                 layout: size,
                 content: self.content,
                 raster,
+                type3_raster: self.type3_as_image().then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale }),
                 crops: Vec::new(),
                 area: Some(area),
             });

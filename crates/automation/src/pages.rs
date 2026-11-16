@@ -394,10 +394,11 @@ impl Automation {
     pub(crate) fn text_replace_with(
         &mut self,
         a: &Args,
-        extract: &mut impl FnMut(&Arc<Vec<u8>>, Option<Arc<str>>, &[usize]) -> PageTexts,
+        extract: &mut impl FnMut(&Arc<Vec<u8>>, &RenderConfig, &[usize]) -> PageTexts,
     ) -> Result<Value> {
         let doc = self.doc(a)?;
         let (id, n) = (doc.id, doc.info.pages.len());
+        let layers = self.view_layers(id);
         let pages = match a.opt_ints("pages")? {
             Some(_) => self.pages(a, "pages")?,
             None => (0..n).collect(),
@@ -416,10 +417,10 @@ impl Automation {
         let mut unreadable: Vec<(usize, String)> = Vec::new();
         let (which, found) = if all {
             let mut found = std::collections::BTreeMap::new();
-            for (p, text) in self.page_text_results(id, &pages, &mut *extract)? {
+            for (p, text) in self.page_text_results(id, &pages, &layers, &mut *extract)? {
                 match text {
                     Ok(text) => {
-                        found.insert(p, text.find_opts(&query.find, query.case_sensitive, query.whole_words).len());
+                        found.insert(p, text.0.find_opts(&query.find, query.case_sensitive, query.whole_words).len());
                     }
                     Err(e) => unreadable.push((p, e)),
                 }
@@ -434,10 +435,10 @@ impl Automation {
             'search: while start < pages.len() {
                 let end = pages.len().min(start.saturating_add(batch));
                 let mut results: std::collections::HashMap<usize, _> =
-                    self.page_text_results(id, &pages[start..end], &mut *extract)?.into_iter().collect();
+                    self.page_text_results(id, &pages[start..end], &layers, &mut *extract)?.into_iter().collect();
                 for p in &pages[start..end] {
                     match results.remove(p) {
-                        Some(Ok(text)) if text.find_opts_limited(&query.find, query.case_sensitive, query.whole_words, 1).is_empty() => {}
+                        Some(Ok(text)) if text.0.find_opts_limited(&query.find, query.case_sensitive, query.whole_words, 1).is_empty() => {}
                         Some(Ok(text)) => {
                             texts.push((*p, text));
                             break 'search;
@@ -452,7 +453,7 @@ impl Automation {
                 start = end;
                 batch = batch.saturating_mul(2).min(FIND_MAX_BATCH);
             }
-            (pdfcraft_engine::find_replace::Which::first_in(texts.iter().map(|(p, t)| (*p, t.as_ref())), &query), None)
+            (pdfcraft_engine::find_replace::Which::first_in(texts.iter().map(|(p, t)| (*p, t.0.as_ref())), &query), None)
         };
         let mut plan = match which {
             Some(which) => self.doc(a)?.plan_replace(&pages, &query, which, found.as_ref()).map_err(failed)?,

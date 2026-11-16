@@ -2,6 +2,8 @@
 //! `Updater`; this module supplies the suite, the quit path and the status dialog.
 
 #[cfg(not(target_arch = "wasm32"))]
+use craft_update::CheckResultResponse;
+#[cfg(not(target_arch = "wasm32"))]
 use craft_update::updater::{Action, CheckSource, Status, Updater};
 use egui::{Align, Layout};
 
@@ -184,6 +186,8 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let t = theme::Tokens::get(ctx);
     let current = env!("CARGO_PKG_VERSION");
     let mut close = false;
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut restart = false;
     let modal = crate::widgets::show_modal(ctx, "updates", |ui| {
         ui.set_width(420.0);
         ui.horizontal(|ui| {
@@ -218,6 +222,30 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     .color(t.text_muted),
                 );
             }
+            Status::Installing => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(tl!("Installing update…"));
+                });
+            }
+            Status::Ready => {
+                ui.label(crate::i18n::fmt(tl!(craft_update::updater::READY_TEXT), &[("app", crate::UPDATE_APP.name)]));
+            }
+            Status::Managed => {
+                ui.label(crate::i18n::fmt(
+                    tl!("{app} {version} follows the version chosen in the launcher, so it does not update itself."),
+                    &[("app", crate::UPDATE_APP.name), ("version", current)],
+                ));
+            }
+            Status::Updated(version) => {
+                ui.label(crate::i18n::fmt(tl!("{app} updated to {version}."), &[("app", crate::UPDATE_APP.name), ("version", version)]));
+            }
+            Status::InstallFailed(reason) => {
+                ui.label(crate::i18n::fmt(tl!("The update could not be installed: {reason}"), &[("reason", reason)]));
+                ui.label(
+                    egui::RichText::new(crate::i18n::fmt(tl!("All releases are listed at {page}."), &[("page", RELEASES_PAGE)])).color(t.text_muted),
+                );
+            }
         }
         #[cfg(target_arch = "wasm32")]
         let _ = (&t, current);
@@ -226,10 +254,19 @@ pub(crate) fn dialog(app: &mut PdfCraftApp, ctx: &egui::Context) {
             if widgets::pill_button(ui, tl!("Close"), true).clicked() {
                 close = true;
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            if matches!(app.updates.updater.status(), Status::Ready) && widgets::pill_button(ui, tl!("Restart to Update"), false).clicked() {
+                restart = true;
+            }
         });
     });
     if modal.should_close() {
         close = true;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if restart {
+        answer_result(app, ctx, CheckResultResponse::RestartToUpdate);
+        return;
     }
     if close {
         app.updates.open = false;

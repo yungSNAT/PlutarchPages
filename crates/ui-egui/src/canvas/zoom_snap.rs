@@ -42,7 +42,7 @@ pub(crate) fn page_input(ui: &egui::Ui, resp: &egui::Response, xf: &PageXform, p
         && view.marquee.is_none()
     {
         let r = xf.view_rect(area);
-        ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.5, Color32::from_rgb(0x14, 0x73, 0xE6)), egui::StrokeKind::Middle);
+        ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.5, crate::theme::ON_PAGE_SELECT), egui::StrokeKind::Middle);
         egui::Area::new(egui::Id::unique("snapshot-area-menu"))
             .order(egui::Order::Foreground)
             .fixed_pos(r.left_bottom() + egui::vec2(0.0, 6.0))

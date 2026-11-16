@@ -222,7 +222,8 @@ fn prepare(job: Job) -> ResultKind {
         Some(SourceKind::Image | SourceKind::Text) => return ResultKind::Conversion(bytes),
         // LibreOffice takes seconds: it runs here, and the frame thread only opens the result.
         Some(SourceKind::Office) => return ResultKind::Converted(job.context.office_to_pdf(&job.name, &bytes).map_err(|e| e.to_string())),
-        Some(SourceKind::Pdf) | None => {}
+        // Create converts the other kinds; File ▸ Open reads them as a PDF, as it did before.
+        Some(SourceKind::Pdf | SourceKind::Csv | SourceKind::Markdown | SourceKind::Email | SourceKind::Html) | None => {}
     }
     let result = job.context.prepare_open(job.name, job.path, bytes.clone(), job.password.as_deref().map(String::as_str));
     ResultKind::Prepared { bytes, result: Box::new(result) }
