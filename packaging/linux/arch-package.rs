@@ -84,10 +84,8 @@ fn arch_package() -> Result {
     };
     let dist = env::var_os("DIST").filter(|dist| !dist.is_empty()).map_or_else(|| PathBuf::from("dist/release"), PathBuf::from);
     fs::create_dir_all(&dist)?;
-    let archive = args
-        .get(1)
-        .filter(|archive| !archive.is_empty())
-        .map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);
+    let archive =
+        args.get(1).filter(|archive| !archive.is_empty()).map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);
     if !archive.is_file() {
         return Err(format!("{} not found (run packaging/linux/package.sh --formats tar first)", archive.display()).into());
     }
