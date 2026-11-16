@@ -1528,8 +1528,8 @@ fn choice_list(ctx: &egui::Context, list: DropDownList<'_>, st: &mut ChoiceList)
         egui::Area::new(egui::Id::unique(("form-choices", view))).order(egui::Order::Foreground).fixed_pos(rect.left_bottom()).show(ctx, |ui| {
             let (outer, area) = ui.allocate_exact_size(vec2(width, shown as f32 * row + 2.0), egui::Sense::hover());
             let p = ui.painter();
-            // The list is drawn as the form's own, a white list in the field's font with a blue
-            // highlight, in light and dark themes alike, so its colors are fixed, not the app's tokens.
+            // The list is drawn as the form's own, a white list in the field's font with the
+            // on-page selection highlight, in light and dark themes alike, not the app's tokens.
             p.rect_filled(outer, CornerRadius::ZERO, Color32::WHITE);
             // The wheel scrolls the list, a row at a time, and not the page under it.
             if area.contains_pointer() && n > shown {
@@ -1558,7 +1558,7 @@ fn choice_list(ctx: &egui::Context, list: DropDownList<'_>, st: &mut ChoiceList)
                 }
                 let on = st.current == Some(i);
                 if on {
-                    p.rect_filled(r, CornerRadius::ZERO, Color32::from_rgb(0x1F, 0x65, 0xD6));
+                    p.rect_filled(r, CornerRadius::ZERO, crate::theme::ON_PAGE_SELECT);
                 }
                 let galley = p.layout_no_wrap(display.clone(), font.clone(), if on { Color32::WHITE } else { Color32::BLACK });
                 let inner = r.shrink2(vec2(3.0, 0.0));

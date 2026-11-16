@@ -7,6 +7,9 @@ use super::{
 };
 use crate::page_router::{CommentPart, Hit, Owner};
 
+/// The marker on commented text markup, a viewer-only mark that reads apart from the selection.
+const HINT: Color32 = crate::theme::ON_PAGE_HINT;
+
 /// The comment outlined under the pointer: the one a press there would take (`hover`, the top hit),
 /// with the Select tool or, over its own marks, Fill & Sign. Not the selected comment, nor while a
 /// comment is moved, resized or drawn, nor one under a form field or added text that would take
@@ -29,9 +32,9 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
         {
             painter.line_segment(
                 [marker.left_bottom(), pos2(target.right(), target.top())],
-                Stroke::new(1.0, Color32::from_rgba_unmultiplied(0xD4, 0x8A, 0x00, 150)),
+                Stroke::new(1.0, Color32::from_rgba_unmultiplied(HINT.r(), HINT.g(), HINT.b(), 150)),
             );
-            icons::paint(ui, marker, "message-square", 12.0, Color32::from_rgb(0xD4, 0x8A, 0x00));
+            icons::paint(ui, marker, "message-square", 12.0, HINT);
         }
     }
     let pointer = cx.ptr.pos;
