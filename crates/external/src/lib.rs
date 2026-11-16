@@ -343,19 +343,35 @@ fn too_large(max: u64) -> ExternalError {
     ExternalError::InvalidOutput(format!("the result is larger than {} MB", max >> 20))
 }
 
-/// The bytes in the regular files under `dir`, at any depth, links not followed. Anything
-/// unreadable counts as nothing and the sum saturates. Each size is read from the file itself: on
-/// Windows a directory listing keeps the old size while a process still has the file open.
+/// How many entries, and how deep, [`bytes_under`] measures before it gives up. A fresh
+/// LibreOffice profile holds a few hundred files, a few folders deep.
+const MAX_STAGE_ENTRIES: usize = 10_000;
+const MAX_STAGE_DEPTH: usize = 32;
+
+/// The bytes in the regular files under `dir`, links not followed. Anything unreadable counts as
+/// nothing and the sum saturates. Each size is read from the file itself: on Windows a directory
+/// listing keeps the old size while a process still has the file open. More than
+/// [`MAX_STAGE_ENTRIES`] entries or folders deeper than [`MAX_STAGE_DEPTH`] count as `u64::MAX`,
+/// past any limit, so the walk stays cheap and the program that made them is stopped.
 fn bytes_under(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
-    entries.flatten().fold(0u64, |sum, entry| {
-        let path = entry.path();
-        sum.saturating_add(match std::fs::symlink_metadata(&path) {
-            Ok(meta) if meta.is_dir() => bytes_under(&path),
-            Ok(meta) if meta.is_file() => meta.len(),
-            _ => 0,
-        })
-    })
+    let (mut pending, mut sum, mut seen) = (vec![(dir.to_path_buf(), 0)], 0u64, 0usize);
+    while let Some((dir, depth)) = pending.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > MAX_STAGE_ENTRIES {
+                return u64::MAX;
+            }
+            let path = entry.path();
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_dir() && depth < MAX_STAGE_DEPTH => pending.push((path, depth + 1)),
+                Ok(meta) if meta.is_dir() => return u64::MAX,
+                Ok(meta) if meta.is_file() => sum = sum.saturating_add(meta.len()),
+                _ => {}
+            }
+        }
+    }
+    sum
 }
 
 fn check_input(bytes: &[u8], limits: &Limits) -> Result<(), ExternalError> {
@@ -564,15 +580,19 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
     let out = stage.path("out").join("input.pdf");
     let result = (|| {
         let mut child = supervise::spawn(cmd, "LibreOffice")?;
-        // Stopped at once when what it writes grows too large: the result, or any file in the
-        // output or temporary folder (a result may be written under another name first).
-        let written = || bytes_under(&stage.path("out")).saturating_add(bytes_under(&stage.path("scratch")));
+        // Stopped at once when what it writes anywhere in its stage grows too large: the result,
+        // or a file under another name (a result may be written as one first), its profile and
+        // home included. Only the staged input is left out.
+        let written = || ["out", "scratch", "profile", "home"].iter().fold(0u64, |sum, sub| sum.saturating_add(bytes_under(&stage.path(sub))));
         match supervise::wait(&mut child, Instant::now() + limits.timeout, cancel, || written() > limits.max_output) {
             Ended::Exited(status) if !status.success() => {
                 Err(ExternalError::ProcessFailed(format!("LibreOffice stopped ({status}) without finishing the PDF")))
             }
             Ended::Exited(_) => read_output(&out, limits.max_output),
-            Ended::Done => Err(too_large(limits.max_output)),
+            Ended::Done => Err(ExternalError::InvalidOutput(format!(
+                "what LibreOffice wrote is larger than {} MB, or holds more files or folders than allowed",
+                limits.max_output >> 20
+            ))),
             Ended::TimedOut => Err(ExternalError::TimedOut("LibreOffice".into(), limits.timeout.as_secs())),
             Ended::Cancelled => Err(ExternalError::Cancelled),
         }
