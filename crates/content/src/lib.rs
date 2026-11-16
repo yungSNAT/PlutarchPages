@@ -420,6 +420,20 @@ fn filter_eod(dict: &Dict) -> &'static [u8] {
 /// Binary samples may themselves contain whitespace + `EI` + whitespace, so use the known
 /// length when the actual terminator follows it. Unknown or damaged layouts keep the heuristic.
 fn unfiltered_image_end(data: &[u8], begin: usize, dict: &Dict) -> Option<(usize, usize)> {
+    let end_data = begin.checked_add(unfiltered_image_len(dict)?)?;
+    let after = data.get(end_data..)?;
+    let separator = after.iter().position(|b| !is_ws(*b))?;
+    if separator == 0 && data.get(end_data.checked_sub(1)?).is_some_and(|b| is_ws(*b)) {
+        return None;
+    }
+    let ei = end_data.checked_add(separator)?;
+    let end = ei.checked_add(2)?;
+    if data.get(ei..end) == Some(b"EI") && data.get(end).is_none_or(|b| is_ws(*b) || is_delim(*b)) { Some((end_data, end)) } else { None }
+}
+
+/// The byte length of an unfiltered image's samples, as its parameters give it (`None` when it is
+/// filtered or they don't give one).
+fn unfiltered_image_len(dict: &Dict) -> Option<usize> {
     for key in [b"Filter".as_slice(), b"F"] {
         if let Some(filter) = dict.get(key)
             && !matches!(filter, Object::Null)
@@ -475,15 +489,7 @@ fn unfiltered_image_end(data: &[u8], begin: usize, dict: &Dict) -> Option<(usize
         (components, bits)
     };
     let row = width.checked_mul(components)?.checked_mul(bits)?.div_ceil(8);
-    let end_data = begin.checked_add(row.checked_mul(height)?)?;
-    let after = data.get(end_data..)?;
-    let separator = after.iter().position(|b| !is_ws(*b))?;
-    if separator == 0 && data.get(end_data.checked_sub(1)?).is_some_and(|b| is_ws(*b)) {
-        return None;
-    }
-    let ei = end_data.checked_add(separator)?;
-    let end = ei.checked_add(2)?;
-    if data.get(ei..end) == Some(b"EI") && data.get(end).is_none_or(|b| is_ws(*b) || is_delim(*b)) { Some((end_data, end)) } else { None }
+    row.checked_mul(height)
 }
 
 /// The length declared by `/L` (or `/Length`, ISO 32000-2 §8.9.7), used when `EI` follows the
@@ -542,8 +548,21 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
 }
 
 /// Write one operator (with a trailing newline).
+///
+/// An inline image whose data holds `EI` is written ASCIIHex-encoded, unless its parameters give
+/// its length (the renderer then ends it there). Otherwise the renderer would choose among that
+/// `EI` and the one written after the data by looking at what follows each, and what this writer
+/// puts after the image (spacing, the terminator, normalised operators) can change that choice,
+/// so the data read back would end elsewhere.
 pub fn write_op(op: &Op, out: &mut Vec<u8>) {
     if let Some((dict, img)) = &op.inline {
+        let hex;
+        let (dict, img) = if img.windows(2).any(|pair| pair == b"EI") && unfiltered_image_len(dict) != Some(img.len()) {
+            hex = hex_encoded(dict, img);
+            (&hex.0, &hex.1)
+        } else {
+            (dict, img)
+        };
         out.extend_from_slice(b"BI");
         for (k, v) in dict.iter() {
             out.push(b' ');
@@ -562,6 +581,52 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
     }
     out.extend_from_slice(&op.op);
     out.push(b'\n');
+}
+
+/// An inline image's parameters and data with ASCIIHex in front of its filters. The hex digits and
+/// the `>` that ends them hold no `EI`. Each filter keeps its parameters (the lone dictionary form
+/// belongs to the first filter), and a declared length becomes the new data's.
+fn hex_encoded(dict: &Dict, data: &[u8]) -> (Dict, Vec<u8>) {
+    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
+    let mut hex = Vec::with_capacity(data.len().saturating_mul(2).saturating_add(1));
+    for b in data {
+        hex.extend_from_slice(&[DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 0x0F)]]);
+    }
+    hex.push(b'>');
+    let ahx = || Object::name("AHx");
+    let mut dict = dict.clone();
+    let mut filtered = false;
+    for key in [b"Filter".as_slice(), b"F"] {
+        if let Some(filter) = dict.get_mut(key) {
+            filtered = true;
+            *filter = match std::mem::replace(filter, Object::Null) {
+                Object::Null => ahx(),
+                Object::Array(mut chain) => {
+                    chain.insert(0, ahx());
+                    Object::Array(chain)
+                }
+                other => Object::Array(vec![ahx(), other]),
+            };
+        }
+    }
+    if !filtered {
+        dict.set(b"F".to_vec(), ahx());
+    }
+    for key in [b"DecodeParms".as_slice(), b"DP"] {
+        if let Some(parms) = dict.get_mut(key) {
+            match parms {
+                Object::Array(chain) => chain.insert(0, Object::Null),
+                Object::Dict(_) => *parms = Object::Array(vec![Object::Null, std::mem::replace(parms, Object::Null)]),
+                _ => {}
+            }
+        }
+    }
+    for key in [b"Length".as_slice(), b"L"] {
+        if let Some(length) = dict.get_mut(key) {
+            *length = Object::Int(i64::try_from(hex.len()).unwrap_or(i64::MAX));
+        }
+    }
+    (dict, hex)
 }
 
 /// Write operators back to a content stream.
