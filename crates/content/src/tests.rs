@@ -251,6 +251,23 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
     }
 }
 
+/// From the scheduled `round_trip` fuzz job (16 November 2026). An image of unknown length holds
+/// an `EI` that the renderer's end heuristic rejects only because 20 operators, fewer than the
+/// 21 it needs, follow it to the end of the stream. The real end is glued to a trailing `E`
+/// (`EEI`); written back, the newline before the terminator splits that into `E` and `EI`, the
+/// 21st operator, so the rewritten image ends at the earlier `EI` and its data reads as operators.
+#[test]
+fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
+    let mut src = b"BI ID \0EI .0 w".to_vec();
+    src.extend_from_slice(&b" n".repeat(18));
+    src.extend_from_slice(b" EEI\n");
+    let first = parse(&src);
+    assert_eq!(first.ambiguous_images, 0);
+    let second = parse(&serialize_ops(&first.ops));
+    let third = parse(&serialize_ops(&second.ops));
+    assert_eq!(second.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>(), third.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>());
+}
+
 fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
     use pdfcraft_cos::{Document, SaveOptions, Stream, write_full};
 
