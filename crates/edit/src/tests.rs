@@ -7207,10 +7207,8 @@ fn page_re_w_n_clip_hides_text_from_reading_until_q() {
 #[test]
 fn clipped_text_stays_in_the_editor_and_glyph_readings() {
     let page = stream("", "q 0 0 50 50 re W n BT /F1 12 Tf 100 100 Td (HIDDEN) Tj ET /Fm Do Q");
-    let fm = stream(
-        "/Type /XObject /Subtype /Form /BBox [0 0 50 50] /Resources << /Font << /F1 6 0 R >> >>",
-        "BT /F1 12 Tf 100 100 Td (OUTSIDE) Tj ET",
-    );
+    let fm =
+        stream("/Type /XObject /Subtype /Form /BBox [0 0 50 50] /Resources << /Font << /F1 6 0 R >> >>", "BT /F1 12 Tf 100 100 Td (OUTSIDE) Tj ET");
     let doc = build(&[
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",

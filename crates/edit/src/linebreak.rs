@@ -129,7 +129,11 @@ fn no_end(c: char) -> bool {
 /// space. Thai needs the whole word ([`breaks`]). Never before a variation selector, which belongs
 /// to the character before it.
 fn between(before: char, after: char) -> bool {
-    (ideographic(before) || ideographic(after)) && !no_start(after) && !no_end(before) && !thai_no_start(after) && !thai_no_end(before)
+    (ideographic(before) || ideographic(after))
+        && !no_start(after)
+        && !no_end(before)
+        && !thai_no_start(after)
+        && !thai_no_end(before)
         && !crate::bidi::is_variation_selector(after)
 }
 

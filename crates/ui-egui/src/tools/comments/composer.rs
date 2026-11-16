@@ -2,8 +2,7 @@ use super::geometry::{drawn_text_box_rect, page_rotation, text_box_rect};
 use super::paint::{edited_in_view, new_comment};
 use super::state::{ComposerKind, PageCx};
 use super::{
-    CommentPrefs, CommentTool, CornerRadius, DocInfo, DocView, Edit, LineEnding, Markup, NoteIcon, PagePointer, QuickTool, Shape, Tokens, pos2,
-    theme,
+    CommentPrefs, CommentTool, CornerRadius, DocInfo, DocView, Edit, LineEnding, Markup, NoteIcon, PagePointer, QuickTool, Shape, Tokens, pos2, theme,
 };
 use crate::page_keys::PageKeys;
 

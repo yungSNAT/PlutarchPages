@@ -22,8 +22,8 @@ mod content;
 mod conventions;
 pub mod file_access;
 mod forms;
-mod hidden_text;
 mod hairlines;
+mod hidden_text;
 mod layers;
 mod links;
 #[cfg(feature = "mcp")]

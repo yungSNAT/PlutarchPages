@@ -1,6 +1,6 @@
 use super::{
-    Arc, CombineSource, Combined, DataFormat, DocId, EditError, Hairlines, HairlinesFixed, Hidden, ImageResolution, OptimizeReport, SaveOptions, Session,
-    SourceKind, SplitPart, decode_text, guard, open_source, open_source_with, optimize, print, source_kind, writable, write_full,
+    Arc, CombineSource, Combined, DataFormat, DocId, EditError, Hairlines, HairlinesFixed, Hidden, ImageResolution, OptimizeReport, SaveOptions,
+    Session, SourceKind, SplitPart, decode_text, guard, open_source, open_source_with, optimize, print, source_kind, writable, write_full,
 };
 
 use crate::{Converted, PrintSource, conversion_note_replaced, conversion_notes_csv, conversion_notes_email};

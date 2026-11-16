@@ -1152,8 +1152,19 @@ fn redact_page_content(
     page: &pdfcraft_model::Page,
     rects: &[[f64; 4]],
 ) -> Result<(), RedactError> {
-    let Applying { report, doomed_xobjects, retired_properties, shared, retired, removed_text, removed_cut, removed_room, images, pruned_patterns, .. } =
-        applying;
+    let Applying {
+        report,
+        doomed_xobjects,
+        retired_properties,
+        shared,
+        retired,
+        removed_text,
+        removed_cut,
+        removed_room,
+        images,
+        pruned_patterns,
+        ..
+    } = applying;
     // 1. Content.
     let mut budget = pdfcraft_cos::DecodeBudget::page();
     let (list, data) = page_streams_within(doc, &page.dict, pi, &mut budget)?;

@@ -1035,8 +1035,7 @@ impl<'a> FormWalk<'a> {
             (outer, own) => outer.clone().or_else(|| own.clone()),
         };
         let advance_gaps = self.want_gaps.then(Vec::new);
-        let mut carry =
-            Carry { ts: Ts { ctm: form.ctm, clip, ..ts }, text_left: *text_left, advance_gaps, saved_outside: saved, ..Carry::new() };
+        let mut carry = Carry { ts: Ts { ctm: form.ctm, clip, ..ts }, text_left: *text_left, advance_gaps, saved_outside: saved, ..Carry::new() };
         let stream = self.next_stream;
         self.next_stream = self.next_stream.saturating_add(1);
         if let Some(r) = form.obj {

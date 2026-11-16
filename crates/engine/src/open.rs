@@ -6,12 +6,12 @@ use std::sync::{Arc, OnceLock};
 use pdfcraft_cos::{SaveOptions, write_incremental};
 use pdfcraft_render::{DocInfo, OpenError, RenderConfig, RenderPool, inspect};
 
-use crate::history::{Editor, Keys, PageTextCache};
 use crate::external::ExternalConverters;
+use crate::history::{Editor, Keys, PageTextCache};
 use crate::{
-    AppearanceCache, DocId, Document, EditError, Session, SourceKind, StatusCaptions, TrustStore, XFA_SCRIPTS_OFF, XfaLayout, display_bytes, display_config, guard,
-    info_fields, js, note_warnings, print_preview_layers, recovered_render_password, render_threads, same_pages, signatures_of, xfa, xfa_layout,
-    xfa_values_from_datasets,
+    AppearanceCache, DocId, Document, EditError, Session, SourceKind, StatusCaptions, TrustStore, XFA_SCRIPTS_OFF, XfaLayout, display_bytes,
+    display_config, guard, info_fields, js, note_warnings, print_preview_layers, recovered_render_password, render_threads, same_pages,
+    signatures_of, xfa, xfa_layout, xfa_values_from_datasets,
 };
 
 /// Immutable session state needed while a document is prepared away from its owning thread.

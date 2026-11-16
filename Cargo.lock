@@ -238,7 +238,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
  "wl-clipboard-rs",
  "x11rb",
 ]
@@ -980,6 +980,7 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
 dependencies = [
+ "block-buffer 0.12.1",
  "crypto-common 0.2.2",
  "inout",
 ]
@@ -2051,7 +2052,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2715,6 +2716,18 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash 0.2.0",
+]
+
+[[package]]
+name = "hashify"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd1246c0e5493286aeb2dde35b1f4eb9c4ce00e628641210a5e553fc001a1f26"
+dependencies = [
+ "indexmap",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -3517,6 +3530,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
+name = "mail-parser"
+version = "0.11.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ec00bda90c6e645a54506c630c2820cd6b1890cfd2b0a169b50f74b2b8c7c86"
+dependencies = [
+ "encoding_rs",
+ "hashify",
+]
+
+[[package]]
 name = "md-5"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4173,7 +4196,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4318,6 +4341,7 @@ dependencies = [
  "pdfcraft-cos",
  "pdfcraft-edit",
  "pdfcraft-model",
+ "pdfcraft-testkit",
  "thiserror 2.0.21",
 ]
 
@@ -4337,6 +4361,7 @@ dependencies = [
  "pdfcraft-prc",
  "pdfcraft-prc-render",
  "pdfcraft-render",
+ "pdfcraft-testkit",
  "pdfcraft-xfa",
  "png 0.18.1",
  "rustix 1.1.6",
@@ -4380,6 +4405,7 @@ name = "pdfcraft-cos"
 version = "0.21.1"
 dependencies = [
  "chrono",
+ "getrandom 0.4.3",
  "hayro-syntax",
  "js-sys",
  "pdfcraft-crypt",
@@ -4400,13 +4426,14 @@ dependencies = [
  "hayro-ccitt",
  "hayro-syntax",
  "image",
+ "mail-parser",
  "pdfcraft-cos",
  "pdfcraft-filters",
  "pdfcraft-fonts",
  "pdfcraft-model",
  "pdfcraft-xfa",
  "png 0.18.1",
- "rustix 1.1.6",
+ "pulldown-cmark",
  "thiserror 2.0.21",
  "tiff",
  "zune-jpeg",
@@ -4419,6 +4446,7 @@ dependencies = [
  "aes",
  "md-5",
  "proptest",
+ "rc4",
  "sha2 0.11.1",
  "stringprep",
  "thiserror 2.0.21",
@@ -4463,6 +4491,7 @@ dependencies = [
  "pdfcraft-create",
  "pdfcraft-edit",
  "pdfcraft-export",
+ "pdfcraft-external",
  "pdfcraft-filters",
  "pdfcraft-fonts",
  "pdfcraft-forms",
@@ -4493,6 +4522,16 @@ name = "pdfcraft-export"
 version = "0.21.1"
 dependencies = [
  "flate2",
+]
+
+[[package]]
+name = "pdfcraft-external"
+version = "0.21.1"
+dependencies = [
+ "rustix 1.1.6",
+ "tempfile",
+ "thiserror 2.0.21",
+ "url",
 ]
 
 [[package]]
@@ -4670,6 +4709,7 @@ dependencies = [
  "pdfcraft-cos",
  "pdfcraft-model",
  "pdfcraft-render",
+ "pdfcraft-testkit",
  "skrifa 0.44.0",
  "thiserror 2.0.21",
  "winprint 0.2.1 (git+https://github.com/storytold/winprint.rs?rev=5f80b9baf6b58937c401656634e42d33f00ddf49)",
@@ -4720,6 +4760,7 @@ dependencies = [
  "skrifa 0.44.0",
  "thiserror 2.0.21",
  "unicode-bidi",
+ "unicode-normalization",
  "url",
 ]
 
@@ -4803,6 +4844,7 @@ dependencies = [
  "pdfcraft-ocr",
  "pdfcraft-platform",
  "pdfcraft-render",
+ "pdfcraft-testkit",
  "pdfcraft-xfa",
  "plist",
  "png 0.18.1",
@@ -5314,6 +5356,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5403,7 +5456,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5523,6 +5576,15 @@ name = "rc2"
 version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ceda21af1ae61033b63175653a1af86cae399d79cd03ca80ba347eb3a6c4a7fe"
+dependencies = [
+ "cipher",
+]
+
+[[package]]
+name = "rc4"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "840038b674daa9f7a7957440d937951d15c0143c056e631e529141fd780e0c92"
 dependencies = [
  "cipher",
 ]
@@ -5963,7 +6025,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6033,7 +6095,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6923,7 +6985,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.6",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7332,6 +7394,12 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "unicase"
+version = "2.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f"
 
 [[package]]
 name = "unicode-bidi"
@@ -8048,7 +8116,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

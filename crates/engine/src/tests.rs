@@ -13457,7 +13457,14 @@ fn buttons_and_combs_left_to_the_viewer_are_displayed() {
     assert_eq!(count(&shown, (95, 84, 97, 106), &blue), 0, "no line inside a cell");
     // Print as Image: the page as a picture, at 72 dpi so it is the size of the page here.
     let raster = pdfcraft_print::Raster { dpi: 72.0, grayscale: false };
-    let pictures = crate::print_raster::rasterize(&s.get(id).unwrap().export_source(), &s.get(id).unwrap().info.layers, &[0], &raster, pdfcraft_print::Content::Document).unwrap();
+    let pictures = crate::print_raster::rasterize(
+        &s.get(id).unwrap().export_source(),
+        &s.get(id).unwrap().info.layers,
+        &[0],
+        &raster,
+        pdfcraft_print::Content::Document,
+    )
+    .unwrap();
     let printed = render(Arc::new(pictures));
     assert!(count(&printed, (24, 154, 56, 186), &red) > 60, "the check box prints");
     assert!(count(&printed, (104, 154, 216, 186), &grey) > 1000, "and the push button");
@@ -13627,7 +13634,14 @@ fn need_appearances_buttons_are_displayed_from_their_captions() {
     let id = s.open("form.pdf", None, Arc::new(pdf(true)), None).unwrap();
     let shown = render(s.get(id).unwrap().display.clone());
     let raster = pdfcraft_print::Raster { dpi: 72.0, grayscale: false };
-    let pictures = crate::print_raster::rasterize(&s.get(id).unwrap().export_source(), &s.get(id).unwrap().info.layers, &[0], &raster, pdfcraft_print::Content::Document).unwrap();
+    let pictures = crate::print_raster::rasterize(
+        &s.get(id).unwrap().export_source(),
+        &s.get(id).unwrap().info.layers,
+        &[0],
+        &raster,
+        pdfcraft_print::Content::Document,
+    )
+    .unwrap();
     let printed = render(Arc::new(pictures));
     for (page, how) in [(&shown, "shown"), (&printed, "printed")] {
         let (check, check_corner) = (ink(page, inside(20, 100)), ink(page, top_left(20, 100)));

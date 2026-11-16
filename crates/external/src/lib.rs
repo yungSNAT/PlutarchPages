@@ -579,7 +579,9 @@ mod tests {
         let settings: Vec<(String, String, String)> = written
             .split("<item ")
             .skip(1)
-            .filter_map(|item| Some((between(item, "oor:path=\"", "\"")?, between(item, "oor:name=\"", "\"")?, between(item, "<value>", "</value>")?)))
+            .filter_map(|item| {
+                Some((between(item, "oor:path=\"", "\"")?, between(item, "oor:name=\"", "\"")?, between(item, "<value>", "</value>")?))
+            })
             .collect();
         let has = |path: &str, name: &str, value: &str| settings.iter().any(|(p, n, v)| p == path && n == name && v == value);
         let scripting = "/org.openoffice.Office.Common/Security/Scripting";
