@@ -758,8 +758,9 @@ mod tests {
         assert_eq!(mode, 0o700, "{mode:o}");
     }
 
-    /// LibreOffice may write its result under another name first, in the output folder or its
-    /// temporary one: growth there stops it too, with a size error, as growth of the result does.
+    /// LibreOffice may write its result under another name first, in any folder of its stage:
+    /// growth there stops it too, with a size error, as growth of the result does, and so do
+    /// more folders or files than the watcher measures cheaply.
     #[cfg(unix)]
     #[test]
     fn an_office_conversion_growing_under_another_name_is_stopped() {
@@ -769,16 +770,24 @@ mod tests {
         std::fs::write(dir.path().join("version.ini"), "MsiProductVersion=26.2.5.2\n").unwrap();
         let limits = Limits { timeout: Duration::from_secs(20), max_input: 1 << 20, max_output: 4096 };
         let cancel = AtomicBool::new(false);
-        for target in ["\"$outdir/part.tmp\"", "\"$TMPDIR/lu1.tmp\""] {
+        let writes = [
+            "head -c 100000 /dev/zero > \"$outdir/part.tmp\"",
+            "head -c 100000 /dev/zero > \"$TMPDIR/lu1.tmp\"",
+            "head -c 100000 /dev/zero > \"$HOME/lu2.tmp\"",
+            // Too many folders or files to measure cheaply: stopped as well.
+            "d=\"$TMPDIR\"; i=0; while [ $i -lt 80 ]; do d=\"$d/d\"; mkdir \"$d\"; i=$((i+1)); done",
+            "i=0; while [ $i -lt 12000 ]; do : > \"$outdir/f$i\"; i=$((i+1)); done",
+        ];
+        for write in writes {
             let soffice = dir.path().join("soffice");
             let args = "prev=; for a in \"$@\"; do [ \"$prev\" = --outdir ] && outdir=\"$a\"; prev=\"$a\"; done";
-            std::fs::write(&soffice, format!("#!/bin/sh\n{args}\nhead -c 100000 /dev/zero > {target}\nsleep 30\n")).unwrap();
+            std::fs::write(&soffice, format!("#!/bin/sh\n{args}\n{write}\nsleep 30\n")).unwrap();
             std::fs::set_permissions(&soffice, std::fs::Permissions::from_mode(0o755)).unwrap();
             let started = Instant::now();
             let r = office_to_pdf(&soffice, "letter.docx", b"PK", &limits, &cancel);
             assert!(
-                matches!(&r, Err(ExternalError::InvalidOutput(m)) if m.contains("larger")) && started.elapsed() < Duration::from_secs(10),
-                "{target}: {r:?}"
+                matches!(&r, Err(ExternalError::InvalidOutput(m)) if m.contains("larger")) && started.elapsed() < Duration::from_secs(15),
+                "{write}: {r:?}"
             );
         }
     }
