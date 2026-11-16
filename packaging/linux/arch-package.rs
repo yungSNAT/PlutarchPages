@@ -17,7 +17,7 @@
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
 //! archlinux:base-devel container. makepkg refuses root, so as root it runs itself again as the
-//! unprivileged user `builder`, which it adds if needed.
+//! unprivileged user `builder`, which it adds if needed and makes the owner of DIST.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -30,7 +30,6 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -109,7 +108,7 @@ fn arch_package() -> Result {
         if !quiet(Command::new("id").args(["-u", "builder"]))?.success() {
             run(Command::new("useradd").args(["-m", "builder"]))?;
         }
-        fs::set_permissions(&dist, fs::Permissions::from_mode(0o777))?;
+        run(Command::new("chown").args(["--", "builder"]).arg(&dist))?;
         let error = Command::new("runuser")
             .args(["-u", "builder", "--", "env", "HOME=/home/builder"])
             .arg(env::current_exe()?)
