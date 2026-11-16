@@ -477,10 +477,11 @@ fn redaction_search_finds_the_literal_matches_folding_would_lose() {
     let shifted = page(&["۱", "1", "1"]);
     assert_eq!(shifted.find("11"), vec![0..2]);
     assert_eq!(shifted.find_for_redaction("11", false, false), vec![0..2, 1..3]);
-    // Folded, the vowel mark goes and closes the word boundary before the letter after it.
-    let joined = page(&["ك", "\u{64B}", "ب"]);
+    // Folded, the rial sign becomes its letters and closes the word boundary before the letter
+    // after it.
+    let joined = page(&["\u{FDFC}", "ب"]);
     assert!(joined.find_opts("ب", false, true).is_empty());
-    assert_eq!(joined.find_for_redaction("ب", false, true), vec![2..3]);
+    assert_eq!(joined.find_for_redaction("ب", false, true), vec![1..2]);
     // Han runs its words together, so the radical folded to an ideograph bounds no word.
     assert_eq!(page(&["\u{2F92}", "見"]).find_for_redaction("見", false, true), vec![0..1, 1..2]);
     // Folding still adds what the literal text alone wouldn't find.
