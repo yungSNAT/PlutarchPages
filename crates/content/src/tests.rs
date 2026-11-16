@@ -287,6 +287,8 @@ fn an_inline_image_written_as_hex_keeps_its_parameters_and_a_true_length() {
     for (parameters, length) in [
         (b"/F [/Fl] /DP << /Predictor 2 /Columns 64 >> /L 75".as_slice(), b"L".as_slice()),
         (b"/Filter /FlateDecode /DecodeParms [<< /Predictor 2 /Columns 64 >>] /Length 75", b"Length"),
+        // Both spellings at once: whichever a reader takes, its filters and parameters still agree.
+        (b"/F /Fl /Filter /FlateDecode /DP << /Predictor 2 /Columns 64 >> /DecodeParms [<< /Predictor 2 /Columns 64 >>] /L 75", b"L"),
     ] {
         let label = String::from_utf8_lossy(parameters);
         let src = image(parameters);
@@ -320,6 +322,28 @@ fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
         second.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>(),
         third.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>()
     );
+}
+
+/// A name or string spelt with escapes in the source holds no `EI` there. Written out plainly it
+/// would: with fewer than 21 operators after the image and no text shown, the renderer then takes
+/// that `EI` as the image's end, and the operators before it become image data.
+#[test]
+fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
+    for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC"] {
+        let mut src = b"q BI ID \x7F EI".to_vec();
+        src.extend_from_slice(tail);
+        let label = String::from_utf8_lossy(tail);
+        let first = parse(&src);
+        assert_eq!(first.ambiguous_images, 0, "{label}");
+        let written = serialize_ops(&first.ops);
+        assert_eq!(renderer_operators(&written), renderer_operators(&src), "{label}");
+        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
+        assert_eq!(
+            parse(&written).ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
+            first.ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
+            "{label}"
+        );
+    }
 }
 
 fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
