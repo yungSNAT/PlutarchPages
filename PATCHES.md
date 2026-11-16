@@ -4,7 +4,8 @@ PlutarchPages is upstream [PdfCraft](https://github.com/storytold/pdfcraft) plus
 [Fork changes](README.md#fork-changes) describes them for users; this file is for whoever merges
 upstream next.
 
-Last upstream merge: `5bb8bbf2` (8 November 2026).
+Last upstream merge: `b503b2e6`, upstream's v0.21.1 release (11 November 2026). Upstream's `main`
+after it is the next merge.
 
 Upstream drift is checked every Monday at 04:43 UTC, and on demand through the
 **Upstream drift** workflow. It records the exact revisions, ahead/behind counts (every commit, and
@@ -21,7 +22,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   Upstream goes ahead. Tests in `crates/redact` and `crates/automation`. This check runs before
   upstream's pattern guard, so 2 upstream tests in `crates/redact/tests/pattern_redaction.rs`
   expect its `StillUsed` refusal where both would refuse. A page whose drawn content is too large
-  or can't be read to check refuses with `Unchecked` instead.
+  or can't be read to check refuses with `Unchecked` instead. An inline widget under a mark is
+  removed with its field, as upstream does (`an_inline_widget_under_a_mark_takes_its_field`).
 - **Copy-restricted documents** refuse text extraction through the tools, including `text_find`.
 - **An empty password** never skips the Document Open prompt or lifts restrictions. `pdfcraft-cli
   check-one` checks before it renders.
@@ -188,6 +190,33 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   in `crates/edit/src/text/blocks.rs` and `crates/engine/src/document.rs`, with smaller edits to
   `crates/edit/src/lib.rs` and `crates/engine/src/open.rs`. Keep it unless upstream caches the same
   pass. The change is generic, so it could go upstream.
+- LibreOffice has one route, `crates/external`: off until the user turns on External converters,
+  with a version floor, a cancel flag and a process-tree kill. Upstream's v0.21.1 added its own
+  runner in `crates/create/src/office.rs`; here that file keeps only the detection (`is_office`,
+  `OFFICE_EXTENSIONS`), and its fresh-profile settings (no macros, no link updates) moved to
+  `profile_arg` in `crates/external/src/lib.rs`. File ▸ Open converts through
+  `OpenContext::office_to_pdf`, which uses the session's converters; upstream's
+  `pdfcraft_engine::office_to_pdf` and `pdfcraft_create::{office_to_pdf, libreoffice}` are gone.
+  Upstream's Office tests expect the converters-off message, and `crates/automation/tests/it/office.rs`
+  turns them on. `source_kind` takes an Office file only when its bytes look like one and its
+  extension is in `OFFICE_FILES` (no macro-enabled or template formats).
+- Flatpak: no `--talk-name=org.freedesktop.Flatpak`, which upstream added so its update helper can
+  run `flatpak-spawn --host`; that is a way out of the sandbox. `crates/ui-egui/tests/flatpak_updates.rs`
+  checks the fork's 2 manifests for it. Flatpak users install a new bundle by hand.
+- The redaction audit's glyph reading keeps text a clip hides: upstream's #3503 skips it in
+  `FormWalk::walk` (`crates/edit/src/text/lines.rs`), which here applies only when
+  `logical_text` is set, as the text is still in the file.
+- Optimizer: Discard form actions and Discard external cross-references are upstream's
+  (`form_actions.rs`, `external_refs.rs`). External cross-references then also runs this fork's
+  sweep (`crates/optimize/src/actions.rs`), which removes `GoToR` and `Launch` actions upstream
+  keeps: form fields, pages and the catalog's open action and triggers (`report.external_refs`).
+  Remove PDF/A and PDF/X identification (`standards.rs`) is this fork's.
+- Convert to gray (`doc_convert_gray`, `crates/optimize/src/colors.rs`) predates upstream's Convert
+  colours (`doc_convert_colours`), which also converts to gray. Both are kept; retiring the fork's
+  tool changes the automation interface, so it needs its own review.
+- Font metrics: a page's walk reads each font once by `FontKey` (`select_font` in
+  `crates/edit/src/text/interp.rs`). Upstream's v0.21.1 shares metrics between aliases of one font
+  object its own way (`by_font`, `METRICS_BUILT`); its test counts `FONT_READS` here.
 
 ## Fixed differently upstream
 
@@ -199,41 +228,13 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
   `getrandom::fill` too (`crates/engine/src/edit/run.rs`), and its `crates/crypt` now holds only
   `lib.rs` over `craft-pdf`.
 - Variation selectors stay with their character when text is edited (`fa90fd89`, #51). Upstream's
-  `98b47619` (#4899) fixes the same in `crates/edit/src/text/fallback.rs`.
+  `98b47619` (#4899, in v0.21.1) fixes the same in `crates/edit/src/text/fallback.rs`; both
+  `is_variation_selector`s are still here, and `linebreak::between` keeps the fork's check.
 - OCR loads the ONNX models, and an existing `.rten` pair, since ocrs withdrew the `.rten` files
   (`797d1356`, #17). Upstream's `crates/ocr/src/ocrs.rs` does the same.
 - Import Data reads a CSV whose header holds a quoted tab as CSV (`472a0d99`, #23). Upstream's
   `crates/xfdf/src/lib.rs` has its own quoted-tab check. The same commit's Indexed colour space
   part is upstream's `4aad36cf1`, already merged.
-
-## Ported ahead of the next merge
-
-Security and robustness commits cherry-picked from upstream's `main` after `f137a289`. Each commit
-names its source in a `cherry picked from` line. The next merge brings them in again: take
-upstream's side except where this section says otherwise, then delete the entry.
-`vendor/README.md` keeps upstream's patch numbers so that merge lines up, which leaves gaps:
-hayro-jbig2 11, hayro-syntax 30 and 31, and hayro-interpret 73 aren't here.
-
-- As upstream: `21a48ac735` (font discovery worker panic), `2289b5755d` (negative trailer `/Size`),
-  `fdaa502f27` (`try_oid` arcs), `8faebd0d96` (`Matrix::invert`), `84a2005f` (an Indexed lookup
-  table in an indirect string: hayro-interpret 71), `fa7acd3156` (a tuple keeps its references:
-  hayro-syntax 32, hayro-interpret 72), `ae94b54505` (export reads `/Decode` through
-  references, so it agrees with the renderer), `33d7a51301` (reference cycles), `036811368b` (both
-  `/Decode` ends must be finite numbers to invert an export) and, apart from their rows in
-  `vendor/README.md`, `85c1005148` (hayro-jbig2 patches 5 to 9, hayro-syntax 29), `10107d943a`
-  (hayro-jbig2 12), `8243952569` (hayro-jbig2 10), `72e763ad` and `b7ec3669` (what patch 10 charges)
-  and `e3bc4e85` (an empty height class). `vendor/hayro-jbig2/src` matches upstream at `b57ddb0a`.
-- **Crop drags** (`aef42635d0`): `clamp_crop` in `crates/ui-egui/src/tools/edit_text_ui/image.rs`
-  holds the fork's older clamps, which this crop code had before upstream's `apply_crop`: the far
-  edge stays at least 6 px past the clamped near edge, where upstream clamps each edge against the
-  image alone. It uses `min` and `max`, as rounding can invert the interval and `clamp` panics on
-  that. Keep or drop that difference when `apply_crop` arrives, but keep the guards.
-- Left out: `4696dd2f42` (`discover` already spends the budget before it opens a file; the fork
-  keeps its limit of 4,096 entries rather than upstream's 500 files), `0ed339901e` (the allowance
-  JBIG2 images of a page or an operation share; needs `ea6c3297`, `5480dbe1` and `39eb03a0`) and
-  `801fd3aa67` (signature preview images: it calls `ImageBudget` and `image_file_within`, which
-  `0ed339901e` introduces). Until those arrive, each JBIG2 stream has its own bound and a signature
-  preview image has no smaller allowance.
 
 ## Merging upstream
 

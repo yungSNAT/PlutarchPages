@@ -14,18 +14,19 @@ use std::sync::Arc;
 use pdfcraft_cos::{Dict, Object, SaveOptions, Stream, write_incremental};
 use pdfcraft_create::ImageResolution;
 use pdfcraft_print::{Content, Raster};
-use pdfcraft_render::{PRINT_TAG, PageRenderer, RenderRequest};
+use pdfcraft_render::{Layer, PRINT_TAG, PageRenderer, RenderRequest};
 
 use crate::export::{ExportSource, encode_png};
-use crate::guard;
+use crate::{guard, print_layer_states};
 
 /// `src`'s pages `pages` (0-based, each once, in the order given) as an image-only PDF, one
-/// page per entry, the size of the source page as displayed, drawing what `content` prints.
+/// page per entry, the size of the source page as displayed, drawing what `content` prints with
+/// the Print event's layer states over `layers` (the document's, as shown).
 /// Pages too large for the renderer at `raster.dpi` render at the largest resolution it allows.
-pub fn rasterize(src: &ExportSource, pages: &[usize], raster: &Raster, content: Content) -> Result<Vec<u8>, String> {
+pub fn rasterize(src: &ExportSource, layers: &[Layer], pages: &[usize], raster: &Raster, content: Content) -> Result<Vec<u8>, String> {
     let dpi = raster.dpi.clamp(72.0, 600.0);
-    let bytes = printed(src, content)?;
-    let mut renderer = renderer(src, bytes);
+    let (bytes, printing) = printed(src, layers, content)?;
+    let mut renderer = renderer(src, bytes, printing.as_deref());
     let mut images: Vec<(String, Vec<u8>)> = Vec::with_capacity(pages.len());
     let mut used: Option<f64> = None;
     for &page in pages {
@@ -44,13 +45,20 @@ pub fn rasterize(src: &ExportSource, pages: &[usize], raster: &Raster, content: 
 /// (`pdfcraft_print::keep_printed`), rendered as [`rasterize`] renders them, each as an image
 /// XObject of the page as displayed, keyed by page, for `pdfcraft_print::impose_with_pictures`.
 /// Each picture is compressed as soon as it is drawn, so only one page's pixels are held at once.
-pub fn pictures(src: &ExportSource, printed: &pdfcraft_cos::Document, pages: &[usize], raster: &Raster) -> Result<HashMap<usize, Stream>, String> {
+pub fn pictures(
+    src: &ExportSource,
+    layers: &[Layer],
+    printed: &pdfcraft_cos::Document,
+    pages: &[usize],
+    raster: &Raster,
+) -> Result<HashMap<usize, Stream>, String> {
     if pages.is_empty() {
         return Ok(HashMap::new());
     }
     let dpi = raster.dpi.clamp(72.0, 600.0);
     let bytes = Arc::new(pdfcraft_cos::write_full(printed, &SaveOptions::default()).map_err(|e| e.to_string())?);
-    let mut renderer = renderer(src, bytes);
+    let printing = print_layer_states(printed, layers);
+    let mut renderer = renderer(src, bytes, printing.as_deref());
     let mut out = HashMap::with_capacity(pages.len());
     for &page in pages {
         if out.contains_key(&page) {
@@ -81,21 +89,29 @@ struct Picture {
     dpi: f64,
 }
 
-/// `src`'s bytes reduced to what prints under `content` (`pdfcraft_print::keep_printed`).
-fn printed(src: &ExportSource, content: Content) -> Result<Arc<Vec<u8>>, String> {
-    let bytes = guard(|| -> Result<Vec<u8>, String> {
+/// `src`'s bytes reduced to what prints under `content` (`pdfcraft_print::keep_printed`), and
+/// the layers as the vector print sets them: as shown, then the Print event's auto state.
+fn printed(src: &ExportSource, layers: &[Layer], content: Content) -> Result<(Arc<Vec<u8>>, Option<Vec<Layer>>), String> {
+    let (bytes, layers) = guard(|| -> Result<(Vec<u8>, Option<Vec<Layer>>), String> {
         let mut cos = pdfcraft_cos::Document::open_with_password(src.bytes.clone(), src.config.password.as_deref()).map_err(|e| e.to_string())?;
         pdfcraft_print::keep_printed(&mut cos, content);
-        write_incremental(&cos, &SaveOptions::default()).map_err(|e| e.to_string())
+        let printing = print_layer_states(&cos, layers);
+        Ok((write_incremental(&cos, &SaveOptions::default()).map_err(|e| e.to_string())?, printing))
     })??;
-    Ok(Arc::new(bytes))
+    Ok((Arc::new(bytes), layers))
 }
 
-/// A renderer of `bytes` with `src`'s configuration. The bytes hold only what prints, so the
-/// viewer's own comment hiding plays no part.
-fn renderer(src: &ExportSource, bytes: Arc<Vec<u8>>) -> PageRenderer {
+/// A renderer of `bytes` with `src`'s configuration, for printing. The bytes hold only what
+/// prints, so the viewer's own comment hiding plays no part. Printing is not the View event: a
+/// layer the auto state turns off on screen keeps its configured state on paper, and `layers`,
+/// when given, are the Print event's.
+fn renderer(src: &ExportSource, bytes: Arc<Vec<u8>>, layers: Option<&[Layer]>) -> PageRenderer {
     let mut config = src.config.clone();
     config.hide_comments = false;
+    config.for_print = true;
+    if let Some(layers) = layers {
+        config.layers = Arc::new(layers.iter().map(|l| (l.id.0 as i32, l.id.1 as i32, l.visible)).collect());
+    }
     PageRenderer::new(bytes, config)
 }
 
@@ -118,7 +134,7 @@ fn render(renderer: &mut PageRenderer, src: &ExportSource, page: usize, dpi: f64
 }
 
 /// Premultiplied RGBA composed over white paper (opaque), in grey when asked (Rec. 601 luma).
-fn over_white(rgba: &mut [u8], grayscale: bool) {
+pub(crate) fn over_white(rgba: &mut [u8], grayscale: bool) {
     for px in rgba.as_chunks_mut::<4>().0 {
         let gap = 255 - u32::from(px[3]);
         let (r, g, b) = ((u32::from(px[0]) + gap).min(255), (u32::from(px[1]) + gap).min(255), (u32::from(px[2]) + gap).min(255));

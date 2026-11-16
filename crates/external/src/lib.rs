@@ -436,7 +436,29 @@ pub fn url_to_pdf(browser: &Path, url: &str, limits: &Limits, cancel: &AtomicBoo
 
 // ── LibreOffice ───────────────────────────────────────────────────────────────────────────────
 
+/// The fresh profile's settings: no macros at all, no links to untrusted locations, and
+/// linked content in Writer and Calc documents (sections, files, external data) never
+/// updated on load, so a document can't make LibreOffice fetch from the network or a share.
+/// The two `Link` settings number "Never" differently (Writer.xcs: 0 Always, 1 On request,
+/// 2 Never; Calc.xcs: 0 Always, 1 Never, 2 On request). Impress has no such setting.
+/// From upstream's `crates/create/src/office.rs`.
+const PROFILE_SETTINGS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
+<item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>
+</oor:items>
+"#;
+
+/// A fresh LibreOffice profile in `stage`, holding [`PROFILE_SETTINGS`], as the
+/// `-env:UserInstallation` argument.
 fn profile_arg(stage: &Stage) -> Result<OsString, ExternalError> {
+    let user = stage.path("profile").join("user");
+    std::fs::create_dir(&user)
+        .and_then(|()| std::fs::write(user.join("registrymodifications.xcu"), PROFILE_SETTINGS))
+        .map_err(io("couldn't prepare the LibreOffice profile"))?;
     let url = file_url(&stage.path("profile"), true).ok_or_else(|| ExternalError::Io("couldn't address the profile folder".into()))?;
     Ok(OsString::from(format!("-env:UserInstallation={url}")))
 }
@@ -545,6 +567,31 @@ mod tests {
         assert_eq!(office_extension("no-extension"), None);
         assert_eq!(html_extension("page.HTM"), Some("htm"));
         assert_eq!(html_extension("page.html.exe"), None);
+    }
+
+    #[test]
+    fn the_profile_turns_off_macros_and_never_updates_links() {
+        let stage = Stage::new().unwrap();
+        profile_arg(&stage).unwrap();
+        let written = std::fs::read_to_string(stage.path("profile").join("user").join("registrymodifications.xcu")).unwrap();
+        let between = |s: &str, start: &str, end: &str| s.split_once(start).and_then(|(_, rest)| rest.split_once(end)).map(|(v, _)| v.to_string());
+        // Each setting, as (path, property, value).
+        let settings: Vec<(String, String, String)> = written
+            .split("<item ")
+            .skip(1)
+            .filter_map(|item| Some((between(item, "oor:path=\"", "\"")?, between(item, "oor:name=\"", "\"")?, between(item, "<value>", "</value>")?)))
+            .collect();
+        let has = |path: &str, name: &str, value: &str| settings.iter().any(|(p, n, v)| p == path && n == name && v == value);
+        let scripting = "/org.openoffice.Office.Common/Security/Scripting";
+        assert!(has(scripting, "DisableMacrosExecution", "true"), "{settings:?}");
+        assert!(has(scripting, "MacroSecurityLevel", "3"), "{settings:?}");
+        assert!(has(scripting, "BlockUntrustedRefererLinks", "true"), "{settings:?}");
+        // "Never" is 2 for Writer but 1 for Calc (Writer.xcs and Calc.xcs); Writer's 1 is
+        // its default, "On request".
+        assert!(has("/org.openoffice.Office.Writer/Content/Update", "Link", "2"), "{settings:?}");
+        assert!(has("/org.openoffice.Office.Calc/Content/Update", "Link", "1"), "{settings:?}");
+        assert_eq!(settings.len(), 5, "{settings:?}");
+        let _ = stage.dir.close();
     }
 
     #[test]
