@@ -7,10 +7,11 @@
 //!
 //! Build it with `rustc --edition=2024 -D warnings packaging/linux/arch-package.rs -o arch-package`
 //! (with `-C target-feature=+crt-static` to run it where there is no Rust), then from the workspace
-//! root run `arch-package <x86_64|aarch64> [TARBALL]`.
+//! root run `arch-package <x86_64|aarch64> [TARBALL]`: it reads Cargo.toml and the default DIST in
+//! the current directory, where arch-package.sh found them from its own path.
 //!
 //! The version is `PDFCRAFT_VERSION`, or `[workspace.package] version` in Cargo.toml, and the output
-//! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL defaults to
+//! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL, when not given or empty, is
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
 //! archlinux:base-devel container. makepkg refuses root, so as root it runs itself again as the
@@ -68,17 +69,25 @@ fn arch_package() -> Result {
     let arch = args.first().ok_or("usage: arch-package <x86_64|aarch64> [TARBALL]")?;
     let arch = arch.to_str().ok_or("architecture is not UTF-8")?;
     if !matches!(arch, "x86_64" | "aarch64") {
-        return Err(format!("unsupported architecture {arch}").into());
+        // As arch-package.sh said it: a usage error, apart from failures.
+        eprintln!("unsupported architecture {arch}");
+        std::process::exit(2);
     }
     let version = match env::var("PDFCRAFT_VERSION") {
         Ok(version) if !version.is_empty() => version,
-        _ => workspace_version(&fs::read_to_string("Cargo.toml")?)
+        Err(env::VarError::NotUnicode(_)) => return Err("PDFCRAFT_VERSION is not UTF-8".into()),
+        _ => fs::read_to_string("Cargo.toml")
+            .ok()
+            .and_then(|manifest| workspace_version(&manifest))
             .filter(|version| !version.is_empty())
-            .ok_or("could not read [workspace.package] version from Cargo.toml")?,
+            .ok_or("could not read [workspace.package] version from Cargo.toml (run from the workspace root)")?,
     };
     let dist = env::var_os("DIST").filter(|dist| !dist.is_empty()).map_or_else(|| PathBuf::from("dist/release"), PathBuf::from);
     fs::create_dir_all(&dist)?;
-    let archive = args.get(1).map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);
+    let archive = args
+        .get(1)
+        .filter(|archive| !archive.is_empty())
+        .map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);
     if !archive.is_file() {
         return Err(format!("{} not found (run packaging/linux/package.sh --formats tar first)", archive.display()).into());
     }
@@ -99,8 +108,8 @@ fn arch_package() -> Result {
         return Err(format!("couldn't run as builder: {error}").into());
     }
 
-    let work = env::temp_dir().join(format!("arch-package-{}", std::process::id()));
-    fs::create_dir(&work)?;
+    // A private directory of its own, as arch-package.sh made: std makes none.
+    let work = PathBuf::from(String::from_utf8(capture(Command::new("mktemp").arg("-d"))?.stdout)?.trim_end());
     let packaged = package(arch, &archive, &work, &dist, &version);
     if let Err(error) = fs::remove_dir_all(&work) {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
