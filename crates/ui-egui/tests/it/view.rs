@@ -2525,11 +2525,23 @@ fn long_view_menu_fits_a_short_window() {
     h.run_steps(8);
     crate::support::open_menu(&mut h, "View");
     h.run_steps(2);
+    // A row is in view between the scroll arrows; one under an arrow is hovered through it.
+    let in_view = |h: &Harness<'static, PdfCraftApp>, label: &str| {
+        let arrow = |name: &str| h.get_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some(name)).rect();
+        let row = crate::support::menu_row(h, label).rect();
+        (row.top() >= arrow("Scroll menu up").bottom() && row.bottom() <= arrow("Scroll menu down").top(), row)
+    };
+    assert!(!in_view(&h, "Find tools and commands…").0, "the View menu is longer than the window");
     crate::support::menu_row(&h, "Rotate view").hover();
     h.event(wheel(MouseWheelUnit::Point, -1000.0, TouchPhase::Move));
     h.run_steps(6);
-    let after = crate::support::menu_row(&h, "Side panels").rect().bottom();
-    assert!(after <= 400.0, "the menu scrolls Side panels into view: {after}");
+    let (end, row) = in_view(&h, "Find tools and commands…");
+    assert!(end, "the menu scrolls its last row into view: {row:?}");
+    // Scrolled to the end, the fork's longer View menu leaves Side panels under the upper arrow.
+    h.event(wheel(MouseWheelUnit::Point, 100.0, TouchPhase::Move));
+    h.run_steps(6);
+    let (shown, row) = in_view(&h, "Side panels");
+    assert!(shown, "the menu scrolls back to Side panels: {row:?}");
     crate::support::menu_row(&h, "Side panels").hover();
     h.run_steps(4);
     // The navigation rail has a Bookmarks button too; click the submenu's radio item.
