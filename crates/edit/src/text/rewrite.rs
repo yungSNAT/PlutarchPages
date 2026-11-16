@@ -1239,7 +1239,7 @@ pub(crate) fn paragraph_ops(doc: &Document, page: usize, indexes: &[usize], edit
 /// Where each text-showing operator of `ops` (a page's joined operators, drawn with `resources`)
 /// starts its glyphs: the text matrix there, and its rendering mode (`Tr`).
 pub(crate) fn show_starts(doc: &Document, ops: &[Op], resources: &Dict) -> Result<HashMap<usize, (Matrix, i64)>, EditError> {
-    let shown = interpret(doc, ops, resources, &mut HashMap::new(), &mut Carry::new(), None, None)?;
+    let shown = interpret(doc, ops, resources, None, &mut HashMap::new(), &mut Carry::new(), None, None)?;
     Ok(shown.into_iter().map(|s| (s.op, (s.tm, s.state.render_mode))).collect())
 }
 

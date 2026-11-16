@@ -416,18 +416,7 @@ pub fn optimize_with_progress(doc: &mut Document, settings: &Settings, progress:
         }
     }
     if settings.discard_alternate_images {
-        for num in doc.object_numbers() {
-            let r = ObjRef { num, generation: doc.generation(num) };
-            let alt = matches!(&*doc.get(r), Object::Stream(s) if s.dict.name(b"Subtype") == Some(b"Image") && s.dict.contains(b"Alternates"));
-            if alt {
-                if let Object::Stream(s) = &*doc.get(r) {
-                    let mut s = s.clone();
-                    s.dict.remove(b"Alternates");
-                    doc.set(r, Object::Stream(s));
-                }
-                report.alternate_images += 1;
-            }
-        }
+        report.alternate_images = discard_alternate_images(doc);
     }
     let root = doc.root();
     if let Some(chosen) = settings.compatibility.version() {
@@ -661,6 +650,27 @@ pub(crate) fn stored_len(s: &Stream) -> Option<usize> {
     let mut out = Vec::new();
     serialize(&Object::Dict(dict), &mut out);
     out.len().checked_add(s.raw.len())
+}
+
+/// Removes `/Alternates` from every image, returning how many images had one.
+fn discard_alternate_images(doc: &mut Document) -> usize {
+    let mut removed = 0;
+    for num in doc.object_numbers() {
+        let r = ObjRef { num, generation: doc.generation(num) };
+        let stripped = match &*doc.get(r) {
+            Object::Stream(s) if s.dict.name(b"Subtype") == Some(b"Image") && s.dict.contains(b"Alternates") => {
+                let mut s = s.clone();
+                s.dict.remove(b"Alternates");
+                Some(s)
+            }
+            _ => None,
+        };
+        if let Some(s) = stripped {
+            doc.set(r, Object::Stream(s));
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// Removes the print entries from the catalog's /ViewerPreferences, returning how many went.

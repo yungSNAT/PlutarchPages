@@ -615,7 +615,7 @@ impl<'a> Walker<'a> {
         if !self.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
-        let data = self.budget.decode_strict(stream)?;
+        let data = self.budget.decode_strict(self.doc, stream)?;
         let outer = self.inside.replace(unplaced);
         calls.push(at);
         // Nothing painted here is placed, so the clip is never read.
@@ -826,7 +826,7 @@ pub fn filled_rects(
         if !w.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
-        let data = w.budget.decode_strict(form)?;
+        let data = w.budget.decode_strict(doc, form)?;
         // An appearance without resources of its own reads the page's, as a form does.
         let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
         w.layer = a.layer;

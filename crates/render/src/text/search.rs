@@ -117,7 +117,7 @@ pub(super) fn find(page: &PageText, query: &str, sensitive: bool, whole_words: b
     for (r, &reading) in readings.iter().enumerate() {
         let (chars, zero_width_space) = characters(page, &texts, &divided, reading);
         let found = search(&chars, &zero_width_space, &needle, &prefix, whole_words, limit);
-        hits.extend(found.into_iter().map(|hit| (hit, r)));
+        hits.extend(found.into_iter().map(|hit| (with_marks(page, &texts, needle.last().copied(), hit), r)));
     }
     if readings.len() == 1 {
         return hits.into_iter().map(|(hit, _)| hit).collect();
@@ -310,17 +310,8 @@ fn search(
         let bounded = !whole_words || ((after_break(start) || !word(start.checked_sub(1))) && (after_break(end) || !word(Some(end))));
         if bounded {
             if let Some((_, first)) = chars.get(start)
-                && let Some(mut last) = owner.checked_add(1)
+                && let Some(last) = owner.checked_add(1)
             {
-                // A mark drawn as its own glyph folds to nothing but belongs to the Arabic letter before it.
-                while c.is_alphabetic()
-                    && matches!(c, '\u{600}'..='\u{6FF}' | '\u{750}'..='\u{77F}' | '\u{870}'..='\u{8FF}')
-                    && page.glyphs.get(last).is_some_and(|g| !g.text.is_empty() && fold(&g.text).is_empty())
-                    && !page.space_before.get(last).copied().unwrap_or(false)
-                    && page.line_of.get(last) == page.line_of.get(owner)
-                {
-                    last += 1;
-                }
                 hits.push(*first..last);
                 if hits.len() == limit {
                     break;
@@ -334,6 +325,23 @@ fn search(
         }
     }
     hits
+}
+
+/// `hit` taken on over the marks after it when the query ends in an Arabic letter: a mark drawn as
+/// its own glyph folds to nothing (its folded text in `texts` is empty) but belongs to the letter
+/// before it, on the same line with no space between.
+fn with_marks(page: &PageText, texts: &[String], last_char: Option<char>, mut hit: Range<usize>) -> Range<usize> {
+    let arabic = last_char.is_some_and(|c| c.is_alphabetic() && matches!(c, '\u{600}'..='\u{6FF}' | '\u{750}'..='\u{77F}' | '\u{870}'..='\u{8FF}'));
+    let Some(owner) = hit.end.checked_sub(1) else { return hit };
+    while arabic
+        && page.glyphs.get(hit.end).is_some_and(|g| !g.text.is_empty())
+        && texts.get(hit.end).is_some_and(String::is_empty)
+        && !page.space_before.get(hit.end).copied().unwrap_or(false)
+        && page.line_of.get(hit.end) == page.line_of.get(owner)
+    {
+        hit.end += 1;
+    }
+    hit
 }
 
 /// A character that draws nothing inside a word and only tells layout where a line may break or

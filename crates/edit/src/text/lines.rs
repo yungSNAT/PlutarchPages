@@ -239,7 +239,7 @@ pub(crate) fn dropped_advances_within(
         carry.text_left = left;
     }
     let follows = kept_run_follows(ops, drop);
-    let Ok(shown) = interpret(doc, ops, resources, &mut HashMap::new(), &mut carry, None, None) else {
+    let Ok(shown) = interpret(doc, ops, resources, None, &mut HashMap::new(), &mut carry, None, None) else {
         return out;
     };
     for s in shown {
@@ -911,7 +911,7 @@ pub(crate) fn form_call(
         let values: Vec<f64> = b.as_array()?.iter().map(|x| doc.resolve(x).as_f64().filter(|v| v.is_finite())).collect::<Option<_>>()?;
         <[f64; 4]>::try_from(values).ok()
     });
-    let decoded = if budget.strict { budget.decode.decode_strict(s) } else { budget.decode.decode(s) };
+    let decoded = if budget.strict { budget.decode.decode_strict(doc, s) } else { budget.decode.decode(s) };
     let data = match decoded {
         Ok(data) => data,
         Err(_) if budget.decode.remaining() == 0 => {

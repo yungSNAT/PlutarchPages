@@ -184,7 +184,7 @@ impl Painted {
         });
         rect.iter()
             .all(|v| v.is_finite())
-            .then(|| (self.quarter, u, TextGlyph { text: String::new(), rect, quad, direction: [u[0] as f32, u[1] as f32] }))
+            .then(|| (self.quarter, u, TextGlyph { text: String::new(), rect, quad, direction: [u[0] as f32, u[1] as f32] }, None))
     }
 }
 
