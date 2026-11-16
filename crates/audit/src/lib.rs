@@ -14,8 +14,8 @@
 //! text's colour and what lies around it, each mixed with the covers painted over them. What lies
 //! around is the page's white, or the rectangles painted before the text, each over the line's
 //! whole box, in colours it reads. Where it can't say (a box over part of the line, a colour it
-//! doesn't read, a page or appearance that fills a shape other than a box, or text not filled
-//! opaque), and for a blended or masked cover, the cover is compared with the text's colour alone.
+//! doesn't read, a page or appearance that fills a shape other than a box or paints a stroke or an
+//! image with a mask of its own, or text not filled opaque), and for a blended or masked cover, the cover is compared with the text's colour alone.
 //! Page backgrounds, painted before the text, and highlight marks are therefore not flagged.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
@@ -310,7 +310,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // The text walk holds a stream's operators all at once, and reads each appearance with a
         // budget of its own: run first, a stream of tiny operators or an appearance listed many
         // times would cost it far more than the bounds allow.
-        let (rects, shaped) = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
+        let (rects, shaped, unread) = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
         let (mut lines, mut gaps) = painted_text(doc, page, n, 0, None, report_advances)?;
         // Each read has a text budget of its own; the page's lines in all are held to one.
         let mut text_bytes = text_len(&lines);
@@ -336,7 +336,9 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         add_glyph_covers(&lines, &mut rects);
         // In paint order, so each line's backdrop has what was painted before each cover.
         rects.sort_by(|a, b| a.pos.cmp(&b.pos));
-        if !shaped.is_empty() {
+        // shortcut: page-wide. Reading where a shape, stroke or masked image lies would keep the
+        // backdrop for the lines it misses.
+        if !shaped.is_empty() || unread {
             lines.iter().for_each(|p| p.seen.set(None));
         }
         budget.start_page(&lines);

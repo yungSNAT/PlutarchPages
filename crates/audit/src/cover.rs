@@ -225,6 +225,9 @@ struct Walker<'a> {
     /// The layers that fill a shape other than a box (a cloudy border drawn with curves): the audit
     /// reads no cover from it.
     shaped: HashSet<usize>,
+    /// Something was painted on the page whose colours the audit doesn't read as what lies under
+    /// text: a stroke, or an image with a mask of its own.
+    unread: bool,
 }
 
 impl<'a> Walker<'a> {
@@ -365,7 +368,11 @@ impl<'a> Walker<'a> {
                     };
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
-                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i),
+                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
+                    // `B` and `b` stroke the path too.
+                    self.unread |= matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") && self.inside.is_none();
+                    self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i);
+                }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
                     let shadings = resources.get(b"Shading").map(|o| self.doc.resolve(o));
@@ -392,7 +399,11 @@ impl<'a> Walker<'a> {
                         self.walk_pattern(name, i, res, calls)?;
                     }
                 }
-                b"S" | b"s" | b"n" => path = Path::Empty,
+                b"S" | b"s" => {
+                    self.unread |= self.inside.is_none();
+                    path = Path::Empty;
+                }
+                b"n" => path = Path::Empty,
                 b"W" | b"W*" => {
                     clipping = true;
                     path = Path::Other;
@@ -461,6 +472,7 @@ impl<'a> Walker<'a> {
         let mask = |key: &[u8]| image.get(key).is_some_and(|o| !matches!(*self.doc.resolve(o), Object::Null));
         let own_mask = mask(b"SMask") || mask(b"Mask") || alpha_in_data;
         let area = meet(gs.clip, gs.ctm.bbox([0.0, 0.0, 1.0, 1.0]));
+        self.unread |= own_mask && self.inside.is_none();
         if !own_mask && gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
             self.paint(area, if stencil { gs.fill } else { None }, gs, true, calls, at);
         }
@@ -752,14 +764,15 @@ fn shows_through(doc: &Document, bm: &Object) -> bool {
 /// later ones. Any content stream that cannot be decoded, content, forms and appearances that
 /// decode or enter past one page's [`DecodeBudget`] in all, or text in a glyph procedure or
 /// pattern cell is an audit failure, never an empty result. `crop` is the page's crop box, the clip
-/// its content and appearances start with. Also the layers that fill a shape other than a box.
+/// its content and appearances start with. Also the layers that fill a shape other than a box, and
+/// whether a stroke or an image with a mask of its own was painted.
 pub fn filled_rects(
     doc: &Document,
     page: &Dict,
     crop: [f64; 4],
     n: usize,
     appearances: &[&Appearance],
-) -> Result<(Vec<FilledRect>, HashSet<usize>), AuditError> {
+) -> Result<(Vec<FilledRect>, HashSet<usize>, bool), AuditError> {
     let resources = page.get(b"Resources").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let contents: Vec<Object> = match page.get(b"Contents") {
         None => Vec::new(),
@@ -787,6 +800,7 @@ pub fn filled_rects(
         walked: HashSet::new(),
         saved: 0,
         shaped: HashSet::new(),
+        unread: false,
     };
     let mut gs = Gs::new(crop);
     // Read one operator at a time: the joined stream can hold millions of them within the
@@ -808,5 +822,5 @@ pub fn filled_rects(
         let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };
         w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
-    Ok((w.out, w.shaped))
+    Ok((w.out, w.shaped, w.unread))
 }

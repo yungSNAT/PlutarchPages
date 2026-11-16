@@ -79,8 +79,8 @@ Limits, by design and documented rather than hidden:
   draw the scan over the text they read from it, so a black image pasted over a scan's OCR layer
   is not flagged, though a filled rectangle there is. A translucent, blended or soft-masked
   cover is judged by its colour as set with `g`, `rg`, `k` or in a gray, RGB or CMYK colour space
-  with `cs` and `sc`/`scn`, a block by its text's colour. Strokes, and images with a mask of their
-  own, are not read as what lies under text: the audit takes the white page there. One in a colour the audit doesn't read (a
+  with `cs` and `sc`/`scn`, a block by its text's colour. On a page with a stroke, or an image with
+  a mask of its own, a translucent cover is judged by its colour too. One in a colour the audit doesn't read (a
   pattern's, a spot colour's, a shading's, an image's) counts as dark as the text. A soft mask is
   not read, and text a soft mask hides is outside the covered-text check;
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
