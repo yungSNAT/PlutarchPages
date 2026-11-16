@@ -191,7 +191,16 @@ struct Stage {
 
 impl Stage {
     fn new() -> Result<Stage, ExternalError> {
-        let dir = tempfile::Builder::new().prefix("plutarchpages-convert-").tempdir().map_err(io("couldn't create a private folder"))?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("plutarchpages-convert-");
+        // Owner-only on Unix, where the temporary folder is shared: tempfile otherwise leaves a
+        // folder at the umask's mode, and the document staged in it is not for other users.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let dir = builder.tempdir().map_err(io("couldn't create a private folder"))?;
         for sub in ["in", "out", "profile", "home", "scratch"] {
             std::fs::create_dir(dir.path().join(sub)).map_err(io("couldn't prepare the private folder"))?;
         }
@@ -314,14 +323,13 @@ fn read_output(path: &Path, max: u64) -> Result<Vec<u8>, ExternalError> {
     if !meta.file_type().is_file() {
         return Err(ExternalError::InvalidOutput("the program's result is not a regular file".into()));
     }
-    let too_large = || ExternalError::InvalidOutput(format!("the result is larger than {} MB", max >> 20));
     if meta.len() > max {
-        return Err(too_large());
+        return Err(too_large(max));
     }
     let mut bytes = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut bytes).map_err(io("couldn't read the result"))?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max {
-        return Err(too_large());
+        return Err(too_large(max));
     }
     let head = bytes.get(..bytes.len().min(1024)).unwrap_or_default();
     let tail = bytes.get(bytes.len().saturating_sub(1024)..).unwrap_or_default();
@@ -331,9 +339,23 @@ fn read_output(path: &Path, max: u64) -> Result<Vec<u8>, ExternalError> {
     Ok(bytes)
 }
 
-/// Whether the file at `path` has grown past `max` bytes (the program is then stopped).
-fn grown_past(path: &Path, max: u64) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.len() > max)
+fn too_large(max: u64) -> ExternalError {
+    ExternalError::InvalidOutput(format!("the result is larger than {} MB", max >> 20))
+}
+
+/// The bytes in the regular files under `dir`, at any depth, links not followed. Anything
+/// unreadable counts as nothing and the sum saturates. Each size is read from the file itself: on
+/// Windows a directory listing keeps the old size while a process still has the file open.
+fn bytes_under(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
+    entries.flatten().fold(0u64, |sum, entry| {
+        let path = entry.path();
+        sum.saturating_add(match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_dir() => bytes_under(&path),
+            Ok(meta) if meta.is_file() => meta.len(),
+            _ => 0,
+        })
+    })
 }
 
 fn check_input(bytes: &[u8], limits: &Limits) -> Result<(), ExternalError> {
@@ -542,12 +564,15 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
     let out = stage.path("out").join("input.pdf");
     let result = (|| {
         let mut child = supervise::spawn(cmd, "LibreOffice")?;
-        // Stopped at once when the result grows too large; the read then refuses it.
-        match supervise::wait(&mut child, Instant::now() + limits.timeout, cancel, || grown_past(&out, limits.max_output)) {
+        // Stopped at once when what it writes grows too large: the result, or any file in the
+        // output or temporary folder (a result may be written under another name first).
+        let written = || bytes_under(&stage.path("out")).saturating_add(bytes_under(&stage.path("scratch")));
+        match supervise::wait(&mut child, Instant::now() + limits.timeout, cancel, || written() > limits.max_output) {
             Ended::Exited(status) if !status.success() => {
                 Err(ExternalError::ProcessFailed(format!("LibreOffice stopped ({status}) without finishing the PDF")))
             }
-            Ended::Exited(_) | Ended::Done => read_output(&out, limits.max_output),
+            Ended::Exited(_) => read_output(&out, limits.max_output),
+            Ended::Done => Err(too_large(limits.max_output)),
             Ended::TimedOut => Err(ExternalError::TimedOut("LibreOffice".into(), limits.timeout.as_secs())),
             Ended::Cancelled => Err(ExternalError::Cancelled),
         }
