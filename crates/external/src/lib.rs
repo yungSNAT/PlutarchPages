@@ -797,6 +797,8 @@ mod tests {
             // Too many folders or files to measure cheaply: stopped as well.
             "d=\"$TMPDIR\"; i=0; while [ $i -lt 80 ]; do d=\"$d/d\"; mkdir \"$d\"; i=$((i+1)); done",
             "i=0; while [ $i -lt 12000 ]; do : > \"$outdir/f$i\"; i=$((i+1)); done",
+            // The count is for the whole stage, not each folder.
+            "i=0; while [ $i -lt 4000 ]; do : > \"$outdir/f$i\"; : > \"$TMPDIR/f$i\"; : > \"$HOME/f$i\"; i=$((i+1)); done",
         ];
         for write in writes {
             let soffice = dir.path().join("soffice");
