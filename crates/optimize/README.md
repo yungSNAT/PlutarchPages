@@ -155,11 +155,16 @@ let report = optimize_with_progress(&mut doc, &settings, &mut |stage| keep_going
   bytes. A stream whose LZW data doesn't decode cleanly is left as it is. Not yet: inline images.
 - **Discard external cross-references** (off by default): `GoToR`, `GoToE`, `Launch` and
   `ImportData` actions, and `Thread` actions with an `/F`, are taken out of link annotations and
-  bookmarks, and the actions chained after one through `/Next` take its place. Other annotations,
-  such as form fields, keep their actions. A link left with no action and no `/Dest` is removed
-  from its page, and its object, when something else refers to it, keeps the link without the
-  action; a bookmark keeps its title and children. Links within the document and web links
-  (`URI`) stay. An outline of more than 100,000 bookmarks stops the optimization with an error.
+  bookmarks, and the actions chained after one through `/Next` take its place. A link left with no
+  action and no `/Dest` is removed from its page, and its object, when something else refers to
+  it, keeps the link without the action; a bookmark keeps its title and children. Links within the
+  document and web links (`URI`) stay. An outline of more than 100,000 bookmarks stops the
+  optimization with an error. PlutarchPages then removes `GoToR` and `Launch` actions everywhere
+  else too (`actions.rs`): form fields and other annotations, pages, and the document's open action
+  and triggers. Such an action goes with the actions chained after it (followed 32 deep).
+- **Remove PDF/A and PDF/X identification** (off by default, PlutarchPages): the `pdfaid:` and
+  PDF/X properties in the XMP metadata and the PDF/X keys in the document information dictionary
+  (`standards.rs`). The content is unchanged; the file stops claiming the standard.
 
 Apart from optimizing, `tile_large_images` redraws large pictures for Windows printing (#5131).
 Windows' PDF renderer draws an image of more than 2²² pixels from a copy shrunk to that size, so
