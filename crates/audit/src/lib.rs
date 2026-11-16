@@ -557,7 +557,14 @@ fn add_glyph_covers(lines: &[Painted], out: &mut Vec<cover::FilledRect>) {
             let pos: Vec<usize> = std::iter::once(*layer).chain(order).collect();
             // Judged by its colour, as a translucent cover is: the text reader doesn't say what blend
             // mode or soft mask a run is drawn with.
-            let cover = |rect: &[f64; 4]| cover::FilledRect { rect: *rect, rgb: Some(line.color), pos: pos.clone(), opaque: false, alpha: None, image: false };
+            let cover = |rect: &[f64; 4]| cover::FilledRect {
+                rect: *rect,
+                rgb: Some(line.color),
+                pos: pos.clone(),
+                opaque: false,
+                alpha: None,
+                image: false,
+            };
             if text.split_whitespace().count() == ink.len() {
                 out.extend(text.split_whitespace().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| cover(b)));
             } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
