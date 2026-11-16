@@ -203,13 +203,14 @@ fn content_with_parameters_given_by_reference_is_redacted() {
     }
 }
 
-/// An image removed under a mark stays in the page's resources while another of its content
-/// streams, with `/DecodeParms` given by reference, still draws it. Read without the parameters,
-/// that stream seemed not to draw it, and the page lost the image there.
+/// Upstream keeps an image removed under a mark that another of the page's content streams, with
+/// `/DecodeParms` given by reference, still draws. The fork takes an image wholly under a mark out
+/// of every draw (`settle_images`), so that stream must be read through its parameters for its
+/// draw to go too: read without them, it seemed to draw nothing and the image stayed in the file.
 #[test]
-fn an_image_drawn_again_in_content_with_parameters_by_reference_stays() {
+fn an_image_drawn_again_in_content_with_parameters_by_reference_goes_from_both_draws() {
     use pdfcraft_cos::{Dict, ObjRef, Object};
-    let img = stream("/Type /XObject /Subtype /Image /Width 4 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", [255, 255, 255, 255]);
+    let img = stream("/Type /XObject /Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", *b"IMGBYTES");
     let mut doc = one_page(b"q 10 0 0 10 10 10 cm /Im1 Do Q", "/XObject << /Im1 7 0 R >>", vec![img]);
     let again = predicted(&mut doc, Dict::new(), b"q 10 0 0 10 200 200 cm /Im1 Do Q");
     let again = doc.add(Object::Stream(again));
@@ -217,15 +218,9 @@ fn an_image_drawn_again_in_content_with_parameters_by_reference_stays() {
         .unwrap();
     mark(&mut doc, 0, &[[5.0, 5.0, 25.0, 25.0]], "");
     let r = apply(&mut doc, None).unwrap();
-    assert_eq!(r.images_removed, 1, "{r:?}");
-    let doc = reopen(&doc);
-    assert!(content(&doc, 0).contains("200 200 cm /Im1 Do"), "{}", content(&doc, 0));
-    let p = pdfcraft_model::pages(&doc).swap_remove(0);
-    let res = doc.resolve(p.dict.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
-    let xo = doc.resolve(res.get(b"XObject").unwrap()).as_dict().cloned().unwrap();
-    // The save numbers objects afresh: the image is told by what it is.
-    let Some(Object::Stream(image)) = xo.reference(b"Im1").map(|r| (*doc.get(r)).clone()) else { panic!("no /Im1: {xo:?}") };
-    assert_eq!((image.dict.name(b"Subtype"), image.decoded().ok()), (Some(&b"Image"[..]), Some(vec![255; 4])));
+    assert_eq!(r.images_removed, 2, "{r:?}");
+    assert!(!content(&reopen(&doc), 0).contains("/Im1 Do"), "{}", content(&reopen(&doc), 0));
+    assert!(!saved_streams_hold(&doc, b"IMGBYTES"), "the image stayed in the file");
 }
 
 /// #2130: a font with no /Widths is drawn with its embedded program's advances. Measured with a
