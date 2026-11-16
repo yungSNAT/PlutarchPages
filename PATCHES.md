@@ -4,8 +4,8 @@ PlutarchPages is upstream [PdfCraft](https://github.com/storytold/pdfcraft) plus
 [Fork changes](README.md#fork-changes) describes them for users; this file is for whoever merges
 upstream next.
 
-Last upstream merge: `b503b2e6`, upstream's v0.21.1 release (11 November 2026). Upstream's `main`
-after it is the next merge.
+Last upstream merge: `1d2af990` (11 November 2026), the `main` commit upstream's v0.21.1 release
+`b503b2e6` merged, with the same tree. Upstream's `main` after it is the next merge.
 
 Upstream drift is checked every Monday at 04:43 UTC, and on demand through the
 **Upstream drift** workflow. It records the exact revisions, ahead/behind counts (every commit, and
