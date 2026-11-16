@@ -87,6 +87,12 @@ fn is_delim(b: u8) -> bool {
 /// Longest unreadable number token retried from its next byte. Real numbers are far shorter.
 const MAX_RETRIED_TOKEN: usize = 64;
 
+/// How many times over the stream failed operands may be read before a failed one is skipped
+/// whole instead of retried from its next byte. A dictionary or array that never closes reads to
+/// the end of the stream, and each retry can start another, so without this bound the work grows
+/// with the square of the stream.
+const MAX_RESCANS: usize = 8;
+
 /// Parse a (decoded) content stream.
 pub fn parse(data: &[u8]) -> Parsed {
     parse_pieces(data, &[])
@@ -113,6 +119,8 @@ pub struct Ops<'a> {
     operands: Vec<Object>,
     start: Option<usize>,
     skipped: usize,
+    /// Bytes read by operands that failed, towards [`MAX_RESCANS`].
+    rescanned: usize,
     ambiguous_images: usize,
     ends: &'a [usize],
     boundary: usize,
@@ -127,6 +135,7 @@ impl<'a> Ops<'a> {
             operands: Vec::new(),
             start: None,
             skipped: 0,
+            rescanned: 0,
             ambiguous_images: 0,
             ends,
             boundary: 0,
@@ -150,7 +159,7 @@ impl Iterator for Ops<'_> {
     type Item = Op;
 
     fn next(&mut self) -> Option<Op> {
-        let Ops { data, lx, operands, start, skipped, ambiguous_images, ends, boundary, comment_edges: edges } = self;
+        let Ops { data, lx, operands, start, skipped, rescanned, ambiguous_images, ends, boundary, comment_edges: edges } = self;
         let (data, ends): (&[u8], &[usize]) = (data, ends);
         loop {
             let trivia = lx.pos;
@@ -183,11 +192,14 @@ impl Iterator for Ops<'_> {
                         let read = lx.pos.saturating_sub(at);
                         #[cfg(test)]
                         tests::RESCANNED.with(|c| c.set(c.get() + read));
+                        *rescanned = rescanned.saturating_add(read);
                         let number = matches!(b, b'+' | b'-' | b'.') || b.is_ascii_digit();
-                        if number && read > MAX_RETRIED_TOKEN {
-                            // A long unreadable number is skipped whole: retrying from each of its
-                            // bytes would read the rest of it again every time.
-                            *skipped += read;
+                        if (number && read > MAX_RETRIED_TOKEN) || *rescanned > data.len().saturating_mul(MAX_RESCANS) {
+                            // A long unreadable number, or any operand once failed ones have read
+                            // the stream MAX_RESCANS times, is skipped whole: retrying from each of
+                            // its bytes would read the rest of it again every time.
+                            lx.pos = lx.pos.max(at + 1);
+                            *skipped += lx.pos - at;
                         } else {
                             // Skip the offending byte and carry on.
                             lx.pos = at + 1;
