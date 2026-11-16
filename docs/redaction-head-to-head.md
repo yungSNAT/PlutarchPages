@@ -51,8 +51,10 @@ characters, the shading and the Stamp.
 These tools apply redactions. None of the redaction code named below, read at each release's tag
 on 15 November 2026, reports a cover over extractable text in a file it is given, and a GitHub code
 search of each repository that day for 'faux', 'fake redaction' and 'improper redaction' found no
-such check (one match, a translated OCR help page). Having no such check, they were not run on the
-fixtures.
+such check (one match, a translated OCR help page). KillerPDF and Open PDF Studio released again
+by 16 November and were read again at their new tags that day, with the same searches (one match,
+a page about a test server for Open PDF Studio's Python library). Having no such check, they were
+not run on the fixtures.
 
 - **Stirling-PDF** v3.3.0: its `/redact` and `/auto-redact` endpoints remove covered or matched
   page content ([`RedactController.java`](https://github.com/Stirling-Tools/Stirling-PDF/blob/v3.3.0/app/core/src/main/java/stirling/software/SPDF/controller/api/security/RedactController.java)). No detection.
@@ -61,12 +63,14 @@ fixtures.
   ([`redact-node.ts`](https://github.com/alam00000/bentopdf/blob/v2.8.11/src/js/workflow/nodes/redact-node.ts)). No detection.
 - **PDF4QT** v1.7.0.0: `PdfTool redact` creates a redacted document from the marks in the original
   ([`pdftoolredact.cpp`](https://github.com/JakubMelka/PDF4QT/blob/v1.7.0.0/PdfTool/pdftoolredact.cpp)). No detection.
-- **Open PDF Studio** v2026.46.3: [`hidden-information-scan.js`](https://github.com/OpenAEC-Foundation/open-pdf-studio/blob/v2026.46.3/open-pdf-studio/js/pdf/hidden-information-scan.js) checks a cleaned copy for metadata,
+- **Open PDF Studio** v2026.47.0: [`hidden-information-scan.js`](https://github.com/OpenAEC-Foundation/open-pdf-studio/blob/v2026.47.0/open-pdf-studio/js/pdf/hidden-information-scan.js) (unchanged since v2026.46.3) checks a cleaned copy for metadata,
   actions, attachments and comments the cleaner should have removed. It does not look for covers
   over text.
-- **KillerPDF** v1.9.3 (Windows): `PdfContentRedaction.Verify` reads a redacted output back and
-  reports content that still intersects regions the caller names ([`redaction.md`](https://github.com/SteveTheKiller/KillerPDF/blob/v1.9.3/engine/docs/redaction.md)). It
-  checks its own redaction of given regions; it does not find a cover another tool drew.
+- **KillerPDF** v1.9.4 (Windows): `PdfContentRedaction.Verify` reads a redacted output back and
+  reports content that still intersects regions the caller names ([`redaction.md`](https://github.com/SteveTheKiller/KillerPDF/blob/v1.9.4/engine/docs/redaction.md), unchanged since v1.9.3). It
+  checks its own redaction of given regions; it does not find a cover another tool drew. v1.9.3
+  and v1.9.4 made its own redaction remove more (every copy of a redacted form field; text under a
+  rasterised region), not detect covers.
 
 KillerPDF, Stirling-PDF, BentoPDF and PDF4QT remove content when told where; that is redaction,
 which PlutarchPages also does. Of these tools, only pdfcraft and PlutarchPages check a file someone else
