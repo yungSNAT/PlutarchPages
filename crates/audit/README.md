@@ -14,10 +14,10 @@ The report checks for:
   mode hides the text whatever its colour: it replaces what lies under it, so a black box over red
   text or a white box over black text both hide it. A translucent cover (`/ca` above 0 and below 1,
   or a Square's interior colour at `/CA` below 1), a blended one (`/BM` other than Normal, as a
-  highlight multiplied onto the page is; of a list, its first entry, as PDFium reads
-  it, and Normal for a mode it doesn't know) or one painted through a soft mask hides the text when it is dark enough against the text's
-  colour (WCAG contrast below 3): how much it hides depends on what lies under the text, which the
-  audit doesn't read. A word of blocks is judged by its colour that way too;
+  highlight multiplied onto the page is; of a list, its first entry, as PDFium reads it, and Normal
+  for a mode it doesn't know) or one painted through a soft mask hides the text when it is dark
+  enough against the text's colour (WCAG contrast below 3): how much it hides depends on what lies
+  under the text, which the audit doesn't read. A word of blocks is judged by its colour that way too;
 - **unapplied mark**: a Redact annotation that was marked but never applied;
 - **retained advance**: a large forward `TJ` adjustment entirely under a later
   cover. An adjustment can preserve the removed text's exact width even after the
