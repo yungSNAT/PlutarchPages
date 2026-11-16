@@ -850,7 +850,7 @@ fn copy_restricted_documents_withhold_covered_text() {
 fn withheld_covered_text_is_not_assembled() {
     const PAGE: [f64; 4] = [0.0, 0.0, 612.0, 792.0];
     let doc = open(one_page(b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n", ""));
-    let lines: Vec<_> = pdfcraft_edit::text_lines(&doc, 0).expect("text").into_iter().map(|line| crate::Painted { layer: 0, line }).collect();
+    let lines: Vec<_> = pdfcraft_edit::text_lines(&doc, 0).expect("text").into_iter().map(|line| crate::Painted::new(0, line)).collect();
     let mut budget = crate::Budget { limits: crate::Limits::DEFAULT, comparisons: 0, page_cost: 0, covered_text: 0 };
     budget.start_page(&lines);
     let withheld = budget.hidden_text(&lines, false, &PAGE, |_| true).expect("within the budget");
