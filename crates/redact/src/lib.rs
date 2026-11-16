@@ -530,9 +530,11 @@ fn content_like(d: &Dict) -> bool {
     }
 }
 
-/// The names `Do` operators use in `ops`.
-fn do_names(ops: &[pdfcraft_content::Op]) -> impl Iterator<Item = Vec<u8>> + '_ {
-    ops.iter().filter(|op| op.is("Do")).filter_map(|op| op.name(0).map(<[u8]>::to_vec))
+/// The names the `Do` operators of the content `data` use, read one operator at a time, so a
+/// stream of millions of operators is never held parsed. `Do` draws its last operand, as the
+/// renderer reads it.
+fn do_names(data: &[u8]) -> HashSet<Vec<u8>> {
+    pdfcraft_content::ops(data).filter(|op| op.is("Do")).filter_map(|op| op.last_name().map(<[u8]>::to_vec)).collect()
 }
 
 /// What [`drawn_names`] read of each content stream, for the next page that reaches it: its
@@ -548,11 +550,10 @@ struct ReadStreams {
 /// A stream's decoded size and the names its `Do` operators use, each once ([`ReadStreams`]).
 type StreamNames = Option<(usize, Vec<Vec<u8>>)>;
 
-/// [`StreamNames`] for `s`.
-fn stream_names(s: &Stream) -> StreamNames {
-    let data = s.decoded_within(DRAWN_BUDGET).ok()?;
-    let names: HashSet<Vec<u8>> = do_names(&pdfcraft_content::parse(&data).ops).collect();
-    Some((data.len(), names.into_iter().collect()))
+/// [`StreamNames`] for `s`, read with its `/DecodeParms` given by reference.
+fn stream_names(doc: &Document, s: &Stream) -> StreamNames {
+    let data = doc.with_direct_parms(s).decoded_within(DRAWN_BUDGET).ok()?;
+    Some((data.len(), do_names(&data).into_iter().collect()))
 }
 
 /// Every name a `Do` operator uses in page `index`'s contents (its streams read as one, as
@@ -562,7 +563,7 @@ fn stream_names(s: &Stream) -> StreamNames {
 /// too large to read. `read` keeps what each stream gave for the next page that reaches it.
 fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read: &mut ReadStreams) -> Option<HashSet<Vec<u8>>> {
     let (_, data) = page_streams(doc, page, index).ok()?;
-    let mut names: HashSet<Vec<u8>> = do_names(&pdfcraft_content::Pieces::join(&data).parse().ops).collect();
+    let mut names = do_names(pdfcraft_content::Pieces::join(&data).data());
     let mut budget = DRAWN_BUDGET.checked_sub(data.iter().map(Vec::len).sum())?;
     let mut queue = Vec::new();
     roots.iter().for_each(|o| refs_in(o, &mut queue));
@@ -578,7 +579,7 @@ fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read
             continue;
         }
         if !read.streams.contains_key(&r) {
-            let got = stream_names(s);
+            let got = stream_names(doc, s);
             if read.name_bytes > DRAWN_BUDGET {
                 let (len, drawn) = got?;
                 budget = budget.checked_sub(len)?;
