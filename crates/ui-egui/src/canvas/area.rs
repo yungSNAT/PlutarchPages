@@ -1,4 +1,4 @@
-use super::{Color32, HashSet, LayerOp, PdfCraftApp, Pos2, Rect, Tokens, Vec2, icons, pos2, theme, vec2};
+use super::{HashSet, LayerOp, PdfCraftApp, Pos2, Rect, Tokens, Vec2, icons, pos2, theme, vec2};
 
 /// A validation badge drawn over a signature widget: the widget rectangle (user space), the verdict it shows, and its hover text.
 pub(crate) struct SignatureBadge {
@@ -112,7 +112,7 @@ pub(crate) fn sign_tab_layout(field: Rect, label_width: f32) -> Option<SignTab> 
 
 /// The sign tab's label, "Sign", laid out at `size` points.
 fn sign_tab_label(ui: &egui::Ui, size: f32) -> std::sync::Arc<egui::Galley> {
-    ui.fonts_mut(|f| f.layout_no_wrap(tl!("Sign").to_string(), theme::semibold(size), Color32::WHITE))
+    ui.fonts_mut(|f| f.layout_no_wrap(tl!("Sign").to_string(), theme::semibold(size), theme::IVORY))
 }
 
 /// The sign tab of an empty signature field whose widget is at `field` on screen, on the page at
@@ -135,10 +135,10 @@ pub(crate) fn sign_tab_on_page(field: Rect, page: Rect, label_width: f32) -> Opt
 /// validation badges.
 pub(super) fn paint_sign_tab(ui: &egui::Ui, painter: &egui::Painter, tab: &SignTab, t: &Tokens) {
     painter.rect_filled(tab.rect, egui::epaint::CornerRadiusF32::same(tab.radius), t.accent);
-    icons::paint(ui, tab.icon, "signature", tab.icon.width(), Color32::WHITE);
+    icons::paint(ui, tab.icon, "signature", tab.icon.width(), theme::IVORY);
     if let Some(at) = tab.label {
         let galley = sign_tab_label(ui, tab.font);
-        painter.galley(at - vec2(0.0, galley.size().y / 2.0), galley, Color32::WHITE);
+        painter.galley(at - vec2(0.0, galley.size().y / 2.0), galley, theme::IVORY);
     }
 }
 

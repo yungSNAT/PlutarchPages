@@ -183,7 +183,7 @@ fn palette(color: Color32) -> Palette {
     Palette {
         edge: color,
         title,
-        title_ink: if light(title) { Color32::from_gray(20) } else { Color32::WHITE },
+        title_ink: if light(title) { Color32::from_gray(20) } else { theme::IVORY },
         body: mix(0.35),
         panel_edge: mix(0.7),
         ink: Color32::from_gray(20),
@@ -214,7 +214,7 @@ fn text_box(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation, name: &str
                     .desired_width(f32::INFINITY)
                     .font(theme::regular(12.5))
                     .text_color(parts.pal.ink)
-                    .background_color(Color32::WHITE)
+                    .background_color(theme::IVORY)
                     .margin(egui::Margin::symmetric(4, 2))
                     .id_salt(("popup-text", a.page, a.index)),
             )
@@ -229,7 +229,7 @@ fn text_box(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation, name: &str
             parts.edits.push(Edit::SetAnnotationContents { page: a.page, index: a.index, text: s.trim_end().to_string() });
         }
     } else {
-        egui::Frame::NONE.fill(Color32::WHITE).inner_margin(egui::Margin::symmetric(4, 2)).show(ui, |ui| {
+        egui::Frame::NONE.fill(theme::IVORY).inner_margin(egui::Margin::symmetric(4, 2)).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.label(egui::RichText::new(a.contents.as_deref().unwrap_or_default()).font(theme::regular(12.5)).color(parts.pal.ink));
         });
@@ -249,7 +249,7 @@ fn footer(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = egui::RichText::new(tl!("Reply")).font(theme::regular(11.0)).color(parts.pal.ink);
                 let button = egui::Button::new(label)
-                    .fill(Color32::WHITE.gamma_multiply(0.6))
+                    .fill(theme::IVORY.gamma_multiply(0.6))
                     .stroke(egui::Stroke::new(1.0, parts.pal.panel_edge))
                     .min_size(egui::vec2(0.0, 16.0));
                 if ui.add(button).clicked() {
@@ -267,7 +267,7 @@ fn footer(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation) {
             .hint_text(tl!("Add a reply"))
             .font(theme::regular(12.5))
             .text_color(parts.pal.ink)
-            .background_color(Color32::WHITE)
+            .background_color(theme::IVORY)
             .margin(egui::Margin::symmetric(4, 2))
             .id_salt(("popup-reply", a.page, a.index)),
     );
