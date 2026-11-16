@@ -846,7 +846,7 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
         let page = pdfcraft_model::pages(doc).swap_remove(pi);
         let rects: Vec<[f64; 4]> = page_marks.iter().flat_map(|m| m.rects.iter().copied()).collect();
         redact_page_content(doc, &mut applying, pi, &page, &rects)?;
-        remove_page_annotations(doc, &mut applying, pi, &page, &rects, page_marks)?;
+        remove_page_annotations(doc, &mut applying, &page, &rects, page_marks)?;
     }
     if applying.images.refused() > 0 {
         return Err(RedactError::ImagesPastAllowance);
@@ -867,6 +867,7 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
         mut removed_appearances,
         mut appearance_scan_limit,
         pruned_patterns,
+        removed_room: _,
     } = applying;
 
     // A form whose marks couldn't be carried between its draws could keep, in one draw, what
@@ -1288,7 +1289,6 @@ fn redact_page_content(
 fn remove_page_annotations(
     doc: &mut Document,
     applying: &mut Applying,
-    pi: usize,
     page: &pdfcraft_model::Page,
     rects: &[[f64; 4]],
     page_marks: &[&Mark],
