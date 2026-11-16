@@ -34,9 +34,7 @@ pub(super) fn paint_connectors(painter: &egui::Painter, cx: &PageCx<'_>, view: &
         if from.distance(to) < 4.0 {
             continue;
         }
-        let color = a
-            .color
-            .map_or(theme::COMMENT_DEFAULT, |c| Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
+        let color = a.color.map_or(theme::COMMENT_DEFAULT, |c| Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
         let faded = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), WEDGE_ALPHA);
         let [b0, b1] = wedge_base(*window, from, to);
         let mut wedge = egui::Mesh::default();
@@ -363,9 +361,8 @@ pub(crate) fn popups(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, pr
             let dragging = view.comments.popup_drag.filter(|(dp, di, _)| (*dp, *di) == key).map(|(_, _, at)| at);
             let pos = dragging.unwrap_or(placed.left_top());
             let id = egui::Id::unique(("comment-popup", view.id.0, page, a.index));
-            let color = a
-                .color
-                .map_or(theme::COMMENT_DEFAULT, |c| Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
+            let color =
+                a.color.map_or(theme::COMMENT_DEFAULT, |c| Color32::from_rgb((c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8));
             let pal = palette(color);
             // A screen rectangle on this page in user space, to save as the pop-up's `/Rect`. Only
             // converts: the pointer, the keys (none) and the redaction look are unused.
