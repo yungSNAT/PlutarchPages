@@ -191,7 +191,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/edit/src/lib.rs` and `crates/engine/src/open.rs`. Keep it unless upstream caches the same
   pass. The change is generic, so it could go upstream.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
-  with a version floor, a cancel flag and a process-tree kill. Upstream's v0.21.1 added its own
+  with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
+  it stops LibreOffice once the files in its output and temporary folders pass the size limit, as
+  upstream's runner did. Upstream's v0.21.1 added its own
   runner in `crates/create/src/office.rs`; here that file keeps only the detection (`is_office`,
   `OFFICE_EXTENSIONS`), and its fresh-profile settings (no macros, no link updates) moved to
   `profile_arg` in `crates/external/src/lib.rs`. File ▸ Open converts through
