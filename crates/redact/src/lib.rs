@@ -879,23 +879,7 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
         pages.dedup();
         return Err(RedactError::SharedForm(pages));
     }
-    // The document's cleared image copies. An image wholly under a mark somewhere is blanked in
-    // its copy too, so no draw anywhere keeps pixels a mark covered.
-    for (original, img) in shared.images {
-        if img.draws > 1 || shared.gone.contains(&original) {
-            report.shared_redacted += img.draws;
-        }
-        let stream = if shared.gone.contains(&original) {
-            match image::clear(doc, &img.stream, &pdfcraft_content::Matrix::IDENTITY, &[[-1.0, -1.0, 2.0, 2.0]], &mut images) {
-                Ok(Some(blank)) => blank,
-                _ if images.refused() > 0 => return Err(RedactError::ImagesPastAllowance),
-                _ => return Err(RedactError::StillUsed(Vec::new())),
-            }
-        } else {
-            img.stream
-        };
-        doc.set(img.copy, Object::Stream(stream));
-    }
+    report.shared_redacted += write_image_copies(doc, shared.images, &shared.gone, &mut images)?;
 
     // 2b. Replies and pop-ups of a removed annotation can be listed on another page than their
     // parent: their `/IRT` or `/Parent` would keep the removed comment reachable.
@@ -1437,6 +1421,34 @@ fn remove_page_annotations(
         }
     })?;
     Ok(())
+}
+
+/// Writes the document's cleared image copies. An image wholly under a mark somewhere (`gone`) is
+/// blanked in its copy too, so no draw anywhere keeps pixels a mark covered. Returns the draws of
+/// the copies shared between draws or blanked.
+fn write_image_copies(
+    doc: &mut Document,
+    copies: HashMap<ObjRef, interp::SharedImage>,
+    gone: &HashSet<ObjRef>,
+    images: &mut pdfcraft_cos::ImageBudget,
+) -> Result<usize, RedactError> {
+    let mut shared_redacted = 0;
+    for (original, img) in copies {
+        if img.draws > 1 || gone.contains(&original) {
+            shared_redacted += img.draws;
+        }
+        let stream = if gone.contains(&original) {
+            match image::clear(doc, &img.stream, &pdfcraft_content::Matrix::IDENTITY, &[[-1.0, -1.0, 2.0, 2.0]], images) {
+                Ok(Some(blank)) => blank,
+                _ if images.refused() > 0 => return Err(RedactError::ImagesPastAllowance),
+                _ => return Err(RedactError::StillUsed(Vec::new())),
+            }
+        } else {
+            img.stream
+        };
+        doc.set(img.copy, Object::Stream(stream));
+    }
+    Ok(shared_redacted)
 }
 
 /// A widget written in place on any page names its deleted field through `/Parent`, which would
