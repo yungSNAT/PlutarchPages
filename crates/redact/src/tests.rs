@@ -3367,6 +3367,26 @@ fn an_image_only_the_scrubbed_metadata_refers_to_takes_a_shared_jbig2_dictionary
     assert_eq!((report.metadata, report.images_restored), (1, 1), "the packet went, and the image on page 2 was stored again");
     assert_gone(&doc, b"LEAK_GLOBALS");
     assert_eq!(drawn_samples(&reopen(&doc), 1), scan.bits);
+    // The fork checks what the trailer reaches after that scrub: a reference the scrub leaves,
+    // here a catalog entry, still keeps the image in the file, so the redaction is refused.
+    let mut doc = SharedPages {
+        content: [DRAWS, b" BT /F1 10 Tf 10 105 Td (Bluefin) Tj ET".as_slice()].concat(),
+        resources: "/XObject << /Im 7 0 R >> /Font << /F1 11 0 R >>".into(),
+        extra: vec![
+            stream("/Type /Metadata /Subtype /XML /Thumb 7 0 R", b"<x:xmpmeta><dc:title>Bluefin</dc:title></x:xmpmeta>"),
+            FONT.replace("95 0 R", "12 0 R").into_bytes(),
+            widths(),
+        ],
+        ..SharedPages::new(&scan)
+    }
+    .build(&scan);
+    doc.update_dict(root, |d| {
+        d.set(b"Metadata".to_vec(), Object::Ref(ObjRef::new(10, 0)));
+        d.set(b"Alias".to_vec(), Object::Ref(ObjRef::new(7, 0)));
+    })
+    .unwrap();
+    mark(&mut doc, 0, &[COVERS], "");
+    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p.is_empty()));
 }
 
 /// A redaction that leaves a pattern unpainted unlinks it from a `/Pages` node no page inherits
