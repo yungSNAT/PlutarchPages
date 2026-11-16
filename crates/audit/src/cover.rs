@@ -66,7 +66,8 @@ pub struct FilledRect {
     /// under it whatever its colour (ISO 32000-2 §11.3.5).
     pub opaque: bool,
     /// The alpha it is painted with, when that alone decides how much of what lies under it shows:
-    /// in the Normal blend mode without a soft mask. `None` when blended or masked.
+    /// in the Normal blend mode without a soft mask. `None` when blended or masked, or inside a form
+    /// drawn so.
     pub alpha: Option<f64>,
     /// Painted by an image.
     pub image: bool,
@@ -113,13 +114,16 @@ struct Gs {
     blended: bool,
     /// A soft mask (`/SMask`) is in force: the fill can show what lies under it.
     masked: bool,
+    /// Inside a form drawn translucent, blended or through a soft mask: a fill here shows with an
+    /// alpha the audit doesn't work out (ISO 32000-2 §11.4).
+    grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
 }
 
 impl Gs {
     fn new(clip: [f64; 4]) -> Self {
-        Gs { ctm: Matrix::IDENTITY, fill: Some([0.0; 3]), space: 1, alpha: 1.0, blended: false, masked: false, clip }
+        Gs { ctm: Matrix::IDENTITY, fill: Some([0.0; 3]), space: 1, alpha: 1.0, blended: false, masked: false, grouped: false, clip }
     }
 }
 
@@ -454,8 +458,9 @@ impl<'a> Walker<'a> {
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        let alpha = (!gs.blended && !gs.masked).then_some(gs.alpha);
-        self.out.push(FilledRect { rect, rgb, pos, opaque: alpha.is_some_and(|a| a >= 1.0), alpha, image });
+        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked;
+        let alpha = (!gs.blended && !gs.masked && !gs.grouped).then_some(gs.alpha);
+        self.out.push(FilledRect { rect, rgb, pos, opaque, alpha, image });
     }
 
     /// Record the cover the image `image` (its dictionary) makes, painted by the operator at index
@@ -512,6 +517,7 @@ impl<'a> Walker<'a> {
         // The XObject matrix maps form space into the user space active at `Do`.
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
+        sub_gs.grouped |= gs.alpha < 1.0 || gs.blended || gs.masked;
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
         }

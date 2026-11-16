@@ -15,7 +15,8 @@
 //! around is the page's white, or the rectangles painted before the text, each over the line's
 //! whole box, in colours it reads. Where it can't say (a box over part of the line, a colour it
 //! doesn't read, a page or appearance that fills a shape other than a box or paints a stroke or an
-//! image with a mask of its own, or text not filled opaque), and for a blended or masked cover, the cover is compared with the text's colour alone.
+//! image with a mask of its own, or text not filled opaque), and for a blended or masked cover or
+//! one in a form drawn translucent, blended or masked, the cover is compared with the text's colour alone.
 //! Page backgrounds, painted before the text, and highlight marks are therefore not flagged.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`

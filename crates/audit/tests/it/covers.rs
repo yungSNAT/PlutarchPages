@@ -15,13 +15,14 @@ use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page};
 /// Helvetica `/F1`, the block font `/B`, the form `/Fm` (which draws blocks), a black shading
 /// `/Sh`, and graphics states at opacity 0.9 (`/Most`), 0.5 (`/Half`), 0.2 (`/Faint`) and 0
 /// (`/Clear`), one that sets no opacity (`/Wide`) and one with a soft mask.
-const RESOURCES: &str = "<< /Font << /F1 5 0 R /B 6 0 R >> /XObject << /Fm 9 0 R /Im 12 0 R >> /Shading << /Sh 10 0 R >> \
+const RESOURCES: &str = "<< /Font << /F1 5 0 R /B 6 0 R >> /XObject << /Fm 9 0 R /Im 12 0 R /Fh 13 0 R >> /Shading << /Sh 10 0 R >> \
     /ExtGState << /Most << /ca 0.9 >> /Half << /ca 0.5 >> /Faint << /ca 0.2 >> /Clear << /ca 0 >> /Wide << /LW 4 >> \
     /Masked << /SMask << /Type /Mask /S /Luminosity /G 11 0 R >> >> >> >>";
 
-/// Objects 6 to 12 for [`RESOURCES`]: a font whose `A` is U+2588 FULL BLOCK, a full em wide, its
+/// Objects 6 to 13 for [`RESOURCES`]: a font whose `A` is U+2588 FULL BLOCK, a full em wide, its
 /// `/ToUnicode` and descriptor, a form drawing six blocks over SECRET, a black shading, a soft
-/// mask's group and a black pixel with a colour key mask of its own.
+/// mask's group, a black pixel with a colour key mask of its own and a form filling a black box
+/// over SECRET.
 fn objects() -> Vec<Vec<u8>> {
     vec![
         b"<< /Type /Font /Subtype /TrueType /BaseFont /Blocks /FirstChar 65 /LastChar 65 /Widths [1000] /FontDescriptor 8 0 R /ToUnicode 7 0 R >>"
@@ -38,6 +39,7 @@ fn objects() -> Vec<Vec<u8>> {
         BLACK_SHADING.as_bytes().to_vec(),
         stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Group << /S /Transparency /CS /DeviceGray >>", "1 g 0 0 612 792 re f"),
         stream_obj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Mask [255 255]", "\0"),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", "0 g 100 688 220 32 re f"),
     ]
 }
 
@@ -90,6 +92,8 @@ fn a_translucent_cover_is_judged_against_what_lies_under_the_text() {
         ("q /Half gs 1 g 100 688 220 32 re f Q", false),
         ("q /Most gs 1 1 0 rg 100 688 220 32 re f Q", true),
         ("q /Half gs 1 1 0 rg 100 688 220 32 re f Q", false),
+        // A form drawn translucent: its fills show with an alpha the audit does not work out.
+        ("q /Half gs /Fh Do Q", true),
         ("q /Clear gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs 100 688 220 32 re f Q", false),
         ("q /Clear gs /Wide gs /Most gs 100 688 220 32 re f Q", true),
