@@ -260,10 +260,13 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
 fn rendered_samples(content: &[u8]) -> Option<Vec<u8>> {
     use hayro_syntax::content::TypedIter;
     use hayro_syntax::content::ops::{InlineImage, TypedInstruction};
-    TypedIter::new(content).find_map(|op| match op {
-        TypedInstruction::InlineImage(InlineImage(stream)) => stream.decoded().ok().map(|samples| samples.into_owned()),
-        _ => None,
-    })
+    let mut iter = TypedIter::new(content);
+    while let Some(op) = iter.next() {
+        if let TypedInstruction::InlineImage(InlineImage(stream)) = op {
+            return stream.decoded().ok().map(|samples| samples.into_owned());
+        }
+    }
+    None
 }
 
 /// Written ASCIIHex-encoded, an image keeps each filter's parameters, in either spelling, and its
