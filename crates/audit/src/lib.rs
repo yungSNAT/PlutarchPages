@@ -6,19 +6,26 @@
 //! revisions and retained metadata. Those signals do not establish that text survived.
 //!
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
-//! overlaps, and only when it is dark enough against the text's color to make the text
-//! unreadable (WCAG contrast below 3.0). Page backgrounds, table shading and highlight
-//! marks are therefore not flagged. A translucent cover (`/ca` above 0 and below 1) counts as
-//! opaque: how much it hides depends on the backdrop, which the audit doesn't read.
+//! overlaps. One painted fully opaque in the Normal blend mode, without a soft mask, hides the text
+//! whatever its colour: it replaces what lies under it (ISO 32000-2 §11.3.5). Any other cover
+//! (translucent, `/ca` above 0 and below 1, blended, such as a highlight multiplied onto the page,
+//! or painted through a soft mask) counts only when it is dark enough against the text's colour to
+//! make the text unreadable (WCAG contrast below 3.0): how much it hides depends on the backdrop,
+//! which the audit doesn't read. Page backgrounds, painted before the text, and highlight marks are
+//! therefore not flagged.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
 //! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
-//! that holds its clip and within its `/BBox`, and a word of block characters (`█`, `■` and the
-//! like) drawn filled; other filled paths and glyphs are not. A cover in a color the audit doesn't
-//! read (a pattern's, a spot color's) counts as dark as the text, and one painted through a soft
-//! mask counts as unmasked. Filled `/Square` annotations count as covers too, but annotation
-//! rectangles are compared in unrotated user space, so pages with `/Rotate` may misalign. Covers and text inside form
+//! that holds its clip and within its `/BBox`, an image without a mask of its own, over the box the
+//! CTM places it in, and a word of block characters (`█`, `■` and the like) drawn filled; other
+//! filled paths and glyphs are not. An image doesn't hide invisible text (rendering mode 3 or 7):
+//! an OCR tool draws a scan over the text it read from it. A cover in a color the audit doesn't
+//! read (a pattern's, a spot color's, an image's) counts as dark as the text, and a block is judged
+//! by its colour against the text's. Filled `/Square` annotations count as covers too, by their
+//! interior colour where the audit has no appearance for them or it fills a shape other than a box,
+//! but annotation rectangles are compared in unrotated user space, so pages with `/Rotate` may
+//! misalign. Covers and text inside form
 //! XObjects, nested ones included, are checked like the page's own, in the order they are painted,
 //! and so are those of the appearances a viewer paints for the page's annotations, after the page
 //! in `/Annots` order.
@@ -298,7 +305,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // The text walk holds a stream's operators all at once, and reads each appearance with a
         // budget of its own: run first, a stream of tiny operators or an appearance listed many
         // times would cost it far more than the bounds allow.
-        let rects = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
+        let (rects, shaped) = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
         let (mut lines, mut gaps) = painted_text(doc, page, n, 0, None, report_advances)?;
         // Each read has a text budget of its own; the page's lines in all are held to one.
         let mut text_bytes = text_len(&lines);
@@ -338,10 +345,12 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             }
         }
         // 2. Annotation covers over extractable text. A Square is checked by its interior colour,
-        // after the page and the annotations before it, for the lines no rectangle its appearance
-        // paints hides: that rectangle reports those (above), so a box is one finding. A
-        // Redact mark lies over everything but the text of its own appearance, which is not text
-        // it marks.
+        // after the page and the annotations before it, where a viewer paints it: when it has no
+        // appearance, or one that fills a shape the audit reads no box from (pdf.js, PDFium,
+        // Poppler and MuPDF paint an appearance where there is one, and make one from `/IC` only
+        // where there is none). Then it covers the lines no rectangle its appearance paints hides:
+        // that rectangle reports those (above), so a box is one finding. A Redact mark lies over
+        // everything but the text of its own appearance, which is not text it marks.
         let mut painted_by: HashMap<usize, Vec<&cover::FilledRect>> = HashMap::new();
         for r in &rects {
             if let Some(&layer) = r.pos.first().filter(|&&layer| layer > 0) {
@@ -350,6 +359,9 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         }
         for a in &annotations {
             let Some(annot) = &a.cover else { continue };
+            if matches!(annot, AnnotationCover::Square { .. }) && a.appearance.is_some() && !shaped.contains(&a.layer) {
+                continue;
+            }
             let own = match annot {
                 AnnotationCover::Square { .. } => painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice),
                 AnnotationCover::Redact(_) => &[],
@@ -362,10 +374,10 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
             };
             if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
-                AnnotationCover::Square { rect, rgb } => {
+                AnnotationCover::Square { rect, rgb, opaque } => {
                     p.layer <= a.layer
                         && covers(rect, &p.line)
-                        && contrast(p.line.color, *rgb) < COVER_CONTRAST
+                        && (*opaque || contrast(p.line.color, *rgb) < COVER_CONTRAST)
                         && !own.iter().any(|r| is_cover(r, p))
                 }
             })? {
@@ -439,16 +451,18 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 }
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
-/// after the start of the line, overlaps it substantially, and is dark enough against the line's
-/// color to make the text unreadable. Light covers (table shading, highlights) over dark text fail
-/// the contrast check and are not flagged; one in a color the audit doesn't read could be as dark
-/// as the text, and is. A line can join runs painted before and after the
-/// cover; the later ones are drawn on it in the same low-contrast color, so they are unreadable
-/// too.
+/// after the start of the line, overlaps it substantially, and hides it: it is opaque, or dark
+/// enough against the line's color to make the text unreadable. Light translucent or blended covers
+/// (highlights) over dark text fail the contrast check and are not flagged; one in a color the
+/// audit doesn't read could be as dark as the text, and is. An image doesn't hide invisible text:
+/// that is what an OCR layer under its scan is. A line can join runs painted before and after the
+/// cover, and the finding reports the runs under it, those painted on top too: in the line's color
+/// on a dark cover they are unreadable, but on a light one they can show.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
     rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
         && covers(&rect.rect, &p.line)
-        && rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST)
+        && (rect.opaque || rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST))
+        && !(rect.image && p.line.run_modes().all(|(mode, _)| matches!(mode, 3 | 7)))
 }
 
 /// Characters drawn as a solid box: typed or pasted over text, they hide it as a filled rectangle
@@ -477,7 +491,9 @@ fn add_glyph_covers(lines: &[Painted], out: &mut Vec<cover::FilledRect>) {
                 continue;
             }
             let pos: Vec<usize> = std::iter::once(*layer).chain(order).collect();
-            let cover = |rect: &[f64; 4]| cover::FilledRect { rect: *rect, rgb: Some(line.color), pos: pos.clone() };
+            // Judged by its colour, as a translucent cover is: the text reader doesn't say what blend
+            // mode or soft mask a run is drawn with.
+            let cover = |rect: &[f64; 4]| cover::FilledRect { rect: *rect, rgb: Some(line.color), pos: pos.clone(), opaque: false, image: false };
             if text.split_whitespace().count() == ink.len() {
                 out.extend(text.split_whitespace().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| cover(b)));
             } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
@@ -567,10 +583,11 @@ fn contrast(a: [f64; 3], b: [f64; 3]) -> f64 {
 
 enum AnnotationCover {
     Redact([f64; 4]),
-    /// Its interior colour.
+    /// Its interior colour, and whether it is painted opaque (as [`cover::FilledRect::opaque`]).
     Square {
         rect: [f64; 4],
         rgb: [f64; 3],
+        opaque: bool,
     },
 }
 
@@ -607,15 +624,16 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
         // Hidden and NoView annotations are never drawn on screen.
         let flags = dict.get(b"F").and_then(|f| doc.resolve(f).as_int()).unwrap_or(0);
         let shown = flags & 2 == 0 && flags & 32 == 0;
+        // The opacity a viewer gives the appearance it makes from a Square's interior colour. One the
+        // annotation has is painted as it is: PDFium and pdf.js apply neither `/CA` nor `/BM` to it.
+        let ca = dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64()).filter(|a| a.is_finite());
         let cover = match subtype(doc, dict)?.as_deref() {
             Some(b"Redact") => Some(AnnotationCover::Redact(rect)),
             Some(b"Square") if shown => {
-                // A translucent one counts as opaque, as a translucent rectangle does; a fully
-                // transparent one (`/CA 0`) paints nothing.
-                let ca = dict.get(b"CA").map(|o| doc.resolve(o)).and_then(|o| o.as_f64());
-                annotation_color(doc, dict, b"IC")
-                    .filter(|_| ca.is_none_or(|a| !a.is_finite() || a > 0.0))
-                    .map(|rgb| AnnotationCover::Square { rect, rgb })
+                // A translucent one counts as a translucent rectangle does; a fully transparent one
+                // (`/CA 0`) paints nothing.
+                let opaque = ca.is_none_or(|a| a >= 1.0);
+                annotation_color(doc, dict, b"IC").filter(|_| ca.is_none_or(|a| a > 0.0)).map(|rgb| AnnotationCover::Square { rect, rgb, opaque })
             }
             _ => None,
         };

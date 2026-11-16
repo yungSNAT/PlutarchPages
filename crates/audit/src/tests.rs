@@ -146,12 +146,16 @@ fn one_page(content: &[u8], page_extra: &str) -> Vec<u8> {
     b.build()
 }
 
-/// One page with two content streams (`/Contents [4 0 R 5 0 R]`).
+/// One page with two content streams (`/Contents [4 0 R 5 0 R]`), and a graphics state `/M` that
+/// multiplies what is painted onto the page.
 fn two_streams(s1: &[u8], s2: &[u8]) -> Vec<u8> {
     let mut b = Builder::new();
     b.add("<< /Type /Catalog /Pages 2 0 R >>");
     b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-    b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>");
+    b.add(
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents [4 0 R 5 0 R] \
+         /Resources << /Font << /F1 6 0 R >> /ExtGState << /M << /BM /Multiply >> >> >> >>",
+    );
     b.add_stream(s1);
     b.add_stream(s2);
     b.add(FONT);
@@ -361,18 +365,21 @@ fn background_before_text_is_not_flagged() {
 
 #[test]
 fn light_shading_after_text_is_not_flagged() {
-    // Light table-style shading painted after the text leaves it readable: not a cover.
-    let content = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n0.9 g\n100 688 220 32 re f\n";
-    let findings = audit_redactions(&open(one_page(content, ""))).expect("audit must run");
+    // Light table-style shading multiplied onto the text after it leaves it readable: not a cover.
+    // Painted opaque, in the Normal blend mode, it would hide the text, and does
+    // (`an_opaque_cover_hides_text_whatever_its_colour` in tests/it/covers.rs).
+    let s1 = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n";
+    let s2 = b"/M gs 0.9 g\n100 688 220 32 re f\n";
+    let findings = audit_redactions(&open(two_streams(s1, s2))).expect("audit must run");
     assert!(findings.is_empty(), "{findings:?}");
 }
 
 #[test]
 fn graphics_state_carries_across_streams() {
-    // The first stream sets a white fill after the text; the second stream's rectangle over
-    // the text is therefore white, not the default black: no finding. Without the carry fix
-    // the rectangle would default to black and flag.
-    let s1 = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n1 g\n";
+    // The first stream sets a white fill multiplied onto the page after the text; the second
+    // stream's rectangle over the text is therefore a light highlight, not the default opaque
+    // black: no finding. Without the carry fix the rectangle would be black and flag.
+    let s1 = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n/M gs 1 g\n";
     let s2 = b"100 688 220 32 re f\n";
     let findings = audit_redactions(&open(two_streams(s1, s2))).expect("audit must run");
     assert!(findings.is_empty(), "{findings:?}");
