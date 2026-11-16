@@ -371,8 +371,9 @@ fn arabic_presentation_forms_match_base_letters() {
     assert_eq!(page(&["\u{FC5B}", "ل", "ك"]).find("ذلك"), vec![0..3]);
     // A form of marks alone has no letter, so it matches its mark.
     assert_same_letters("\u{FE70}", "\u{64B}");
-    // Every code point in the two blocks still finds itself, assigned or not.
-    for c in (0xFB50..=0xFDFF).chain(0xFE70..=0xFEFF).filter_map(char::from_u32) {
+    // Every code point in the two blocks still finds itself, assigned or not, but U+FEFF: ZERO
+    // WIDTH NO-BREAK SPACE draws nothing, and Find skips it in the query as in the page.
+    for c in (0xFB50..=0xFDFF).chain(0xFE70..=0xFEFE).filter_map(char::from_u32) {
         let s = c.to_string();
         assert_eq!(page(&[s.as_str()]).find(&s), vec![0..1], "U+{:04X}", u32::from(c));
     }
@@ -460,7 +461,8 @@ fn latin_search_is_not_folded() {
     // Normalising the whole text would break each of these.
     assert_eq!(page(&["e\u{301}"]).find("e"), vec![0..1]);
     assert!(page(&["\u{E9}"]).find("e").is_empty());
-    assert!(page(&["\u{FB01}"]).find("fi").is_empty());
+    // A ligature is read as its letters, which is not normalising the text.
+    assert_eq!(page(&["\u{FB01}"]).find("fi"), vec![0..1]);
     assert!(page(&["\u{BD}"]).find("1").is_empty());
     assert!(page(&["\u{2122}"]).find("tm").is_empty());
     assert!(page(&["\u{B2}"]).find("2").is_empty());
@@ -475,10 +477,12 @@ fn redaction_search_finds_the_literal_matches_folding_would_lose() {
     let shifted = page(&["۱", "1", "1"]);
     assert_eq!(shifted.find("11"), vec![0..2]);
     assert_eq!(shifted.find_for_redaction("11", false, false), vec![0..2, 1..3]);
-    // Folded, the radical becomes a letter and closes the word boundary.
-    let beside = page(&["\u{2F92}", "見"]);
-    assert!(beside.find_opts("見", false, true).is_empty());
-    assert_eq!(beside.find_for_redaction("見", false, true), vec![1..2]);
+    // Folded, the vowel mark goes and closes the word boundary before the letter after it.
+    let joined = page(&["ك", "\u{64B}", "ب"]);
+    assert!(joined.find_opts("ب", false, true).is_empty());
+    assert_eq!(joined.find_for_redaction("ب", false, true), vec![2..3]);
+    // Han runs its words together, so the radical folded to an ideograph bounds no word.
+    assert_eq!(page(&["\u{2F92}", "見"]).find_for_redaction("見", false, true), vec![0..1, 1..2]);
     // Folding still adds what the literal text alone wouldn't find.
     assert_eq!(page(&["\u{2F92}", " ", "۱"]).find_for_redaction("見", false, false), vec![0..1]);
     assert_eq!(page(&["\u{2F92}", " ", "۱"]).find_for_redaction("1", false, false), vec![2..3]);
