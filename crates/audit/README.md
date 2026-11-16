@@ -47,11 +47,12 @@ page paints after drawing the form. So are those of the appearance a viewer pain
 annotation that isn't Hidden or NoView (its normal appearance, or the state `/AS` names), mapped
 onto the annotation's rectangle and painted after the page in `/Annots` order. An appearance
 without resources of its own uses the page's. PDFium and pdf.js paint an appearance as it is,
-whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is checked by the box its appearance paints. Its interior colour (`/IC`)
-counts where the audit has no appearance for it, or the appearance fills a shape it reads no box
-from (a cloudy border), for text no box lies over: pdf.js, PDFium, Poppler and MuPDF paint the
-appearance where there is one, so `/IC` behind a border-only appearance hides nothing. A Redact
-mark's own appearance is not text it leaves under it.
+whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is checked by the
+box its appearance paints. Its interior colour (`/IC`) counts where the audit has no appearance
+for it, or the appearance fills a shape it reads no box from (a cloudy border), for text no box
+lies over: pdf.js, PDFium, Poppler and MuPDF paint the appearance where there is one, so `/IC`
+behind a border-only appearance hides nothing. A Redact mark's own appearance is not text it
+leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
 which a viewer paints once for each tile or glyph. Such text fails the audit. A font counts
@@ -108,4 +109,14 @@ entry point checks only covered text and unapplied marks.
 `fuzz/` is a detached cargo-fuzz crate (`cargo +nightly fuzz run content`, run from
 `crates/audit/`). Its target reads each input as a page's content, and as the content of the form,
 Type 3 glyph, tiling pattern and annotation appearance the page offers, or as a whole file when it
-starts with `%PDF`.
+starts with `%PDF`. The documents the integration tests build make its seed corpus: with
+`PDFCRAFT_AUDIT_SEEDS` naming an existing folder, `cargo test -p pdfcraft-audit --test it` saves
+each one there.
+
+```sh
+mkdir -p fuzz/corpus/content
+PDFCRAFT_AUDIT_SEEDS="$PWD/fuzz/corpus/content" cargo test -p pdfcraft-audit --test it
+cargo +nightly fuzz run content fuzz/corpus/content
+```
+
+The weekly coverage-guided fuzz workflow (`.github/workflows/cargo-fuzz.yml`) runs it this way.

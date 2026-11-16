@@ -46,6 +46,22 @@ fn a_long_unreadable_number_is_read_once() {
     assert_eq!(p.ops[0].nums::<2>(), Some([5.0, 0.0]));
 }
 
+/// Dictionaries and arrays that never close each read to the end of the stream before failing,
+/// and each retry from the next byte starts another: the bytes read again stay a small multiple of
+/// the stream, not its square. A few damaged operands still recover byte by byte.
+#[test]
+fn unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times() {
+    for unit in ["<< /A 1 /B 2 ", "<<", "[ ", "<< /A 1 ) "] {
+        let src = unit.repeat(20_000);
+        RESCANNED.with(|c| c.set(0));
+        parse(src.as_bytes());
+        let rescanned = RESCANNED.with(|c| c.get());
+        assert!(rescanned <= 10 * src.len(), "{unit:?}: {rescanned} bytes read for a {}-byte stream", src.len());
+    }
+    let p = parse(b"<< /A 1 [ 0 0 1 rg");
+    assert!(p.ops.iter().any(|o| o.is("rg")), "{:?}", p.ops);
+}
+
 #[test]
 fn operators_keep_operands_and_spans() {
     let src = b"q 1 0 0 1 72 720 cm BT /F1 12 Tf (Hello \\(world\\)) Tj [(A) -120 (B)] TJ ET Q";

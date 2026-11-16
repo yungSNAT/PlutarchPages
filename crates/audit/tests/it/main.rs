@@ -23,7 +23,19 @@ fn page(resources: &str, content: &str, objects: &[Vec<u8>]) -> Document {
         .stream("", content)
         .obj(HELVETICA)
         .objs(objects);
-    Document::open(Arc::new(pdf.build())).expect("test pdf must open")
+    open(pdf.build())
+}
+
+/// Opens the document `bytes` hold, first saving them in the folder `PDFCRAFT_AUDIT_SEEDS` names,
+/// when it is set: the fuzz target's seed corpus (`crates/audit/README.md`).
+fn open(bytes: Vec<u8>) -> Document {
+    if let Some(dir) = std::env::var_os("PDFCRAFT_AUDIT_SEEDS") {
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hash = DefaultHasher::new();
+        bytes.hash(&mut hash);
+        std::fs::write(std::path::Path::new(&dir).join(format!("{:016x}.pdf", hash.finish())), &bytes).expect("seed written");
+    }
+    Document::open(Arc::new(bytes)).expect("test pdf must open")
 }
 
 /// A Type 3 font drawing `a` with glyph procedure `glyph` (an object number), its dictionary ending

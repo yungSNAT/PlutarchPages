@@ -395,8 +395,8 @@ fn text_lines_in(doc: &Document, p: &pdfcraft_model::Page, reading: Reading) -> 
     budget.strict = true;
     let mut forms = FormWalk::new(doc, pieces.len(), budget, false, want_gaps);
     forms.fonts = cache;
-    for (at, name, ts) in invoked {
-        forms.enter(&res, None, at, &name, ts, &mut carry.text_left)?;
+    for (at, name, ts, saved) in invoked {
+        forms.enter(&res, None, at, &name, ts, saved, &mut carry.text_left)?;
     }
     lines.append(&mut forms.lines);
     gaps.append(&mut forms.gaps);
@@ -718,8 +718,8 @@ impl<'a> FormWalk<'a> {
         let mut last_stream = None;
         let mut forms = invoked.into_iter().peekable();
         for s in shown {
-            while let Some((at, name, ts)) = forms.next_if(|f| f.0 < s.op) {
-                self.enter(resources, resources_of, at, &name, ts, &mut carry.text_left)?;
+            while let Some((at, name, ts, saved)) = forms.next_if(|f| f.0 < s.op) {
+                self.enter(resources, resources_of, at, &name, ts, saved, &mut carry.text_left)?;
                 // Text after a form starts a new line.
                 last = None;
             }
@@ -730,14 +730,16 @@ impl<'a> FormWalk<'a> {
             }
             add_shown(&mut self.lines, &mut last, s, si, &layer_scopes, &self.calls);
         }
-        for (at, name, ts) in forms {
-            self.enter(resources, resources_of, at, &name, ts, &mut carry.text_left)?;
+        for (at, name, ts, saved) in forms {
+            self.enter(resources, resources_of, at, &name, ts, saved, &mut carry.text_left)?;
         }
         Ok(())
     }
 
-    /// Read the form `name` that the `Do` at index `at` draws with state `ts`. `text_left`: the
-    /// page's text budget, shared with the forms the page draws. `resources_of`: as for [`FormWalk::walk`].
+    /// Read the form `name` that the `Do` at index `at` draws with state `ts` and `saved` graphics
+    /// states saved. `text_left`: the page's text budget, shared with the forms the page draws.
+    /// `resources_of`: as for [`FormWalk::walk`].
+    #[allow(clippy::too_many_arguments)]
     fn enter(
         &mut self,
         resources: &Dict,
@@ -745,13 +747,14 @@ impl<'a> FormWalk<'a> {
         at: usize,
         name: &[u8],
         ts: Ts,
+        saved: usize,
         text_left: &mut usize,
     ) -> Result<(), EditError> {
         let Some(form) = form_call(self.doc, resources, name, ts.ctm, &self.path, &mut self.budget) else { return Ok(()) };
         let ops = parse(&form.data).ops;
         // The form starts with the graphics state at its `Do`, its own matrix applied.
         let advance_gaps = self.want_gaps.then(Vec::new);
-        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, advance_gaps, ..Carry::new() };
+        let mut carry = Carry { ts: Ts { ctm: form.ctm, ..ts }, text_left: *text_left, advance_gaps, saved_outside: saved, ..Carry::new() };
         let stream = self.next_stream;
         self.next_stream = self.next_stream.saturating_add(1);
         if let Some(r) = form.obj {
