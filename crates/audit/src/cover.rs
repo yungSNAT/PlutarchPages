@@ -15,7 +15,9 @@
 //! a soft mask is opaque, and hides text whatever its colour. A translucent one in the Normal blend
 //! mode keeps its alpha, so the audit can mix it with the text and what lies around the text. A
 //! blended one, or one painted through a soft mask, counts as a cover as dark as it is: how much it
-//! hides depends on colours and a mask the audit doesn't read. Form XObjects are followed read-only with a depth cap, and so
+//! hides depends on colours and a mask the audit doesn't read, and so does one in a transparency
+//! group (a form with `/Group`) drawn translucent, blended or masked, whatever its own opacity. A
+//! plain form's content is painted as the page's own. Form XObjects are followed read-only with a depth cap, and so
 //! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
 //! scope and documented as such; the layers whose content fills one are reported.
 //!
@@ -62,12 +64,13 @@ pub struct FilledRect {
     /// Paint position: its layer, the `Do` operators that drew it, outermost first, then the fill
     /// operator's index (see the module documentation).
     pub pos: Vec<usize>,
-    /// Painted fully opaque, in the Normal blend mode and without a soft mask: it hides what lies
-    /// under it whatever its colour (ISO 32000-2 §11.3.5).
+    /// Painted fully opaque, in the Normal blend mode and without a soft mask, and not inside a
+    /// transparency group drawn otherwise: it hides what lies under it whatever its colour (ISO
+    /// 32000-2 §11.3.5).
     pub opaque: bool,
     /// The alpha it is painted with, when that alone decides how much of what lies under it shows:
-    /// in the Normal blend mode without a soft mask. `None` when blended or masked, or inside a form
-    /// drawn so.
+    /// in the Normal blend mode without a soft mask. `None` when blended or masked, or inside a
+    /// transparency group drawn translucent, blended or masked.
     pub alpha: Option<f64>,
     /// Painted by an image.
     pub image: bool,
@@ -114,8 +117,10 @@ struct Gs {
     blended: bool,
     /// A soft mask (`/SMask`) is in force: the fill can show what lies under it.
     masked: bool,
-    /// Inside a form drawn translucent, blended or through a soft mask: a fill here shows with an
-    /// alpha the audit doesn't work out (ISO 32000-2 §11.4).
+    /// Inside a transparency group drawn translucent, blended or through a soft mask: the group is
+    /// composited with that state, so a fill here shows with an alpha the audit doesn't work out,
+    /// whatever opacity it sets (ISO 32000-2 §11.6.6). A plain form's content is painted with the
+    /// state at `Do`, as the page's own would be.
     grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
@@ -458,7 +463,7 @@ impl<'a> Walker<'a> {
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked;
+        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked && !gs.grouped;
         let alpha = (!gs.blended && !gs.masked && !gs.grouped).then_some(gs.alpha);
         self.out.push(FilledRect { rect, rgb, pos, opaque, alpha, image });
     }
@@ -517,7 +522,9 @@ impl<'a> Walker<'a> {
         // The XObject matrix maps form space into the user space active at `Do`.
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
-        sub_gs.grouped |= gs.alpha < 1.0 || gs.blended || gs.masked;
+        // A `/Group` makes the form a transparency group (ISO 32000-2 §11.6.6), as the renderer reads it.
+        let group = dict.get(b"Group").is_some_and(|o| self.doc.resolve(o).as_dict().is_some());
+        sub_gs.grouped |= group && (gs.alpha < 1.0 || gs.blended || gs.masked);
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
         }
