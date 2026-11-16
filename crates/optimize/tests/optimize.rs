@@ -3265,8 +3265,12 @@ mod external_refs {
         assert_eq!(report.external_links, 1, "{report:?}");
         let a = annots_of(&doc, p)[0].get(b"A").cloned().unwrap();
         assert!(matches!(a, Object::Ref(r) if Some(r) != tail), "a new indirect action: {a:?}");
+        // Upstream leaves the old chain as it was. This fork's sweep then takes remote go-tos out of
+        // every action in the file, so the old chain, which nothing draws on any more, loses its
+        // tail too.
         let old = Object::Ref(tail.unwrap());
-        assert_eq!(chain(&doc, &old).last().map(String::as_str), Some("GoToR"), "the old chain is not edited");
+        assert_eq!(chain(&doc, &old), vec!["URI"; 130], "the sweep leaves no remote go-to behind");
+        assert_eq!(report.external_refs, 1, "{report:?}");
         let bytes = write_full(&doc, &SaveOptions::default()).unwrap();
         let reopened = Document::open(Arc::new(bytes)).unwrap();
         let a = annots_of(&reopened, p)[0].get(b"A").cloned().unwrap();

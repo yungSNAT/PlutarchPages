@@ -12129,7 +12129,13 @@ fn optimize_discards_form_actions_external_refs_and_standards_id() {
         "doc_optimize",
         json!({ "doc": id, "path": "clean.pdf", "discard_form_actions": true, "discard_external_refs": true, "remove_standards_id": true }),
     );
-    assert_eq!((r["form_actions"].as_u64(), r["external_refs"].as_u64(), r["standards_ids"].as_u64()), (Some(1), Some(1), Some(2)), "{r}");
+    // The link's remote go-to goes with upstream's link pass (external_links); the fork's sweep of
+    // every other action then finds none (external_refs).
+    assert_eq!(
+        (r["form_actions"].as_u64(), r["external_links"].as_u64(), r["external_refs"].as_u64(), r["standards_ids"].as_u64()),
+        (Some(1), Some(1), Some(0), Some(2)),
+        "{r}"
+    );
     let out = pdfcraft_cos::Document::open(Arc::new(std::fs::read(dir.join("clean.pdf")).unwrap())).unwrap();
     let kinds: Vec<String> = out
         .object_numbers()
