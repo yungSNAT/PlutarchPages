@@ -348,19 +348,27 @@ fn too_large(max: u64) -> ExternalError {
 const MAX_STAGE_ENTRIES: usize = 10_000;
 const MAX_STAGE_DEPTH: usize = 32;
 
-/// The bytes in the regular files under `dir`, links not followed. Anything unreadable counts as
+/// The bytes in the regular files under `dirs`, links not followed. Anything unreadable counts as
 /// nothing and the sum saturates. Each size is read from the file itself: on Windows a directory
 /// listing keeps the old size while a process still has the file open. More than
-/// [`MAX_STAGE_ENTRIES`] entries or folders deeper than [`MAX_STAGE_DEPTH`] count as `u64::MAX`,
-/// past any limit, so the walk stays cheap and the program that made them is stopped.
-fn bytes_under(dir: &Path) -> u64 {
-    let (mut pending, mut sum, mut seen) = (vec![(dir.to_path_buf(), 0)], 0u64, 0usize);
+/// [`MAX_STAGE_ENTRIES`] entries in all, or folders deeper than [`MAX_STAGE_DEPTH`], count as
+/// `u64::MAX`, past any limit, so the walk stays cheap and the program that made them is stopped.
+/// `stop` is asked before each folder and every 256 entries; once it is true the walk returns what
+/// it has counted, so a cancel or a deadline is not held up by it.
+fn bytes_under(dirs: &[PathBuf], stop: &dyn Fn() -> bool) -> u64 {
+    let (mut pending, mut sum, mut seen): (Vec<_>, _, _) = (dirs.iter().map(|d| (d.clone(), 0)).collect(), 0u64, 0usize);
     while let Some((dir, depth)) = pending.pop() {
+        if stop() {
+            return sum;
+        }
         let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             seen += 1;
             if seen > MAX_STAGE_ENTRIES {
                 return u64::MAX;
+            }
+            if seen % 256 == 0 && stop() {
+                return sum;
             }
             let path = entry.path();
             match std::fs::symlink_metadata(&path) {
@@ -582,9 +590,12 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
         let mut child = supervise::spawn(cmd, "LibreOffice")?;
         // Stopped at once when what it writes anywhere in its stage grows too large: the result,
         // or a file under another name (a result may be written as one first), its profile and
-        // home included. Only the staged input is left out.
-        let written = || ["out", "scratch", "profile", "home"].iter().fold(0u64, |sum, sub| sum.saturating_add(bytes_under(&stage.path(sub))));
-        match supervise::wait(&mut child, Instant::now() + limits.timeout, cancel, || written() > limits.max_output) {
+        // home included. Only the staged input is left out. The walk gives way to a cancel or the
+        // deadline, which `wait` then acts on.
+        let deadline = Instant::now() + limits.timeout;
+        let watched: Vec<PathBuf> = ["out", "scratch", "profile", "home"].iter().map(|sub| stage.path(sub)).collect();
+        let stop = || cancel.load(std::sync::atomic::Ordering::Relaxed) || Instant::now() >= deadline;
+        match supervise::wait(&mut child, deadline, cancel, || bytes_under(&watched, &stop) > limits.max_output) {
             Ended::Exited(status) if !status.success() => {
                 Err(ExternalError::ProcessFailed(format!("LibreOffice stopped ({status}) without finishing the PDF")))
             }
@@ -765,6 +776,24 @@ mod tests {
         assert!(env.lines().any(|l| l.starts_with("PATH=")), "{env}");
         let home = env.lines().find_map(|l| l.strip_prefix("HOME="));
         assert!(home.is_some_and(|h| h.ends_with("/home")) && home != std::env::var("HOME").ok().as_deref(), "{home:?}");
+    }
+
+    /// The size walk counts every folder it is given against one entry budget, and gives way at
+    /// once to a cancel or the deadline (`stop`).
+    #[test]
+    fn the_size_walk_has_one_budget_and_gives_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        let half = MAX_STAGE_ENTRIES / 2 + 1;
+        for d in [&a, &b] {
+            std::fs::create_dir(d).unwrap();
+            for i in 0..half {
+                std::fs::write(d.join(i.to_string()), b"x").unwrap();
+            }
+        }
+        assert_eq!(bytes_under(std::slice::from_ref(&a), &|| false), half as u64);
+        assert_eq!(bytes_under(&[a.clone(), b.clone()], &|| false), u64::MAX, "one budget for both");
+        assert_eq!(bytes_under(&[a, b], &|| true), 0, "stopped before the first folder");
     }
 
     /// The temporary folder is shared on Unix: a conversion's folder, and the document staged in
