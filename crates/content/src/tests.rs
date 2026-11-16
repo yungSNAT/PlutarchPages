@@ -330,7 +330,8 @@ fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
 #[test]
 fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
     for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC"] {
-        let mut src = b"q BI ID \x7F EI".to_vec();
+        // ASCIIHex, so the samples end at `>` and not with the spacing before the terminator.
+        let mut src = b"q BI /F /AHx ID 7F> EI".to_vec();
         src.extend_from_slice(tail);
         let label = String::from_utf8_lossy(tail);
         let first = parse(&src);

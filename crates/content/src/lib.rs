@@ -553,7 +553,8 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
 /// its length (the renderer then ends it there). Otherwise the renderer would choose among that
 /// `EI` and the one written after the data by looking at what follows each, and what this writer
 /// puts after the image (spacing, the terminator, normalised operators) can change that choice,
-/// so the data read back would end elsewhere.
+/// so the data read back would end elsewhere. For the same reason no operand is written with an
+/// `EI` in it (see [`write_operand`]).
 pub fn write_op(op: &Op, out: &mut Vec<u8>) {
     if let Some((dict, img)) = &op.inline {
         let hex;
@@ -566,9 +567,9 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
         out.extend_from_slice(b"BI");
         for (k, v) in dict.iter() {
             out.push(b' ');
-            serialize(&Object::Name(k.clone()), out);
+            write_operand(&Object::Name(k.clone()), out);
             out.push(b' ');
-            serialize(v, out);
+            write_operand(v, out);
         }
         out.extend_from_slice(b" ID ");
         out.extend_from_slice(img);
@@ -576,11 +577,61 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
         return;
     }
     for o in &op.operands {
-        serialize(o, out);
+        write_operand(o, out);
         out.push(b' ');
     }
     out.extend_from_slice(&op.op);
     out.push(b'\n');
+}
+
+/// Write an operand as [`serialize`] does, but with an `I` that follows an `E` in a name written
+/// `#49` and in a literal string `\111`. A source may spell those bytes so (`/A#45I`), and written
+/// plainly they would put an `EI` after an inline image, which the renderer can take as the
+/// image's end (see `write_op`). Tokens are separated, so `EI` can only arise inside one.
+fn write_operand(o: &Object, out: &mut Vec<u8>) {
+    match o {
+        Object::Array(items) => {
+            out.push(b'[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(b' ');
+                }
+                write_operand(item, out);
+            }
+            out.push(b']');
+        }
+        Object::Dict(dict) => {
+            out.extend_from_slice(b"<<");
+            for (k, v) in dict.iter() {
+                write_operand(&Object::Name(k.clone()), out);
+                out.push(b' ');
+                write_operand(v, out);
+            }
+            out.extend_from_slice(b">>");
+        }
+        _ => {
+            let start = out.len();
+            serialize(o, out);
+            // Escapes end in a digit, a lower-case letter or a delimiter, and `I` is no hex digit,
+            // so each `EI` here is a literal `I` after an `E`: only the `I` needs another spelling.
+            let escape: &[u8] = match o {
+                Object::Name(_) => b"#49",
+                Object::String(_) => b"\\111",
+                _ => return,
+            };
+            if out.get(start..).is_some_and(|token| token.windows(2).any(|pair| pair == b"EI")) {
+                let mut after_e = false;
+                for b in out.split_off(start) {
+                    if after_e && b == b'I' {
+                        out.extend_from_slice(escape);
+                    } else {
+                        out.push(b);
+                    }
+                    after_e = b == b'E';
+                }
+            }
+        }
+    }
 }
 
 /// An inline image's parameters and data with ASCIIHex in front of its filters. The hex digits and
