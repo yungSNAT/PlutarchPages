@@ -247,8 +247,109 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
         let names: Vec<&[u8]> = parsed.ops.iter().map(|o| o.op.as_slice()).collect();
         assert_eq!(names, [&b"q"[..], b"cm", b"BI", b"Q", b"BT", b"Tf", b"Td", b"Tj", b"ET"], "{label}");
         assert_eq!(parsed.skipped, 0, "{label}");
-        assert_eq!(parse(&serialize_ops(&parsed.ops)).ops[2].inline, parsed.ops[2].inline, "{label}");
+        // Its data holds an `EI`, so it is written ASCIIHex-encoded: the renderer reads the same
+        // samples from it, followed by the same operators.
+        let written = serialize_ops(&parsed.ops);
+        assert_eq!(parse(&written).ops.iter().map(|o| o.op.as_slice()).collect::<Vec<_>>(), names, "{label}");
+        assert_eq!(rendered_samples(&written).map(|samples| samples.len()), Some(64), "{label}");
+        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
     }
+}
+
+/// The samples the renderer decodes for the first inline image in `content`.
+fn rendered_samples(content: &[u8]) -> Option<Vec<u8>> {
+    use hayro_syntax::content::TypedIter;
+    use hayro_syntax::content::ops::{InlineImage, TypedInstruction};
+    let mut iter = TypedIter::new(content);
+    while let Some(op) = iter.next() {
+        if let TypedInstruction::InlineImage(InlineImage(stream)) = op {
+            return stream.decoded().ok().map(|samples| samples.into_owned());
+        }
+    }
+    None
+}
+
+/// Written ASCIIHex-encoded, an image keeps each filter's parameters, in either spelling, and its
+/// declared length becomes the written data's.
+#[test]
+fn an_inline_image_written_as_hex_keeps_its_parameters_and_a_true_length() {
+    let flate: Vec<u8> = (0..FLATE_WITH_EI.len()).step_by(2).map(|i| u8::from_str_radix(&FLATE_WITH_EI[i..i + 2], 16).unwrap()).collect();
+    let image = |parameters: &[u8]| {
+        let mut src = b"BI ".to_vec();
+        src.extend_from_slice(parameters);
+        src.extend_from_slice(b" ID ");
+        src.extend_from_slice(&flate);
+        src.extend_from_slice(b"\nEI Q");
+        src
+    };
+    // The predictor changes the samples, so parameters given to the wrong filter would show.
+    let unpredicted = rendered_samples(&image(b"/F /Fl"));
+    for (parameters, length) in [
+        (b"/F [/Fl] /DP << /Predictor 2 /Columns 64 >> /L 75".as_slice(), b"L".as_slice()),
+        (b"/Filter /FlateDecode /DecodeParms [<< /Predictor 2 /Columns 64 >>] /Length 75", b"Length"),
+        // Both spellings at once: whichever a reader takes, its filters and parameters still agree.
+        (b"/F /Fl /Filter /FlateDecode /DP << /Predictor 2 /Columns 64 >> /DecodeParms [<< /Predictor 2 /Columns 64 >>] /L 75", b"L"),
+    ] {
+        let label = String::from_utf8_lossy(parameters);
+        let src = image(parameters);
+        let written = serialize_ops(&parse(&src).ops);
+        let (dict, data) = parse(&written).ops[0].inline.clone().unwrap();
+        assert_eq!(data.len(), 151, "{label}");
+        assert_eq!(dict.int(length), Some(151), "{label}");
+        assert!(rendered_samples(&src).is_some_and(|samples| samples.len() == 64), "{label}");
+        assert_ne!(rendered_samples(&src), unpredicted, "{label}");
+        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
+    }
+}
+
+/// From the scheduled `round_trip` fuzz job (16 November 2026). An image of unknown length holds
+/// an `EI` that the renderer's end heuristic rejects only because 20 operators, fewer than the
+/// 21 it needs, follow it to the end of the stream. The real end is glued to a trailing `E`
+/// (`EEI`); written back, the newline before the terminator splits that into `E` and `EI`, the
+/// 21st operator, so the rewritten image ends at the earlier `EI` and its data reads as operators.
+#[test]
+fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
+    let mut src = b"BI ID \0EI .0 w".to_vec();
+    src.extend_from_slice(&b" n".repeat(18));
+    src.extend_from_slice(b" EEI\n");
+    let first = parse(&src);
+    assert_eq!(first.ambiguous_images, 0);
+    let written = serialize_ops(&first.ops);
+    assert_eq!(rendered_samples(&written), rendered_samples(&src));
+    let second = parse(&written);
+    let third = parse(&serialize_ops(&second.ops));
+    assert_eq!(
+        second.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>(),
+        third.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>()
+    );
+}
+
+/// A name or string spelt with escapes in the source holds no `EI` there. Written out plainly it
+/// would: with fewer than 21 operators after the image and no text shown, the renderer then takes
+/// that `EI` as the image's end, and the operators before it become image data.
+#[test]
+fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
+    for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC", b" Q /Span << /A#45I 1 >> BDC EMC"] {
+        // ASCIIHex, so the samples end at `>` and not with the spacing before the terminator.
+        let mut src = b"q BI /F /AHx ID 7F> EI".to_vec();
+        src.extend_from_slice(tail);
+        let label = String::from_utf8_lossy(tail);
+        let first = parse(&src);
+        assert_eq!(first.ambiguous_images, 0, "{label}");
+        let written = serialize_ops(&first.ops);
+        assert_eq!(renderer_operators(&written), renderer_operators(&src), "{label}");
+        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
+        assert_eq!(
+            parse(&written).ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
+            first.ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
+            "{label}"
+        );
+    }
+    // A byte written as an escape that ends in `E`, then an `I`: the `I` is respelt too.
+    let op = Op::new("gs", vec![Object::Name(vec![0x0E, b'I'])]);
+    let written = serialize_ops(std::slice::from_ref(&op));
+    assert_eq!(written, b"/#0E#49 gs\n");
+    assert_eq!(parse(&written).ops[0].operands, op.operands);
 }
 
 fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
