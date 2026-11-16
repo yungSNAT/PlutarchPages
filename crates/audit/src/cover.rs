@@ -12,9 +12,12 @@
 //! one the audit can't read and counts as dark as the text), and from ExtGState (`gs`) the
 //! non-stroking alpha (`/ca`), the blend mode (`/BM`) and whether a soft mask (`/SMask`) is set. A
 //! fully transparent fill paints no cover. One painted fully opaque in the Normal blend mode without
-//! a soft mask is opaque, and hides text whatever its colour. Any other (translucent, blended or
-//! through a soft mask) counts as a cover as dark as it is: how much it hides depends on a backdrop
-//! and a mask the audit doesn't read. Form XObjects are followed read-only with a depth cap, and so
+//! a soft mask is opaque, and hides text whatever its colour. A translucent one in the Normal blend
+//! mode keeps its alpha, so the audit can mix it with the text and what lies around the text. A
+//! blended one, or one painted through a soft mask, counts as a cover as dark as it is: how much it
+//! hides depends on colours and a mask the audit doesn't read, and so does one in a transparency
+//! group (a form with `/Group`) drawn translucent, blended or masked, whatever its own opacity. A
+//! plain form's content is painted as the page's own. Form XObjects are followed read-only with a depth cap, and so
 //! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
 //! scope and documented as such; the layers whose content fills one are reported.
 //!
@@ -61,9 +64,14 @@ pub struct FilledRect {
     /// Paint position: its layer, the `Do` operators that drew it, outermost first, then the fill
     /// operator's index (see the module documentation).
     pub pos: Vec<usize>,
-    /// Painted fully opaque, in the Normal blend mode and without a soft mask: it hides what lies
-    /// under it whatever its colour (ISO 32000-2 §11.3.5).
+    /// Painted fully opaque, in the Normal blend mode and without a soft mask, and not inside a
+    /// transparency group drawn otherwise: it hides what lies under it whatever its colour (ISO
+    /// 32000-2 §11.3.5).
     pub opaque: bool,
+    /// The alpha it is painted with, when that alone decides how much of what lies under it shows:
+    /// in the Normal blend mode without a soft mask. `None` when blended or masked, or inside a
+    /// transparency group drawn translucent, blended or masked.
+    pub alpha: Option<f64>,
     /// Painted by an image.
     pub image: bool,
 }
@@ -109,13 +117,18 @@ struct Gs {
     blended: bool,
     /// A soft mask (`/SMask`) is in force: the fill can show what lies under it.
     masked: bool,
+    /// Inside a transparency group drawn translucent, blended or through a soft mask: the group is
+    /// composited with that state, so a fill here shows with an alpha the audit doesn't work out,
+    /// whatever opacity it sets (ISO 32000-2 §11.6.6). A plain form's content is painted with the
+    /// state at `Do`, as the page's own would be.
+    grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
 }
 
 impl Gs {
     fn new(clip: [f64; 4]) -> Self {
-        Gs { ctm: Matrix::IDENTITY, fill: Some([0.0; 3]), space: 1, alpha: 1.0, blended: false, masked: false, clip }
+        Gs { ctm: Matrix::IDENTITY, fill: Some([0.0; 3]), space: 1, alpha: 1.0, blended: false, masked: false, grouped: false, clip }
     }
 }
 
@@ -221,6 +234,9 @@ struct Walker<'a> {
     /// The layers that fill a shape other than a box (a cloudy border drawn with curves): the audit
     /// reads no cover from it.
     shaped: HashSet<usize>,
+    /// Something was painted on the page whose colours the audit doesn't read as what lies under
+    /// text: a stroke, or an image with a mask of its own.
+    unread: bool,
 }
 
 impl<'a> Walker<'a> {
@@ -361,7 +377,11 @@ impl<'a> Walker<'a> {
                     };
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
-                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i),
+                b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
+                    // `B` and `b` stroke the path too.
+                    self.unread |= matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") && self.inside.is_none();
+                    self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i);
+                }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
                     let shadings = resources.get(b"Shading").map(|o| self.doc.resolve(o));
@@ -388,7 +408,11 @@ impl<'a> Walker<'a> {
                         self.walk_pattern(name, i, res, calls)?;
                     }
                 }
-                b"S" | b"s" | b"n" => path = Path::Empty,
+                b"S" | b"s" => {
+                    self.unread |= self.inside.is_none();
+                    path = Path::Empty;
+                }
+                b"n" => path = Path::Empty,
                 b"W" | b"W*" => {
                     clipping = true;
                     path = Path::Other;
@@ -439,8 +463,9 @@ impl<'a> Walker<'a> {
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
         let pos = std::iter::once(self.layer).chain(calls.iter().copied()).chain(std::iter::once(at)).collect();
-        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked;
-        self.out.push(FilledRect { rect, rgb, pos, opaque, image });
+        let opaque = gs.alpha >= 1.0 && !gs.blended && !gs.masked && !gs.grouped;
+        let alpha = (!gs.blended && !gs.masked && !gs.grouped).then_some(gs.alpha);
+        self.out.push(FilledRect { rect, rgb, pos, opaque, alpha, image });
     }
 
     /// Record the cover the image `image` (its dictionary) makes, painted by the operator at index
@@ -457,6 +482,7 @@ impl<'a> Walker<'a> {
         let mask = |key: &[u8]| image.get(key).is_some_and(|o| !matches!(*self.doc.resolve(o), Object::Null));
         let own_mask = mask(b"SMask") || mask(b"Mask") || alpha_in_data;
         let area = meet(gs.clip, gs.ctm.bbox([0.0, 0.0, 1.0, 1.0]));
+        self.unread |= own_mask && self.inside.is_none();
         if !own_mask && gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
             self.paint(area, if stencil { gs.fill } else { None }, gs, true, calls, at);
         }
@@ -496,6 +522,9 @@ impl<'a> Walker<'a> {
         // The XObject matrix maps form space into the user space active at `Do`.
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
+        // A `/Group` makes the form a transparency group (ISO 32000-2 §11.6.6), as the renderer reads it.
+        let group = dict.get(b"Group").is_some_and(|o| self.doc.resolve(o).as_dict().is_some());
+        sub_gs.grouped |= group && (gs.alpha < 1.0 || gs.blended || gs.masked);
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
         }
@@ -748,14 +777,15 @@ fn shows_through(doc: &Document, bm: &Object) -> bool {
 /// later ones. Any content stream that cannot be decoded, content, forms and appearances that
 /// decode or enter past one page's [`DecodeBudget`] in all, or text in a glyph procedure or
 /// pattern cell is an audit failure, never an empty result. `crop` is the page's crop box, the clip
-/// its content and appearances start with. Also the layers that fill a shape other than a box.
+/// its content and appearances start with. Also the layers that fill a shape other than a box, and
+/// whether a stroke or an image with a mask of its own was painted.
 pub fn filled_rects(
     doc: &Document,
     page: &Dict,
     crop: [f64; 4],
     n: usize,
     appearances: &[&Appearance],
-) -> Result<(Vec<FilledRect>, HashSet<usize>), AuditError> {
+) -> Result<(Vec<FilledRect>, HashSet<usize>, bool), AuditError> {
     let resources = page.get(b"Resources").map(|o| doc.resolve(o)).and_then(|o| o.as_dict().cloned()).unwrap_or_default();
     let contents: Vec<Object> = match page.get(b"Contents") {
         None => Vec::new(),
@@ -783,6 +813,7 @@ pub fn filled_rects(
         walked: HashSet::new(),
         saved: 0,
         shaped: HashSet::new(),
+        unread: false,
     };
     let mut gs = Gs::new(crop);
     // Read one operator at a time: the joined stream can hold millions of them within the
@@ -804,5 +835,5 @@ pub fn filled_rects(
         let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };
         w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
-    Ok((w.out, w.shaped))
+    Ok((w.out, w.shaped, w.unread))
 }

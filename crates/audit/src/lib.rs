@@ -9,10 +9,15 @@
 //! overlaps. One painted fully opaque in the Normal blend mode, without a soft mask, hides the text
 //! whatever its colour: it replaces what lies under it (ISO 32000-2 §11.3.5). Any other cover
 //! (translucent, `/ca` above 0 and below 1, blended, such as a highlight multiplied onto the page,
-//! or painted through a soft mask) counts only when it is dark enough against the text's colour to
-//! make the text unreadable (WCAG contrast below 3.0): how much it hides depends on the backdrop,
-//! which the audit doesn't read. Page backgrounds, painted before the text, and highlight marks are
-//! therefore not flagged.
+//! or painted through a soft mask) counts only when it leaves the text unreadable (WCAG contrast
+//! below 3.0). For a translucent one in the Normal blend mode the audit reads the backdrop: the
+//! text's colour and what lies around it, each mixed with the covers painted over them. What lies
+//! around is the page's white, or the rectangles painted before the text, each over the line's
+//! whole box, in colours it reads. Where it can't say (a box over part of the line, a colour it
+//! doesn't read, a page or appearance that fills a shape other than a box or paints a stroke or an
+//! image with a mask of its own, or text not filled opaque), and for a blended or masked cover or
+//! one in a transparency group drawn translucent, blended or masked, the cover is compared with the text's colour alone.
+//! Page backgrounds, painted before the text, and highlight marks are therefore not flagged.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
@@ -38,6 +43,7 @@
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use pdfcraft_content::Matrix;
@@ -305,7 +311,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // The text walk holds a stream's operators all at once, and reads each appearance with a
         // budget of its own: run first, a stream of tiny operators or an appearance listed many
         // times would cost it far more than the bounds allow.
-        let (rects, shaped) = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
+        let (rects, shaped, unread) = cover::filled_rects(doc, &page.dict, page.crop(doc), n, &appearances)?;
         let (mut lines, mut gaps) = painted_text(doc, page, n, 0, None, report_advances)?;
         // Each read has a text budget of its own; the page's lines in all are held to one.
         let mut text_bytes = text_len(&lines);
@@ -329,6 +335,13 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         }
         let mut rects = rects;
         add_glyph_covers(&lines, &mut rects);
+        // In paint order, so each line's backdrop has what was painted before each cover.
+        rects.sort_by(|a, b| a.pos.cmp(&b.pos));
+        // shortcut: page-wide. Reading where a shape, stroke or masked image lies would keep the
+        // backdrop for the lines it misses.
+        if !shaped.is_empty() || unread {
+            lines.iter().for_each(|p| p.seen.set(None));
+        }
         budget.start_page(&lines);
         // 1. Filled rectangles and block glyphs over extractable text.
         for r in &rects {
@@ -343,6 +356,8 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                     out.push(AuditFinding { page: n, kind: FindingKind::RetainedAdvance, rect: r.rect, covered_text });
                 }
             }
+            // One step per line, within what `hidden_text` charged for this cover.
+            lines.iter().for_each(|p| p.paint_over(r));
         }
         // 2. Annotation covers over extractable text. A Square is checked by its interior colour,
         // after the page and the annotations before it, where a viewer paints it: when it has no
@@ -398,6 +413,47 @@ const MAX_PAGE_TEXT: usize = 16 << 20;
 struct Painted {
     layer: usize,
     line: TextLine,
+    /// The line's colour and that of what lies around it, as the rectangles painted so far over its
+    /// box leave them: the page's white at first. `None` once one of them is something the audit
+    /// can't mix (see the module documentation).
+    seen: Cell<Option<([f64; 3], [f64; 3])>>,
+}
+
+impl Painted {
+    fn new(layer: usize, line: TextLine) -> Self {
+        let filled = line.opacity().0 >= 1.0 && line.run_modes().all(|(mode, _)| mode == 0);
+        let seen = filled.then_some((line.color, [1.0; 3]));
+        Self { layer, line, seen: Cell::new(seen) }
+    }
+
+    /// Whether `rect` is painted after the line starts.
+    fn under(&self, rect: &cover::FilledRect) -> bool {
+        rect.pos.iter().copied().cmp(std::iter::once(self.layer).chain(self.line.paint_order())).is_gt()
+    }
+
+    /// Record `rect` in [`Self::seen`]: one painted before the line changes what lies around it, one
+    /// after the line both.
+    fn paint_over(&self, rect: &cover::FilledRect) {
+        let r = &self.line.rect;
+        let overlap = area(&[rect.rect[0].max(r[0]), rect.rect[1].max(r[1]), rect.rect[2].min(r[2]), rect.rect[3].min(r[3])]);
+        if overlap <= 0.0 {
+            return;
+        }
+        let whole = rect.rect[0] <= r[0] && rect.rect[1] <= r[1] && rect.rect[2] >= r[2] && rect.rect[3] >= r[3];
+        let seen = match (self.seen.get(), rect.alpha, rect.rgb) {
+            (Some((text, around)), Some(alpha), Some(rgb)) if whole => {
+                let text = if self.under(rect) { mix(rgb, alpha, text) } else { text };
+                Some((text, mix(rgb, alpha, around)))
+            }
+            _ => None,
+        };
+        self.seen.set(seen);
+    }
+}
+
+/// `rgb` painted at `alpha` over `under`, in the Normal blend mode.
+fn mix(rgb: [f64; 3], alpha: f64, under: [f64; 3]) -> [f64; 3] {
+    std::array::from_fn(|i| alpha * rgb[i] + (1.0 - alpha) * under[i])
 }
 
 fn text_len(lines: &[Painted]) -> usize {
@@ -430,7 +486,7 @@ fn painted_text(
                 line.rect = m.bbox(line.rect);
                 line.ink.iter_mut().for_each(|w| *w = m.bbox(*w));
             }
-            Painted { layer, line }
+            Painted::new(layer, line)
         })
         .collect();
     for gap in &mut gaps {
@@ -451,18 +507,29 @@ fn covers_gap(rect: &[f64; 4], gap: &GlyphAdvanceGap) -> bool {
 }
 
 /// A filled rectangle is a faux-redaction cover for a text line iff it was painted strictly
-/// after the start of the line, overlaps it substantially, and hides it: it is opaque, or dark
-/// enough against the line's color to make the text unreadable. Light translucent or blended covers
-/// (highlights) over dark text fail the contrast check and are not flagged; one in a color the
-/// audit doesn't read could be as dark as the text, and is. An image doesn't hide invisible text:
+/// after the start of the line, overlaps it substantially, and hides it: it is opaque, or leaves
+/// the text unreadable ([`leaves_unreadable`]). Highlights over dark text, light and blended or
+/// translucent enough to let the text show, fail the contrast check and are not flagged; one in a
+/// color the audit doesn't read could be as dark as the text, and is. An image doesn't hide invisible text:
 /// that is what an OCR layer under its scan is. A line can join runs painted before and after the
 /// cover, and the finding reports the runs under it, those painted on top too: in the line's color
 /// on a dark cover they are unreadable, but on a light one they can show.
 fn is_cover(rect: &cover::FilledRect, p: &Painted) -> bool {
-    rect.pos.iter().copied().cmp(std::iter::once(p.layer).chain(p.line.paint_order())).is_gt()
+    p.under(rect)
         && covers(&rect.rect, &p.line)
-        && (rect.opaque || rect.rgb.is_none_or(|rgb| contrast(p.line.color, rgb) < COVER_CONTRAST))
+        && (rect.opaque || rect.rgb.is_none_or(|rgb| leaves_unreadable(rect.alpha, rgb, p)))
         && !(rect.image && p.line.run_modes().all(|(mode, _)| matches!(mode, 3 | 7)))
+}
+
+/// Whether a cover in `rgb` leaves `p` unreadable (WCAG contrast below [`COVER_CONTRAST`]): the line
+/// against what lies around it, both seen through the cover, where the audit reads them and the
+/// cover's `alpha`; otherwise the line's colour against the cover's.
+fn leaves_unreadable(alpha: Option<f64>, rgb: [f64; 3], p: &Painted) -> bool {
+    let shown = match (alpha, p.seen.get()) {
+        (Some(alpha), Some((text, around))) => contrast(mix(rgb, alpha, text), mix(rgb, alpha, around)),
+        _ => contrast(p.line.color, rgb),
+    };
+    shown < COVER_CONTRAST
 }
 
 /// Characters drawn as a solid box: typed or pasted over text, they hide it as a filled rectangle
@@ -482,7 +549,7 @@ fn shows_text(text: &str) -> bool {
 /// boxes counts only when it shows nothing but blocks. A line whose text was reordered for reading
 /// lists no runs, and gives none.
 fn add_glyph_covers(lines: &[Painted], out: &mut Vec<cover::FilledRect>) {
-    for Painted { layer, line } in lines {
+    for Painted { layer, line, .. } in lines {
         if !line.text.chars().any(is_block) || line.opacity().0 <= 0.0 {
             continue;
         }
@@ -493,7 +560,14 @@ fn add_glyph_covers(lines: &[Painted], out: &mut Vec<cover::FilledRect>) {
             let pos: Vec<usize> = std::iter::once(*layer).chain(order).collect();
             // Judged by its colour, as a translucent cover is: the text reader doesn't say what blend
             // mode or soft mask a run is drawn with.
-            let cover = |rect: &[f64; 4]| cover::FilledRect { rect: *rect, rgb: Some(line.color), pos: pos.clone(), opaque: false, image: false };
+            let cover = |rect: &[f64; 4]| cover::FilledRect {
+                rect: *rect,
+                rgb: Some(line.color),
+                pos: pos.clone(),
+                opaque: false,
+                alpha: None,
+                image: false,
+            };
             if text.split_whitespace().count() == ink.len() {
                 out.extend(text.split_whitespace().zip(ink).filter(|(w, _)| w.chars().all(is_block)).map(|(_, b)| cover(b)));
             } else if !text.trim().is_empty() && text.chars().all(|c| c.is_whitespace() || is_block(c)) {
