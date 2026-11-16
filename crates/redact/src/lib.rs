@@ -986,29 +986,8 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
             report.fields += 1;
         }
     }
-    // A widget written in place on another page names its deleted field through `/Parent`, which
-    // would keep the field and its value in the file: it goes with the field.
     if !doomed_fields.is_empty() {
-        for p in pdfcraft_model::pages(doc) {
-            let annots = annots_of(doc, &p.dict);
-            let kept: Vec<Object> = annots
-                .iter()
-                .filter(|a| {
-                    a.as_ref().is_some() || !matches!(&**a, Object::Dict(d) if d.reference(b"Parent").is_some_and(|f| doomed_fields.contains(&f)))
-                })
-                .cloned()
-                .collect();
-            if kept.len() != annots.len() {
-                report.annotations += annots.len() - kept.len();
-                doc.update_dict(p.obj, |d| {
-                    if kept.is_empty() {
-                        d.remove(b"Annots");
-                    } else {
-                        d.set(b"Annots".to_vec(), Object::Array(kept));
-                    }
-                })?;
-            }
-        }
+        report.annotations += drop_inline_widgets(doc, &doomed_fields)?;
     }
 
     // 3a. A tagged PDF's structure tree still points at the removed comments and widgets
@@ -1442,20 +1421,14 @@ fn remove_page_annotations(
     }
     // Pop-ups dropped with their parent count too: a reply on another page may answer one.
     removed_everywhere.extend(going.iter().copied());
-    let mut kept: Vec<Object> = Vec::with_capacity(annots.len());
-    for (i, a) in annots.into_iter().enumerate() {
-        let gone = match a.as_ref() {
-            Some(r) => going.contains(&r),
-            None => inline_gone[i],
-        };
-        if !gone {
-            kept.push(a);
-            continue;
-        }
-        // What the annotation holds as separate objects (text, actions, named pop-ups) goes too.
-        let d = a.as_ref().map_or_else(|| a.as_dict().cloned(), |r| doc.get(r).as_dict().cloned());
-        gone_payloads.extend(d.iter().flat_map(|d| annotation_payloads(doc, d)));
-    }
+    let (kept, gone): (Vec<_>, Vec<_>) = annots.into_iter().enumerate().partition(|(i, a)| match a.as_ref() {
+        Some(r) => !going.contains(&r),
+        None => !inline_gone[*i],
+    });
+    // What the annotations that go hold as separate objects (text, actions, named pop-ups) goes too.
+    let gone_dicts = gone.iter().filter_map(|(_, a)| a.as_ref().map_or_else(|| a.as_dict().cloned(), |r| doc.get(r).as_dict().cloned()));
+    gone_payloads.extend(gone_dicts.flat_map(|d| annotation_payloads(doc, &d)));
+    let kept: Vec<Object> = kept.into_iter().map(|(_, a)| a).collect();
     doc.update_dict(page.obj, |d| {
         if kept.is_empty() {
             d.remove(b"Annots");
@@ -1464,6 +1437,33 @@ fn remove_page_annotations(
         }
     })?;
     Ok(())
+}
+
+/// A widget written in place on any page names its deleted field through `/Parent`, which would
+/// keep the field and its value in the file: it goes with the field. Returns how many went.
+fn drop_inline_widgets(doc: &mut Document, doomed_fields: &[ObjRef]) -> Result<usize, RedactError> {
+    let mut dropped = 0;
+    for p in pdfcraft_model::pages(doc) {
+        let annots = annots_of(doc, &p.dict);
+        let kept: Vec<Object> = annots
+            .iter()
+            .filter(|a| {
+                a.as_ref().is_some() || !matches!(&**a, Object::Dict(d) if d.reference(b"Parent").is_some_and(|f| doomed_fields.contains(&f)))
+            })
+            .cloned()
+            .collect();
+        if kept.len() != annots.len() {
+            dropped += annots.len() - kept.len();
+            doc.update_dict(p.obj, |d| {
+                if kept.is_empty() {
+                    d.remove(b"Annots");
+                } else {
+                    d.set(b"Annots".to_vec(), Object::Array(kept));
+                }
+            })?;
+        }
+    }
+    Ok(dropped)
 }
 
 /// Remove redaction marks without applying them (`None` = all), with their replies and pop-ups as
