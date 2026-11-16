@@ -16,8 +16,10 @@
 //! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL, when not given or empty, is
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
-//! archlinux:base-devel container. makepkg refuses root, so as root it runs itself again as the
-//! unprivileged user `builder`, which it adds if needed and makes the owner of DIST.
+//! archlinux:base-devel container. makepkg refuses root, so as root it unpacks the tarball and runs
+//! makepkg as the unprivileged user `builder`, which it adds if needed, in a scratch directory that
+//! builder owns, then copies the package into DIST and gives it DIST's owner. DIST itself keeps its
+//! owner and mode.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -30,7 +32,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::process::CommandExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -103,20 +105,12 @@ fn arch_package() -> Result {
         return Err(format!("{} not found (run packaging/linux/package.sh --formats tar first)", archive.display()).into());
     }
 
-    if capture(Command::new("id").arg("-u"))?.stdout.trim_ascii() == b"0" {
+    let as_root = capture(Command::new("id").arg("-u"))?.stdout.trim_ascii() == b"0";
+    if as_root {
         let quiet = |command: &mut Command| command.stdout(Stdio::null()).stderr(Stdio::null()).status();
         if !quiet(Command::new("id").args(["-u", "builder"]))?.success() {
             run(Command::new("useradd").args(["-m", "builder"]))?;
         }
-        run(Command::new("chown").args(["--", "builder"]).arg(&dist))?;
-        let error = Command::new("runuser")
-            .args(["-u", "builder", "--", "env", "HOME=/home/builder"])
-            .arg(env::current_exe()?)
-            .args(&args)
-            .env("PDFCRAFT_VERSION", &version)
-            .env("DIST", &dist)
-            .exec();
-        return Err(format!("couldn't run as builder: {error}").into());
     }
 
     // A private directory of its own, as arch-package.sh made: std makes none.
@@ -125,14 +119,24 @@ fn arch_package() -> Result {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
-    let packaged = package(arch, &archive, &work, &dist, &version);
+    let packaged = package(arch, &archive, &work, &dist, &version, as_root);
     if let Err(error) = fs::remove_dir_all(&work) {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
     packaged
 }
 
-fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str) -> Result {
+/// `program` run as `builder` when the helper runs as root, and as the caller otherwise.
+fn unprivileged(program: &str, as_root: bool) -> Command {
+    if !as_root {
+        return Command::new(program);
+    }
+    let mut command = Command::new("runuser");
+    command.args(["-u", "builder", "--", "env", "HOME=/home/builder", program]);
+    command
+}
+
+fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str, as_root: bool) -> Result {
     let pkgver = version.replace('-', "");
     if pkgver.is_empty() || !pkgver.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+')) {
         return Err(format!("can't make a pkgver from {version}").into());
@@ -140,16 +144,23 @@ fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str) 
 
     let stage = work.join("stage");
     fs::create_dir(&stage)?;
-    run(Command::new("tar").arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
     let config = work.join("makepkg.conf");
     fs::write(&config, format!("source /etc/makepkg.conf\nCARCH={arch}\nCHOST={arch}-unknown-linux-gnu\nPKGEXT=.pkg.tar.zst\n"))?;
     let recipe = include_str!("arch.PKGBUILD").replace("@VERSION@", &pkgver).replace("@ARCH@", arch);
     fs::write(work.join("PKGBUILD"), recipe)?;
-    run(Command::new("makepkg").current_dir(work).arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
+    if as_root {
+        run(Command::new("chown").args(["-R", "--", "builder"]).arg(work))?;
+    }
+    run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
+    run(unprivileged("makepkg", as_root).current_dir(work).arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
     let output = dist.join(format!("pdfcraft-{version}-linux-{arch}.pkg.tar.zst"));
-    run(Command::new("cp").arg("-f").arg(built).arg(&output))?;
+    run(Command::new("cp").arg("--remove-destination").arg(built).arg(&output))?;
+    if as_root {
+        let owner = fs::metadata(dist)?;
+        std::os::unix::fs::lchown(&output, Some(owner.uid()), Some(owner.gid()))?;
+    }
     run(Command::new("pacman").arg("-Qip").arg(&output))?;
     let listing = capture(Command::new("pacman").arg("-Qlp").arg(&output))?;
     let listing = String::from_utf8_lossy(&listing.stdout);
