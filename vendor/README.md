@@ -52,6 +52,8 @@ A PdfCraft patch in `hayro-syntax::Page::base_dimensions` expresses the existing
 
 In `hayro-interpret`, Type 3 glyph bounding boxes are transformed to device space before intersecting clip and shading bounds; `raster::tests::shaded_type3_glyph_draws_at_multiple_positions` covers translated glyphs (#3178).
 
+In `hayro-interpret`, `OutlineGlyph::standard_encoding_char` (`src/font/mod.rs` and `src/font/type1.rs`) gives a standard Type 1 outline's character from the encoding that selected it, ignoring `/ToUnicode`, for the fork's `font_mapping_differs` signal (#74). `text::tests::integrity_signals_distinguish_each_split_view_family` in `pdfcraft-render` covers it. The rest of both files is upstream's text.
+
 Named form properties use the effective page dictionary when the form omits `/Resources` (#3574).
 `hayro-syntax::Resources` caches the page origin; `hayro-interpret` preserves the form dictionary's absence.
 An own dictionary stops fallback, including empty and malformed entries. Explicit null keeps its previous local-empty behavior.

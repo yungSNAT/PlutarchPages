@@ -61,6 +61,12 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant unmaintained; Linux a11y stack via accesskit_unix" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names unmaintained; Linux a11y stack via accesskit_unix" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive unmaintained; Linux a11y stack via accesskit_unix" },
+    # chrono is unmaintained (no vulnerability, every version affected, no release to move to).
+    # It is held by upstream's own crates (pdfcraft, cos, engine, js, sign, ui-egui, xtask; AGENTS.md
+    # rule 5 says time goes through chrono), by craft-update (craft-libs, not optional), by the
+    # vendored lopdf's default features and by the sigstore 0.6.6 crates winprint builds with.
+    # Upstream's issue is storytold/pdfcraft#7647. Remove this entry when chrono leaves Cargo.lock.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained; held by upstream's crates, craft-update, lopdf and winprint's sigstore (storytold/pdfcraft#7647)" },
 ]
 
 # egui's default UI fonts (Ubuntu-Light, Hack, emoji-icon-font): font licences on the AGENTS.md
