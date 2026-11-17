@@ -184,8 +184,9 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
     write_unprivileged(&work.join("PKGBUILD"), &recipe, as_root)?;
     run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
     // builder enters the scratch directory itself: once its tar has run, builder could have put a
-    // link where the directory was, and a chdir by root would follow it.
-    run(unprivileged("env", as_root).arg("-C").arg(work).arg("makepkg").arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
+    // link where the directory was, and a chdir by root would follow it. makepkg runs there, so the
+    // configuration's bare name finds it even when `TMPDIR`, and so the directory's path, is relative.
+    run(unprivileged("env", as_root).arg("-C").arg(work).args(["makepkg", "--config", "makepkg.conf", "--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
     run(unprivileged("pacman", as_root).arg("-Qip").arg(&built))?;
