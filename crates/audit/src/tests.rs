@@ -153,7 +153,8 @@ fn unreferenced_streams_that_show_text_are_counted() {
 /// descriptor names is counted, and one that can't be decoded fails the audit.
 #[test]
 fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
-    const DESCRIPTOR: &str = "/Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200                               /CapHeight 700 /StemV 80";
+    const DESCRIPTOR: &str =
+        "/Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80";
     // A page showing PUBLIC, then `objects` from object 6.
     let audit = |objects: &[(&str, &[u8])]| {
         let mut b = Builder::new();

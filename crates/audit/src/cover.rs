@@ -141,9 +141,9 @@ struct Gs {
     grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
-    /// The clip is that box exactly: every clip set was a box on the page (a `re` or four-cornered
-    /// path, or a `/BBox` under a CTM that keeps the axes). Only then can a stroke's band within
-    /// `clip` be taken as what it paints.
+    /// The clip is that box exactly: every clip set was a box on the page (a path of one `re` or one
+    /// four-cornered subpath, or a `/BBox`, whose corners land on a box). Only then can a stroke's
+    /// band within `clip` be taken as what it paints.
     clip_exact: bool,
 }
 
@@ -171,8 +171,9 @@ impl Gs {
 /// The path under construction, as far as the audit cares about it.
 enum Path {
     Empty,
-    /// A `re` rectangle, in user space.
-    Rect([f64; 4]),
+    /// A `re` rectangle's box in user space, and whether the rectangle lands on that box: the CTM
+    /// keeps its edges horizontal and vertical.
+    Rect([f64; 4], bool),
     /// One `m`/`l` subpath, corners already mapped to user space; `true` once closed by `h`.
     Lines(Vec<[f64; 2]>, bool),
     /// Anything else: curves, a second subpath, a CTM change mid-path.
@@ -183,7 +184,7 @@ impl Path {
     /// The rectangle a fill of this path paints, if the path is one.
     fn rect(self) -> Option<[f64; 4]> {
         match self {
-            Path::Rect(r) => Some(r),
+            Path::Rect(r, _) => Some(r),
             Path::Lines(pts, _) => lines_rect(pts),
             Path::Empty | Path::Other => None,
         }
@@ -245,7 +246,8 @@ impl Line {
         const EPS: f64 = 1e-6;
         let Line::Straight { ends, all } = self else { return None };
         let [a, b, c, d, ..] = gs.ctm.0;
-        if !keeps_axes(&gs.ctm) || gs.dashed || gs.line_width <= 0.0 {
+        let keeps_axes = (b.abs() <= EPS && c.abs() <= EPS) || (a.abs() <= EPS && d.abs() <= EPS);
+        if !keeps_axes || gs.dashed || gs.line_width <= 0.0 {
             return None;
         }
         // The pen is a circle of the line's width in user space; the CTM stretches it by the
@@ -263,12 +265,14 @@ impl Line {
     }
 }
 
-/// Whether `ctm` maps every axis-aligned box to one: it scales, flips and turns by right angles only.
-fn keeps_axes(ctm: &Matrix) -> bool {
-    // CTM products leave rounding noise, so entries compare with a tolerance.
-    const EPS: f64 = 1e-6;
-    let [a, b, c, d, ..] = ctm.0;
-    (b.abs() <= EPS && c.abs() <= EPS) || (a.abs() <= EPS && d.abs() <= EPS)
+/// Whether the box `r` (`[x0, y0, x1, y1]`) lands on a box on the page under `ctm`: its corners,
+/// mapped, are those of an axis-aligned rectangle.
+fn box_on_page(ctm: &Matrix, r: [f64; 4]) -> bool {
+    let corner = |x, y| {
+        let (x, y) = ctm.apply(x, y);
+        [x, y]
+    };
+    lines_rect(vec![corner(r[0], r[1]), corner(r[2], r[1]), corner(r[2], r[3]), corner(r[0], r[3])]).is_some()
 }
 
 /// The bounding box of a closed polygon that is an axis-aligned rectangle, or `None`. A repeated
@@ -381,14 +385,18 @@ impl<'a> Walker<'a> {
         let mut path = Path::Empty;
         let mut line = Line::Empty;
         // The box holding every point of the path, in user space (a curve lies within its control
-        // points), and, once `W` makes the path the clip when it is painted, whether that path is
-        // the box.
+        // points), how many subpaths it has, and, once `W` makes the path the clip when it is
+        // painted, whether that path is the box.
         let mut path_box: Option<[f64; 4]> = None;
+        let mut subpaths = 0;
         let mut clipping: Option<bool> = None;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
             line = line.then(op, &gs.ctm);
+            if matches!(op.op.as_slice(), b"m" | b"re") {
+                subpaths += 1;
+            }
             match op.op.as_slice() {
                 b"m" | b"l" | b"c" | b"v" | b"y" => {
                     for p in op.operands.as_chunks::<2>().0 {
@@ -443,13 +451,14 @@ impl<'a> Walker<'a> {
                 b"re" => {
                     let rect = op.nums::<4>().and_then(|[x, y, w, h]| {
                         if [x, y, w, h].iter().all(|v| v.is_finite()) && w != 0.0 && h != 0.0 {
-                            let r = gs.ctm.bbox([x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)]);
-                            (r[2] > r[0] && r[3] > r[1]).then_some(r)
+                            let user = [x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)];
+                            let r = gs.ctm.bbox(user);
+                            (r[2] > r[0] && r[3] > r[1]).then(|| Path::Rect(r, box_on_page(&gs.ctm, user)))
                         } else {
                             None
                         }
                     });
-                    path = rect.map_or(Path::Other, Path::Rect);
+                    path = rect.unwrap_or(Path::Other);
                 }
                 b"m" => {
                     path = match (path, user_point(gs, op)) {
@@ -471,7 +480,7 @@ impl<'a> Walker<'a> {
                     path = match path {
                         Path::Lines(pts, _) => Path::Lines(pts, true),
                         // `re` already closed its subpath, so a further `h` changes nothing.
-                        Path::Rect(r) => Path::Rect(r),
+                        Path::Rect(r, boxed) => Path::Rect(r, boxed),
                         _ => Path::Other,
                     };
                 }
@@ -510,13 +519,14 @@ impl<'a> Walker<'a> {
                 }
                 b"n" => path = Path::Empty,
                 b"W" | b"W*" => {
-                    // The clip is the box exactly when the path is one box on the page and nothing more.
-                    let rect = match &path {
-                        Path::Rect(r) => keeps_axes(&gs.ctm).then_some(*r),
-                        Path::Lines(pts, _) => lines_rect(pts.clone()),
-                        Path::Empty | Path::Other => None,
+                    // The clip is the box exactly when the path is one subpath that is a box on the
+                    // page: a second could cut a hole in it.
+                    let boxed = match &path {
+                        Path::Rect(_, boxed) => *boxed,
+                        Path::Lines(pts, _) => lines_rect(pts.clone()).is_some(),
+                        Path::Empty | Path::Other => false,
                     };
-                    clipping = Some(rect.is_some() && rect == path_box);
+                    clipping = Some(boxed && subpaths == 1);
                     path = Path::Other;
                 }
                 b"c" | b"v" | b"y" => path = Path::Other,
@@ -543,6 +553,7 @@ impl<'a> Walker<'a> {
                     gs.clip_exact &= exact;
                 }
                 path_box = None;
+                subpaths = 0;
                 line = Line::Empty;
             }
         }
@@ -705,7 +716,7 @@ impl<'a> Walker<'a> {
         sub_gs.grouped |= group && (gs.alpha < 1.0 || gs.blended || gs.masked);
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
-            sub_gs.clip_exact &= keeps_axes(&sub_gs.ctm);
+            sub_gs.clip_exact &= box_on_page(&sub_gs.ctm, bbox);
         }
         calls.push(at);
         self.walk_nested(ops(&data), &mut sub_gs, sub, calls)?;
@@ -1035,7 +1046,7 @@ pub fn filled_rects(
         // A viewer clips the appearance to its box, as a form's.
         let bbox = form_bbox(doc, &form.dict);
         let clip = bbox.map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
-        let mut gs = Gs { ctm: a.ctm, clip_exact: bbox.is_none() || keeps_axes(&a.ctm), ..Gs::new(clip) };
+        let mut gs = Gs { ctm: a.ctm, clip_exact: bbox.is_none_or(|bbox| box_on_page(&a.ctm, bbox)), ..Gs::new(clip) };
         w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
     Ok((w.out, w.shaped, w.unread))

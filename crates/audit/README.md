@@ -80,9 +80,9 @@ Limits, by design and documented rather than hidden:
   stroke counts when it is one subpath along one horizontal or vertical line, solid (no dash
   pattern), under a CTM that keeps the axes, stroked alone (`S`, `s`) or over a fill (`B`, `B*`,
   `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
-  It counts only under a clip that is a box on the page (a `re` or four-cornered path, or a form's
-  or appearance's `/BBox` under a CTM that keeps the axes), since another clip may cut the band
-  away from the text. Other strokes, such as a stroked rectangle's border or a curved pen
+  It counts only under a clip that is a box on the page (a path of one `re` or one four-cornered
+  subpath, or a form's or appearance's `/BBox`, whose corners land on a box), since another clip
+  may cut the band away from the text. Other strokes, such as a stroked rectangle's border or a curved pen
   line, are not covers. Other glyphs,
   such as a Type 3 box that maps to a letter, are not covers, and a run whose text doesn't split
   into as many words as it draws counts only when it is all blocks. An image's pixels are not
