@@ -31,8 +31,8 @@ The report checks for:
 - **unreferenced text**: counts streams nothing in the file refers to that still show text, as a
   redaction applied and saved without garbage collection leaves the page's old content. No viewer
   draws them, but any reader of the file's objects recovers the text. `pdfcraft-cli audit` fails
-  on them, as on covered text. A document whose next save must be a full one has none: that save
-  keeps only what is referred to;
+  on them, as on covered text. A document an edit has marked for a full rewrite, as applying a
+  redaction does, has none: its next save keeps only what is referred to;
 - **document metadata**: counts entries in the document information dictionary and
   reports an XMP metadata stream attached to the catalogue. The audit returns counts
   only.

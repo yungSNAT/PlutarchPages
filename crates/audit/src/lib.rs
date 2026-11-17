@@ -204,8 +204,9 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
 /// draws that any reader of the file's objects recovers, as a redaction applied and saved without
 /// garbage collection leaves the page's old content. Only a stream that can be content is read: a
 /// form, or one without a `/Type` or `/Subtype` and not a font program (`/Length1`); images, fonts,
-/// metadata and object streams are not. When the next save must write the document in full, it
-/// keeps only what is referred to, and none are counted. One that can't be read or decoded within
+/// metadata and object streams are not. When an edit has marked the document for a full rewrite
+/// ([`Document::full_save_required`], as applying a redaction does), its next save keeps only what
+/// is referred to, and none are counted. One that can't be read or decoded within
 /// one page's [`DecodeBudget`](pdfcraft_cos::DecodeBudget) in all fails the audit.
 fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
     if doc.full_save_required() {
