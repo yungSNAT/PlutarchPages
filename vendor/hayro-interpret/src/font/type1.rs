@@ -26,7 +26,11 @@ pub(crate) struct Type1Font(
 );
 
 impl Type1Font {
-    pub(crate) fn new(dict: &Dict<'_>, resolver: &FontResolverFn, cmap_resolver: &CMapResolverFn) -> Option<Self> {
+    pub(crate) fn new(
+        dict: &Dict<'_>,
+        resolver: &FontResolverFn,
+        cmap_resolver: &CMapResolverFn,
+    ) -> Option<Self> {
         let cache_key = dict.cache_key();
 
         let to_unicode = read_to_unicode(dict, cmap_resolver);
@@ -38,7 +42,9 @@ impl Type1Font {
 
             warn!(
                 "unable to load font {}, falling back to {}",
-                fallback_query.post_script_name.unwrap_or("(no name)".to_string()),
+                fallback_query
+                    .post_script_name
+                    .unwrap_or("(no name)".to_string()),
                 standard_font.as_str()
             );
 
@@ -112,8 +118,8 @@ impl Type1Font {
         }
     }
 
-    /// For a standard font, the character named by the encoding used to select the outline.
-    /// This deliberately ignores /ToUnicode, which is a separate source of extracted text.
+    /// PdfCraft patch (fork #74): for a standard font, the character named by the encoding used to
+    /// select the outline. This deliberately ignores /ToUnicode, a separate source of extracted text.
     pub(crate) fn standard_encoding_char(&self, char_code: u32) -> Option<char> {
         let Kind::Standard(font) = &self.1 else { return None };
         font.char_code_to_unicode(u8::try_from(char_code).ok()?)
@@ -183,11 +189,15 @@ enum Kind {
 }
 
 fn is_cff(dict: &Dict<'_>) -> bool {
-    dict.get::<Dict<'_>>(FONT_DESC).map(|dict| dict.contains_key(FONT_FILE3)).unwrap_or(false)
+    dict.get::<Dict<'_>>(FONT_DESC)
+        .map(|dict| dict.contains_key(FONT_FILE3))
+        .unwrap_or(false)
 }
 
 fn is_type1(dict: &Dict<'_>) -> bool {
-    dict.get::<Dict<'_>>(FONT_DESC).map(|dict| dict.contains_key(FONT_FILE)).unwrap_or(false)
+    dict.get::<Dict<'_>>(FONT_DESC)
+        .map(|dict| dict.contains_key(FONT_FILE))
+        .unwrap_or(false)
 }
 
 #[derive(Debug)]
@@ -211,9 +221,21 @@ impl Type1Kind {
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
         let standard_font = select_standard_font(dict, &descriptor).map(|(f, _)| f);
 
-        let name_to_gid: HashMap<String, GlyphId> = font.table().glyph_names().map(|(gid, name)| (name.to_string(), gid)).collect();
+        let name_to_gid: HashMap<String, GlyphId> = font
+            .table()
+            .glyph_names()
+            .map(|(gid, name)| (name.to_string(), gid))
+            .collect();
 
-        Some(Self { font, encoding, widths, missing_width, encodings, name_to_gid, standard_font })
+        Some(Self {
+            font,
+            encoding,
+            widths,
+            missing_width,
+            encodings,
+            name_to_gid,
+            standard_font,
+        })
     }
 
     fn name_to_glyph(&self, name: &str) -> Option<GlyphId> {
@@ -226,7 +248,10 @@ impl Type1Kind {
         } else {
             match self.encoding {
                 Encoding::BuiltIn => self.font.table().encoding().and_then(|e| e.map(code)),
-                _ => self.encoding.map_code(code).and_then(|name| self.name_to_glyph(name)),
+                _ => self
+                    .encoding
+                    .map_code(code)
+                    .and_then(|name| self.name_to_glyph(name)),
             }
         }
         .unwrap_or(GlyphId::NOTDEF)
@@ -237,10 +262,17 @@ impl Type1Kind {
     }
 
     fn code_to_ps_name(&self, code: u8) -> Option<&str> {
-        self.encodings.get(&code).map(String::as_str).or_else(|| match self.encoding {
-            Encoding::BuiltIn => self.font.table().encoding().and_then(|e| e.glyph_name(code)),
-            _ => self.encoding.map_code(code),
-        })
+        self.encodings
+            .get(&code)
+            .map(String::as_str)
+            .or_else(|| match self.encoding {
+                Encoding::BuiltIn => self
+                    .font
+                    .table()
+                    .encoding()
+                    .and_then(|e| e.glyph_name(code)),
+                _ => self.encoding.map_code(code),
+            })
     }
 
     fn glyph_width(&self, code: u8) -> Option<f32> {
@@ -250,7 +282,8 @@ impl Type1Kind {
             _ => {
                 // If font looks like a standard font, get the width from there.
                 let sf = self.standard_font?;
-                self.code_to_ps_name(code).and_then(|name| sf.get_width(name))
+                self.code_to_ps_name(code)
+                    .and_then(|name| sf.get_width(name))
             }
         }
     }
@@ -286,7 +319,11 @@ impl CffKind {
         let data = descriptor.get::<Stream<'_>>(FONT_FILE3)?;
         let bytes = data.decoded().ok()?.to_vec();
         // PdfCraft patch (69): an OpenType-wrapped program carries its CFF in a table.
-        let font = if bytes.starts_with(b"OTTO") { CffFontBlob::from_open_type(&bytes)? } else { CffFontBlob::new(Arc::new(bytes))? };
+        let font = if bytes.starts_with(b"OTTO") {
+            CffFontBlob::from_open_type(&bytes)?
+        } else {
+            CffFontBlob::new(Arc::new(bytes))?
+        };
 
         let (encoding, encodings) = read_encoding(dict);
         let (widths, missing_width) = read_widths(dict, &descriptor)?;
@@ -299,11 +336,25 @@ impl CffKind {
             .map(|(gid, name)| (name, gid))
             .collect();
 
-        Some(Self { font, encoding, widths, missing_width, encodings, name_to_gid, gid_to_name, standard_font })
+        Some(Self {
+            font,
+            encoding,
+            widths,
+            missing_width,
+            encodings,
+            name_to_gid,
+            gid_to_name,
+            standard_font,
+        })
     }
 
     fn map_code(&self, code: u8) -> GlyphId {
-        let get_glyph = |entry: &str| self.name_to_gid.get(entry).copied().or_else(|| self.name_to_gid.get(normalized_glyph_name(entry)).copied());
+        let get_glyph = |entry: &str| {
+            self.name_to_gid
+                .get(entry)
+                .copied()
+                .or_else(|| self.name_to_gid.get(normalized_glyph_name(entry)).copied())
+        };
 
         if let Some(entry) = self.encodings.get(&code) {
             get_glyph(entry)
@@ -325,9 +376,11 @@ impl CffKind {
             Some(entry.as_str())
         } else {
             match self.encoding {
-                Encoding::BuiltIn => {
-                    self.font.glyph_index(code).and_then(|gid| self.gid_to_name.get(gid.to_u32() as usize)).and_then(|name| name.as_deref())
-                }
+                Encoding::BuiltIn => self
+                    .font
+                    .glyph_index(code)
+                    .and_then(|gid| self.gid_to_name.get(gid.to_u32() as usize))
+                    .and_then(|name| name.as_deref()),
                 _ => self.encoding.map_code(code),
             }
         }
@@ -340,7 +393,8 @@ impl CffKind {
             _ => {
                 // If font looks like a standard font, get the width from there.
                 let sf = self.standard_font?;
-                self.code_to_ps_name(code).and_then(|name| sf.get_width(name))
+                self.code_to_ps_name(code)
+                    .and_then(|name| sf.get_width(name))
             }
         }
     }
