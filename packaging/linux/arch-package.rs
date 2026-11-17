@@ -21,9 +21,15 @@
 //! scratch directory that builder owns. It then writes the package as a new file in DIST, owned by
 //! DIST's owner. DIST itself keeps its owner and mode.
 //!
-//! Run as root, it acts by path only on DIST, `TMPDIR` and the working directory, so their ancestors
-//! must be writable only by root or the caller (a sticky `TMPDIR`, such as /tmp, passes). Every step
-//! that builder's code can reach works through a handle, not a path.
+//! It trusts the checkout it runs in and that checkout's owner. builder is there because makepkg
+//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
+//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
+//! into a write outside DIST. Before anything runs as builder, root reads Cargo.toml, opens DIST,
+//! makes the scratch directory in `TMPDIR` with mktemp and writes the recipe into it. After that,
+//! builder enters the scratch directory and reads the package itself, and root follows no link
+//! builder could have made: it makes the package a new name in the opened DIST, never through a
+//! link, gives it DIST's owner through the handle, and removes the scratch directory without
+//! following links in or to it.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -160,7 +166,9 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
         run(Command::new("chown").args(["-R", "--", "builder"]).arg(work))?;
     }
     run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
-    run(unprivileged("makepkg", as_root).current_dir(work).arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
+    // builder enters the scratch directory itself: once its tar has run, builder could have put a
+    // link where the directory was, and a chdir by root would follow it.
+    run(unprivileged("env", as_root).arg("-C").arg(work).arg("makepkg").arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
     run(unprivileged("pacman", as_root).arg("-Qip").arg(&built))?;
