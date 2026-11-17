@@ -109,8 +109,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   latest published release with `packaging/windows/test-install.ps1`, and only drafts the release. Keep it over
   upstream's. Its FreeBSD, riscv64, web and Flatpak jobs are ported from that repository's
   `release.yml` at `2b3fb9dc`, without the FreeBSD Cargo cache action, and
-  `packaging/linux/arch-package.sh` replaces its `arch-package` action. It drops privileges before a Rust helper
-  stages the payload and runs `makepkg` with `arch.PKGBUILD`. The release job builds the helper for
+  `packaging/linux/arch-package.rs` replaces its `arch-package` action. Run as root, it drops privileges,
+  then stages the payload and runs `makepkg` with `arch.PKGBUILD`. The release job builds the helper for
   the container host, independently of the package architecture. All are first included in the
   release after v0.15.0, and the `assets` job fails unless all 30 packages are there.
 - Linux identity: the Flatpak's id is `io.github.yungSNAT.PlutarchPages` and the Arch package is `plutarchpages`, so

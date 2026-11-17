@@ -413,11 +413,11 @@ jobs:
           # The helper runs on the container host architecture for both packages.
           rustc --edition=2024 -D warnings -C target-feature=+crt-static packaging/linux/arch-package.rs \
             -o "$RUNNER_TEMP/plutarch-arch-package"
-          docker run --rm -e PDFCRAFT_VERSION -e PDFCRAFT_ARCH_HELPER=/opt/plutarch-arch-package \
+          docker run --rm -e PDFCRAFT_VERSION \
             -v "$RUNNER_TEMP/plutarch-arch-package:/opt/plutarch-arch-package:ro" \
             -v "$GITHUB_WORKSPACE:/workspace" -w /workspace "$ARCH_IMAGE" \
-            bash packaging/linux/arch-package.sh "$TARGET_ARCH" "dist/linux/pdfcraft-$VERSION-linux-$TARGET_ARCH.tar.gz"
-      # Arch publishes no arm64 image, and arch-package.sh has already checked the aarch64 package's contents.
+            /opt/plutarch-arch-package "$TARGET_ARCH" "dist/linux/pdfcraft-$VERSION-linux-$TARGET_ARCH.tar.gz"
+      # Arch publishes no arm64 image, and the helper has already checked the aarch64 package's contents.
       - name: Install it on Arch and run it
         if: matrix.arch == 'x86_64'
         run: |
