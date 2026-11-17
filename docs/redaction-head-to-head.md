@@ -78,7 +78,7 @@ and shadings, in page content or annotation appearances, as covers, not stroked 
 drawn thick enough hides text the audit still treats as on show. Both also miss the 2 redactions
 applied and saved without garbage collection: the page's original content stream, with the text,
 stays in the file with nothing referring to it, and the audit reads only what the pages draw.
-[`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column, with the 3 misses as
+[`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column, with the 3 misses in
 ignored tests until the audit reads strokes and unreferenced objects. The 0.18.2 CLI ran from its
 release archive, as above. pdf.js saves both its files as an incremental update, and both CLIs also
 report an `earlier-revisions` document finding on each; that finding is about the original revision
