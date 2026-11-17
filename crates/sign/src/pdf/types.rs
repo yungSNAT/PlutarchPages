@@ -47,7 +47,8 @@ pub mod kind {
     pub const UNREADABLE: &str = "the signed version could not be read";
 
     /// Every word above, for an interface to translate.
-    pub const ALL: &[&str] = &[PAGE_CONTENT, FORM_FILL, COMMENTS, SIGNATURE, LOCKED_FORM_FIELDS, SECURITY_STORE, METADATA, LINKS, STRUCTURE, PAGES, OTHER, UNREADABLE];
+    pub const ALL: &[&str] =
+        &[PAGE_CONTENT, FORM_FILL, COMMENTS, SIGNATURE, LOCKED_FORM_FIELDS, SECURITY_STORE, METADATA, LINKS, STRUCTURE, PAGES, OTHER, UNREADABLE];
 }
 
 /// Changes made after signing.
