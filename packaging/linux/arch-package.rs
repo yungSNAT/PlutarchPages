@@ -16,10 +16,10 @@
 //! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL, when not given or empty, is
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
-//! archlinux:base-devel container. makepkg refuses root, so as root it unpacks the tarball and runs
-//! makepkg as the unprivileged user `builder`, which it adds if needed, in a scratch directory that
-//! builder owns, then copies the package into DIST and gives it DIST's owner. DIST itself keeps its
-//! owner and mode.
+//! archlinux:base-devel container. makepkg refuses root, so as root it unpacks the tarball, runs
+//! makepkg and checks the package as the unprivileged user `builder`, which it adds if needed, in a
+//! scratch directory that builder owns. It then writes the package as a new file in DIST, owned by
+//! DIST's owner. DIST itself keeps its owner and mode.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -31,6 +31,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -99,6 +100,9 @@ fn arch_package() -> Result {
         None => return Err(outside.into()),
     };
     fs::create_dir_all(&dist)?;
+    // The package goes into this directory, opened before anything runs as builder: renaming DIST
+    // or putting a link in its place later can't move where it goes.
+    let dist_dir = fs::File::open(&dist)?;
     let archive =
         args.get(1).filter(|archive| !archive.is_empty()).map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);
     if !archive.is_file() {
@@ -119,7 +123,7 @@ fn arch_package() -> Result {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
-    let packaged = package(arch, &archive, &work, &dist, &version, as_root);
+    let packaged = package(arch, &archive, &work, &dist, &dist_dir, &version, as_root);
     if let Err(error) = fs::remove_dir_all(&work) {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
@@ -136,7 +140,7 @@ fn unprivileged(program: &str, as_root: bool) -> Command {
     command
 }
 
-fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str, as_root: bool) -> Result {
+fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, dist_dir: &fs::File, version: &str, as_root: bool) -> Result {
     let pkgver = version.replace('-', "");
     if pkgver.is_empty() || !pkgver.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+')) {
         return Err(format!("can't make a pkgver from {version}").into());
@@ -155,14 +159,8 @@ fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str, 
     run(unprivileged("makepkg", as_root).current_dir(work).arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
-    let output = dist.join(format!("pdfcraft-{version}-linux-{arch}.pkg.tar.zst"));
-    run(Command::new("cp").arg("--remove-destination").arg(built).arg(&output))?;
-    if as_root {
-        let owner = fs::metadata(dist)?;
-        std::os::unix::fs::lchown(&output, Some(owner.uid()), Some(owner.gid()))?;
-    }
-    run(Command::new("pacman").arg("-Qip").arg(&output))?;
-    let listing = capture(Command::new("pacman").arg("-Qlp").arg(&output))?;
+    run(unprivileged("pacman", as_root).arg("-Qip").arg(&built))?;
+    let listing = capture(unprivileged("pacman", as_root).arg("-Qlp").arg(&built))?;
     let listing = String::from_utf8_lossy(&listing.stdout);
     for path in [
         "/usr/bin/pdfcraft",
@@ -173,10 +171,25 @@ fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, version: &str, 
         "/usr/share/licenses/plutarchpages/LICENSE-MIT",
     ] {
         if !listing.lines().any(|line| line.split_whitespace().nth(1) == Some(path)) {
-            return Err(format!("{} has no {path}", output.display()).into());
+            return Err(format!("{} has no {path}", built.display()).into());
         }
     }
-    println!("wrote {}", output.display());
+
+    // Root writes only a new file in the opened DIST, never through a path in it that someone else
+    // could have linked elsewhere, and reads the package only through builder.
+    let name = format!("pdfcraft-{version}-linux-{arch}.pkg.tar.zst");
+    let target = Path::new("/proc/self/fd").join(dist_dir.as_raw_fd().to_string()).join(&name);
+    match fs::remove_file(&target) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
+        _ => {}
+    }
+    let file = fs::OpenOptions::new().write(true).create_new(true).open(&target)?;
+    if as_root {
+        let owner = dist_dir.metadata()?;
+        std::os::unix::fs::fchown(&file, Some(owner.uid()), Some(owner.gid()))?;
+    }
+    run(unprivileged("cat", as_root).arg("--").arg(&built).stdout(file))?;
+    println!("wrote {}", dist.join(name).display());
     Ok(())
 }
 
