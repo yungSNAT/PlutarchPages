@@ -46,6 +46,37 @@ Both released CLIs ran on Linux x86_64 from their release archives, checked agai
 flagged a safe file. Both missed the black box over red text, the whiteout, both images, the block
 characters, the shading and the Stamp.
 
+## Files other tools wrote
+
+Measured 17 November 2026 (UTC). PyMuPDF 2.1 (MuPDF 1.28.6), `mutool` 1.28.6 and pdf.js
+(pdfjs-dist 6.5.438) each wrote redactions or covers over `SECRET 4417` on a page with the 2 lines
+above ([how](../crates/audit/tests/data/tool-made/README.md)). 'PDFium' is judged as above, with
+the same version; 'Extracts' is whether `mutool draw -F txt` and PyMuPDF's `get_text()` still give
+`SECRET 4417`. Unsafe: a cover over text that extracts, or a mark left unapplied.
+
+| File | PDFium | Extracts | PlutarchPages main | PlutarchPages 0.18.2 |
+| --- | --- | --- | --- | --- |
+| `base` (no cover) | shows | yes | nothing | nothing |
+| `pymupdf-applied` | hidden | no | nothing | nothing |
+| `pymupdf-mark-unapplied` | shows | yes | `unapplied-mark` | `unapplied-mark` |
+| `pymupdf-drawn-box` | hidden | yes | `covered-text` | `covered-text` |
+| `pymupdf-square-annot` | hidden | yes | `covered-text` | `covered-text` |
+| `mutool-applied` | hidden | no | nothing | nothing |
+| `mutool-mark-unapplied` | shows | yes | `unapplied-mark` | `unapplied-mark` |
+| `mutool-square-annot` | hidden | yes | `covered-text` | `covered-text` |
+| `pdfjs-highlight` (black, opacity 1) | hidden | yes | `covered-text` | missed |
+| `pdfjs-ink` (one black stroke) | hidden | yes | **missed** | missed |
+
+Of the 7 unsafe files, main flags 6 and 0.18.2 flags 5; both pass the 2 applied redactions. Both
+miss pdf.js's ink stroke. The audit reads filled shapes, images, shadings and annotations as covers,
+not stroked paths, so a line drawn thick enough hides text the audit still treats as on show.
+[`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column, with the ink file as an
+ignored test until strokes are read. The 0.18.2 CLI ran from its release archive, as above. pdf.js
+saves both files as an incremental update, and that CLI also reports an `earlier-revisions` document
+finding on each; that finding is about the original revision kept in the file, not the cover.
+Upstream pdfcraft 0.21.1 was not run on these files. Whether PyMuPDF, MuPDF or pdf.js check for
+covers themselves was not assessed.
+
 ## Tools without a check for faux redactions
 
 These tools apply redactions. None of the redaction code named below, read at each release's tag
