@@ -22,3 +22,7 @@ reason = "zbus_names unmaintained; Linux a11y stack via accesskit_unix"
 [[IgnoredVulns]]
 id = "RUSTSEC-2026-0372"
 reason = "zvariant_derive unmaintained; Linux a11y stack via accesskit_unix"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0543"
+reason = "chrono unmaintained; held by upstream's crates, craft-update, lopdf and winprint's sigstore (storytold/pdfcraft#7647)"
