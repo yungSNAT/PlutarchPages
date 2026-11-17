@@ -190,6 +190,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   in `crates/edit/src/text/blocks.rs` and `crates/engine/src/document.rs`, with smaller edits to
   `crates/edit/src/lib.rs` and `crates/engine/src/open.rs`. Keep it unless upstream caches the same
   pass. The change is generic, so it could go upstream.
+- `find_urls` in `crates/annot/src/links.rs` tests an address's characters with `matches!`
+  instead of searching a string, the same set at about a third of the cost, so upstream's
+  unclosed-brackets test keeps inside its 5 s bound under coverage (4.6 to 5.4 s there before).
+  Generic, so it could go upstream.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
   it stops LibreOffice once the files it writes anywhere in that folder pass the size limit (or

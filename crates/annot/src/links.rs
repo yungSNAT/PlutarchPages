@@ -517,7 +517,7 @@ const MAX_URL_CHARS: usize = 2048;
 /// it would open with a scheme the text doesn't say. Brackets inside a web address belong to it
 /// when they pair up (`…/wiki/Mercury_(planet)`); an unpaired one ends it.
 pub fn find_urls(chars: &[char]) -> Vec<(std::ops::Range<usize>, String)> {
-    let url_char = |c: char| !c.is_whitespace() && !"<>\"'()[]{}".contains(c);
+    let url_char = |c: char| !c.is_whitespace() && !matches!(c, '<' | '>' | '"' | '\'' | '(' | ')' | '[' | ']' | '{' | '}');
     // Characters found inside an address but not between words: a `www.` after one is part of
     // a longer address, and so is an e-mail address after a slash.
     let inside_address = |i: usize, set: &str| i > 0 && chars.get(i - 1).is_some_and(|c| set.contains(*c));
