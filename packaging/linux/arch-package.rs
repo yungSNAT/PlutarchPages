@@ -43,8 +43,8 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Write};
-use std::os::fd::AsRawFd;
+use std::io::{self, IsTerminal, Write};
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -61,7 +61,7 @@ fn run(command: &mut Command) -> Result {
 }
 
 fn capture(command: &mut Command) -> Result<Output> {
-    let output = command.output()?;
+    let output = command.stdout(Stdio::piped()).stderr(Stdio::piped()).output()?;
     if !output.status.success() {
         eprint!("{}", String::from_utf8_lossy(&output.stderr));
         return Err(format!("{command:?} failed with {}", output.status).into());
@@ -133,33 +133,46 @@ fn arch_package() -> Result {
     // builder (or the caller, when not root) makes, fills and removes its own private directory, and
     // root only passes its path on: a lookup there by root could follow a link, or find another
     // directory under its name, that a builder process put there.
-    let mut work = capture(unprivileged("mktemp", as_root).arg("-d"))?.stdout;
+    let mut work = capture(unprivileged("mktemp", as_root)?.arg("-d"))?.stdout;
     if work.ends_with(b"\n") {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
     let packaged = package(arch, &archive, &work, &dist_dir, &version, as_root);
-    if let Err(error) = run(unprivileged("rm", as_root).args(["-rf", "--"]).arg(&work)) {
+    let remove = || run(unprivileged("rm", as_root)?.args(["-rf", "--"]).arg(&work));
+    if let Err(error) = remove() {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
     packaged
 }
 
 /// `program` run as `builder` when the helper runs as root, and as the caller otherwise. builder's
-/// programs start a session of their own and read nothing from root's standard input, so none can
+/// programs start a session of their own, read nothing from root's standard input and get root's
+/// terminal, where standard output or standard error is one, opened for writing only, so none can
 /// push input into root's terminal or read from it.
-fn unprivileged(program: &str, as_root: bool) -> Command {
+fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
     if !as_root {
-        return Command::new(program);
+        return Ok(Command::new(program));
     }
     let mut command = Command::new("runuser");
-    command.args(["-u", "builder", "--", "setsid", "--wait", "env", "HOME=/home/builder", program]).stdin(Stdio::null());
-    command
+    command.args(["-u", "builder", "--", "setsid", "--wait", "env", "HOME=/home/builder", program]);
+    command.stdin(Stdio::null()).stdout(write_only(io::stdout())?).stderr(write_only(io::stderr())?);
+    Ok(command)
+}
+
+/// `stream` for a child: a terminal is opened again for writing only, as the descriptor root has
+/// for it can also read.
+fn write_only(stream: impl AsFd + IsTerminal) -> io::Result<Stdio> {
+    if !stream.is_terminal() {
+        return Ok(Stdio::inherit());
+    }
+    let path = Path::new("/proc/self/fd").join(stream.as_fd().as_raw_fd().to_string());
+    Ok(fs::OpenOptions::new().write(true).open(path)?.into())
 }
 
 /// Writes `contents` to `path` through `tee` run by [`unprivileged`], so root opens nothing there.
 fn write_unprivileged(path: &Path, contents: &str, as_root: bool) -> Result {
-    let mut tee = unprivileged("tee", as_root);
+    let mut tee = unprivileged("tee", as_root)?;
     tee.arg("--").arg(path).stdin(Stdio::piped()).stdout(Stdio::null());
     let mut child = tee.spawn()?;
     let written = child.stdin.take().map_or(Ok(()), |mut stdin| stdin.write_all(contents.as_bytes()));
@@ -177,20 +190,20 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
     }
 
     let stage = work.join("stage");
-    run(unprivileged("mkdir", as_root).arg("--").arg(&stage))?;
+    run(unprivileged("mkdir", as_root)?.arg("--").arg(&stage))?;
     let config = work.join("makepkg.conf");
     write_unprivileged(&config, &format!("source /etc/makepkg.conf\nCARCH={arch}\nCHOST={arch}-unknown-linux-gnu\nPKGEXT=.pkg.tar.zst\n"), as_root)?;
     let recipe = include_str!("arch.PKGBUILD").replace("@VERSION@", &pkgver).replace("@ARCH@", arch);
     write_unprivileged(&work.join("PKGBUILD"), &recipe, as_root)?;
-    run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
+    run(unprivileged("tar", as_root)?.arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
     // builder enters the scratch directory itself: once its tar has run, builder could have put a
     // link where the directory was, and a chdir by root would follow it. makepkg runs there, so the
     // configuration's bare name finds it even when `TMPDIR`, and so the directory's path, is relative.
-    run(unprivileged("env", as_root).arg("-C").arg(work).args(["makepkg", "--config", "makepkg.conf", "--nodeps", "--force"]))?;
+    run(unprivileged("env", as_root)?.arg("-C").arg(work).args(["makepkg", "--config", "makepkg.conf", "--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
-    run(unprivileged("pacman", as_root).arg("-Qip").arg(&built))?;
-    let listing = capture(unprivileged("pacman", as_root).arg("-Qlp").arg(&built))?;
+    run(unprivileged("pacman", as_root)?.arg("-Qip").arg(&built))?;
+    let listing = capture(unprivileged("pacman", as_root)?.arg("-Qlp").arg(&built))?;
     let listing = String::from_utf8_lossy(&listing.stdout);
     for path in [
         "/usr/bin/pdfcraft",
@@ -219,7 +232,7 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
         let owner = dist_dir.metadata()?;
         std::os::unix::fs::fchown(&file, Some(owner.uid()), Some(owner.gid()))?;
     }
-    run(unprivileged("cat", as_root).arg("--").arg(&built).stdout(file))?;
+    run(unprivileged("cat", as_root)?.arg("--").arg(&built).stdout(file))?;
     println!("wrote {name} in the output directory");
     Ok(())
 }
