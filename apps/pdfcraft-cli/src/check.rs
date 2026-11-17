@@ -4,7 +4,8 @@ use super::{
     Arc, CliError, Command, Duration, Instant, PageRenderer, Path, PathBuf, RenderConfig, RenderRequest, RequestKind, Stdio, inspect, stdout_line,
 };
 
-/// Print redaction audit findings as JSON. Fail on covered text, unapplied marks or audit errors.
+/// Print redaction audit findings as JSON. Fail on covered text, unapplied marks, text in unreferenced
+/// streams or audit errors.
 pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
     validate_options("audit", args, AUDIT_OPTIONS)?;
     let path = *positional(args, AUDIT_OPTIONS).first().ok_or("audit: missing file")?;
@@ -21,7 +22,9 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
         Some(inspect(bytes, render_password.as_deref()).map_err(|e| format!("{path}: {e}"))?)
     };
     use pdfcraft_audit::FindingKind::{CoveredText, UnappliedMark};
-    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | UnappliedMark)).count();
+    // Text in a stream nothing refers to is still in the file: it fails the audit as covered text does.
+    let unreferenced = report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>();
+    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | UnappliedMark)).count() + unreferenced;
     let items: Vec<serde_json::Value> = report
         .page_findings
         .into_iter()

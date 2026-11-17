@@ -3,7 +3,8 @@
 //! [`audit_redactions`] finds *faux redactions* — opaque filled rectangles drawn over text
 //! that is still extractable underneath — and redaction annotations that were marked but
 //! never applied. [`audit_document`] also reports covered numeric text gaps, earlier
-//! revisions and retained metadata. Those signals do not establish that text survived.
+//! revisions and retained metadata, signals that do not establish that text survived, and streams
+//! nothing refers to that still show text, which do.
 //!
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
 //! overlaps. One painted fully opaque in the Normal blend mode, without a soft mask, hides the text
@@ -178,6 +179,10 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
     if earlier > 0 {
         document_findings.push(DocumentFinding { kind: "earlier-revisions", count: earlier });
     }
+    let unreferenced = unreferenced_text(doc)?;
+    if unreferenced > 0 {
+        document_findings.push(DocumentFinding { kind: "unreferenced-text", count: unreferenced });
+    }
     // A metadata entry of the wrong type is reported, not an error, so the pages are still audited.
     match metadata_entry(doc, doc.trailer(), b"Info")?.as_deref() {
         Some(Object::Dict(info)) if !info.is_empty() => document_findings.push(DocumentFinding { kind: "document-info", count: info.len() }),
@@ -193,6 +198,35 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
         Some(_) => document_findings.push(DocumentFinding { kind: "malformed-xmp-metadata", count: 1 }),
     }
     Ok(AuditReport { page_findings: audit_pages(doc, Limits::DEFAULT, true)?, document_findings })
+}
+
+/// How many streams nothing in the file refers to show text (`Tj`, `TJ`, `'` or `"`): text no viewer
+/// draws that any reader of the file's objects recovers, as a redaction applied and saved without
+/// garbage collection leaves the page's old content. Only a stream that can be content is read: a
+/// form, or one without a `/Type` or `/Subtype` and not a font program (`/Length1`); images, fonts,
+/// metadata and object streams are not. When the next save must write the document in full, it
+/// keeps only what is referred to, and none are counted. One that can't be read or decoded within
+/// one page's [`DecodeBudget`](pdfcraft_cos::DecodeBudget) in all fails the audit.
+fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
+    if doc.full_save_required() {
+        return Ok(0);
+    }
+    let reachable = pdfcraft_cos::reachable_objects(doc)?;
+    let unreferenced = doc.object_numbers().into_iter().filter(|n| !reachable.contains(n)).collect();
+    let mut budget = pdfcraft_cos::DecodeBudget::page();
+    let mut count = 0;
+    for (_, object) in doc.scan_objects_subset(unreferenced) {
+        let object = object?;
+        let Object::Stream(stream) = &*object else { continue };
+        let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
+        let content = matches!(name(b"Type").as_deref(), None | Some(b"XObject"))
+            && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form"))
+            && !stream.dict.contains(b"Length1");
+        if content && pdfcraft_content::ops(&budget.decode_strict(doc, stream)?).any(|op| matches!(op.op.as_slice(), b"Tj" | b"TJ" | b"'" | b"\"")) {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 fn metadata_entry(doc: &Document, dict: &Dict, key: &[u8]) -> Result<Option<std::sync::Arc<Object>>, AuditError> {
