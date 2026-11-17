@@ -143,13 +143,15 @@ fn arch_package() -> Result {
     packaged
 }
 
-/// `program` run as `builder` when the helper runs as root, and as the caller otherwise.
+/// `program` run as `builder` when the helper runs as root, and as the caller otherwise. builder's
+/// programs start a session of their own and read nothing from root's standard input, so none can
+/// push input into root's terminal or read from it.
 fn unprivileged(program: &str, as_root: bool) -> Command {
     if !as_root {
         return Command::new(program);
     }
     let mut command = Command::new("runuser");
-    command.args(["-u", "builder", "--", "env", "HOME=/home/builder", program]);
+    command.args(["-u", "builder", "--", "setsid", "--wait", "env", "HOME=/home/builder", program]).stdin(Stdio::null());
     command
 }
 
