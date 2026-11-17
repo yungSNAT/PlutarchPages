@@ -18,11 +18,11 @@ pub(super) struct Type3Run {
     pub(super) spacing: Option<f64>,
 }
 
-/// A Unicode variation selector (U+FE00..U+FE0F): it picks a variant of the character before it
-/// and has no glyph of its own. The Type 3 fallback gives it an empty zero-width glyph instead of
-/// failing the edit on it.
+/// A Unicode variation selector (U+FE00..U+FE0F, and U+E0100..U+E01EF for ideographs): it picks a
+/// variant of the character before it and has no glyph of its own. The Type 3 fallback gives it an
+/// empty zero-width glyph instead of failing the edit on it.
 pub(super) fn is_variation_selector(ch: char) -> bool {
-    matches!(u32::from(ch), 0xFE00..=0xFE0F)
+    crate::bidi::is_variation_selector(ch)
 }
 
 /// A variation selector's glyph procedure: nothing painted, zero advance.
