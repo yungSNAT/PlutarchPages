@@ -27,6 +27,8 @@ pub const ON_PAGE_SELECT: Color32 = LAVENDER;
 pub const ON_PAGE_HINT: Color32 = DARK_GOLD;
 /// Errors and redaction marks over a page.
 pub const ON_PAGE_ALERT: Color32 = RED;
+/// A comment without a colour of its own: its pop-up window and the connector to it.
+pub const COMMENT_DEFAULT: Color32 = BRIGHT_GOLD;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ThemeKind {

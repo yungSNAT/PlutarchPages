@@ -518,7 +518,7 @@ impl<'a> Walker<'a> {
             return Err(AuditError::TooManyForms);
         }
         // A form stream that cannot be decoded fails the audit: it might hide a cover.
-        let data = self.budget.decode_strict(stream)?;
+        let data = self.budget.decode_strict(self.doc, stream)?;
         // The XObject matrix maps form space into the user space active at `Do`.
         let mut sub_gs = gs.clone();
         sub_gs.ctm = matrix.then(&gs.ctm);
@@ -615,7 +615,7 @@ impl<'a> Walker<'a> {
         if !self.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
-        let data = self.budget.decode_strict(stream)?;
+        let data = self.budget.decode_strict(self.doc, stream)?;
         let outer = self.inside.replace(unplaced);
         calls.push(at);
         // Nothing painted here is placed, so the clip is never read.
@@ -798,7 +798,7 @@ pub fn filled_rects(
     let mut streams = Vec::with_capacity(contents.len());
     for c in &contents {
         if let Object::Stream(s) = &*doc.resolve(c) {
-            streams.push(budget.decode_strict(s)?);
+            streams.push(budget.decode_strict(doc, s)?);
         }
     }
     let pieces = Pieces::join(&streams);
@@ -826,7 +826,7 @@ pub fn filled_rects(
         if !w.budget.enter_form() {
             return Err(AuditError::TooManyForms);
         }
-        let data = w.budget.decode_strict(form)?;
+        let data = w.budget.decode_strict(doc, form)?;
         // An appearance without resources of its own reads the page's, as a form does.
         let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
         w.layer = a.layer;

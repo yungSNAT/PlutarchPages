@@ -7,6 +7,10 @@ name: Release
 # runner-minutes (macOS counted at 10). Before pushing to `release`, make one full dry run of the
 # commit: a push to `ryan/release-*`, or a manual run with `targets` empty.
 on:
+  # A nightly dry run on main: every release build except macOS, nothing signed or released
+  # (craft-common-actions release.yml `dry-run`). Finds release-only breakage before release day.
+  schedule:
+    - cron: "20 2 * * *"
   push:
     branches: [release, "ryan/release-*"]
   workflow_dispatch:
