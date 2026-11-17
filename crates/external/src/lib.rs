@@ -793,6 +793,12 @@ mod tests {
         }
         assert_eq!(bytes_under(std::slice::from_ref(&a), &|| false), half as u64);
         assert_eq!(bytes_under(&[a.clone(), b.clone()], &|| false), u64::MAX, "one budget for both");
+        let asked = std::cell::Cell::new(0);
+        let stop_on_second_ask = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 2
+        };
+        assert_eq!(bytes_under(std::slice::from_ref(&a), &stop_on_second_ask), 255, "asked again at entry 256");
         assert_eq!(bytes_under(&[a, b], &|| true), 0, "stopped before the first folder");
     }
 
