@@ -7,8 +7,11 @@ use std::sync::Arc;
 use pdfcraft_audit::{FindingKind, audit_redactions};
 use pdfcraft_cos::Document;
 
-/// The kind and covered text of each finding in the file `bytes` hold.
-fn findings(bytes: &[u8]) -> Vec<(FindingKind, String)> {
+/// What the audit reports for a file: each finding's kind and covered text.
+type Findings = Vec<(FindingKind, String)>;
+
+/// The findings in the file `bytes` hold.
+fn findings(bytes: &[u8]) -> Findings {
     let doc = Document::open(Arc::new(bytes.to_vec())).expect("tool-made pdf must open");
     audit_redactions(&doc).expect("audit must run").into_iter().map(|f| (f.kind, f.covered_text)).collect()
 }
@@ -19,7 +22,7 @@ fn findings(bytes: &[u8]) -> Vec<(FindingKind, String)> {
 fn files_other_tools_wrote() {
     use FindingKind::{CoveredText, UnappliedMark};
     let secret = |kind| vec![(kind, "SECRET 4417".to_owned())];
-    let cases: [(&str, &[u8], Vec<(FindingKind, String)>); 9] = [
+    let cases: [(&str, &[u8], Findings); 9] = [
         ("base", include_bytes!("../data/tool-made/base.pdf"), vec![]),
         ("pymupdf-applied", include_bytes!("../data/tool-made/pymupdf-applied.pdf"), vec![]),
         ("pymupdf-mark-unapplied", include_bytes!("../data/tool-made/pymupdf-mark-unapplied.pdf"), secret(UnappliedMark)),
