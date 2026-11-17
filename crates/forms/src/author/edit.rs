@@ -163,17 +163,7 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
     if let Some(rotation) = props.rotation {
         check_rotation(&f, name, rotation)?;
     }
-    if props.signature_lock.is_some() || props.signature_reasons.is_some() {
-        if f.kind != FieldKind::Signature {
-            return invalid("only signature fields lock fields or ask for a reason");
-        }
-        if doc.get(f.obj).as_dict().and_then(|d| d.get(b"V").map(|v| doc.resolve(v))).is_some_and(|v| v.as_dict().is_some()) {
-            return invalid(format!("{name} is signed: what it locks and its reasons are part of the signature"));
-        }
-    }
-    if props.signature_reasons.as_ref().is_some_and(|r| r.as_ref().is_some_and(|r| r.is_empty() || r.iter().any(|r| r.trim().is_empty()))) {
-        return invalid("give each reason to sign for, none of them blank");
-    }
+    check_signature_props(doc, &f, name, props)?;
     // A locked field only takes unlocking (Acrobat greys its properties out).
     if f.locked() && props.locked != Some(false) && *props != (FieldProps { locked: props.locked, ..FieldProps::default() }) {
         return invalid(format!("{name} is locked: unlock it first"));
@@ -409,6 +399,23 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
         crate::recalculate(doc)?;
     }
     Ok(new_name)
+}
+
+/// Refuse `/Lock` and reasons to sign for on anything but an unsigned signature field, and a
+/// list of reasons that is empty or has a blank one.
+fn check_signature_props(doc: &Document, f: &Field, name: &str, props: &FieldProps) -> Result<(), FormError> {
+    if props.signature_lock.is_some() || props.signature_reasons.is_some() {
+        if f.kind != FieldKind::Signature {
+            return invalid("only signature fields lock fields or ask for a reason");
+        }
+        if doc.get(f.obj).as_dict().and_then(|d| d.get(b"V").map(|v| doc.resolve(v))).is_some_and(|v| v.as_dict().is_some()) {
+            return invalid(format!("{name} is signed: what it locks and its reasons are part of the signature"));
+        }
+    }
+    if props.signature_reasons.as_ref().is_some_and(|r| r.as_ref().is_some_and(|r| r.is_empty() || r.iter().any(|r| r.trim().is_empty()))) {
+        return invalid("give each reason to sign for, none of them blank");
+    }
+    Ok(())
 }
 
 /// `/Lock` for `lock` (ISO 32000-2 Table 236).
