@@ -118,6 +118,33 @@ fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
     }
 }
 
+/// Streams nothing refers to that show text are counted as `unreferenced-text`, a stream or a form
+/// alike: a redaction applied and saved without garbage collection leaves the page's old content
+/// so. One that shows no text, and an image, however its data reads, are not; nor is any once the
+/// next save must write the document in full, which keeps only what it refers to.
+#[test]
+fn unreferenced_streams_that_show_text_are_counted() {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
+    b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
+    b.add(FONT);
+    b.add_stream(b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET");
+    b.add_stream_with(b"BT /F1 24 Tf 100 700 Td [(SECRET)] TJ ET", "/Type /XObject /Subtype /Form /BBox [0 0 612 792]");
+    b.add_stream(b"0 g 100 688 220 32 re f");
+    b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /XObject /Subtype /Image /Width 17 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8");
+    let mut doc = open(b.build());
+    let kinds = |doc: &Document| -> Vec<(&'static str, usize)> {
+        let report = crate::audit_document(doc).unwrap();
+        assert!(report.page_findings.is_empty());
+        report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
+    };
+    assert_eq!(kinds(&doc), [("unreferenced-text", 2)]);
+    doc.require_full_save();
+    assert!(kinds(&doc).is_empty());
+}
+
 #[test]
 fn audit_reports_a_covered_text_advance_only_after_the_displacement() {
     let text = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";

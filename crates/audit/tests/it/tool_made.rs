@@ -51,18 +51,24 @@ fn a_pdfjs_ink_stroke_over_text_is_flagged() {
     assert_eq!(findings(include_bytes!("../data/tool-made/pdfjs-ink.pdf")), want);
 }
 
-/// A redaction applied and saved without garbage collection leaves the page's original content
-/// stream, `SECRET 4417` and all, in the file with nothing referring to it. The page shows and
-/// extracts nothing, but any reader of the file's objects recovers the text, so the audit must
-/// report something.
+/// A redaction applied and saved without garbage collection leaves the page's 2 original content
+/// streams, one drawing `SECRET 4417`, the other `PUBLIC LINE`, in the file with nothing referring
+/// to them. The page shows and extracts no secret, but any reader of the file's objects recovers
+/// it: the audit counts both streams in a document finding. Saved with garbage collection, nothing
+/// is left to report.
 #[test]
-#[ignore = "unreferenced objects are not read yet; remove once they are (docs/redaction-head-to-head.md)"]
 fn an_applied_redaction_saved_without_garbage_collection_is_flagged() {
-    for (name, bytes) in [
-        ("pymupdf-applied-no-garbage", &include_bytes!("../data/tool-made/pymupdf-applied-no-garbage.pdf")[..]),
-        ("mutool-applied-no-garbage", &include_bytes!("../data/tool-made/mutool-applied-no-garbage.pdf")[..]),
-    ] {
+    let document_findings = |bytes: &[u8]| -> Vec<(&'static str, usize)> {
         let report = audit_document(&open(bytes)).expect("audit must run");
-        assert!(!report.page_findings.is_empty() || !report.document_findings.is_empty(), "{name}: the audit reports nothing");
+        assert!(report.page_findings.is_empty());
+        report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
+    };
+    for (name, bytes, want) in [
+        ("pymupdf-applied-no-garbage", &include_bytes!("../data/tool-made/pymupdf-applied-no-garbage.pdf")[..], &[("unreferenced-text", 2)][..]),
+        ("mutool-applied-no-garbage", &include_bytes!("../data/tool-made/mutool-applied-no-garbage.pdf")[..], &[("unreferenced-text", 2)]),
+        ("pymupdf-applied", &include_bytes!("../data/tool-made/pymupdf-applied.pdf")[..], &[]),
+        ("mutool-applied", &include_bytes!("../data/tool-made/mutool-applied.pdf")[..], &[]),
+    ] {
+        assert_eq!(document_findings(bytes), want, "{name}");
     }
 }
