@@ -24,14 +24,15 @@
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
-//! root searches for `id`, `useradd`, `setsid`, `setpriv` and `runuser` and so must be root's, the
-//! descriptors the caller leaves open, as builder's programs inherit any above 2 that are not
-//! close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), and DIST's path: root makes
-//! and opens DIST by path, so DIST and every directory above it must be writable only by root, the
-//! caller or the checkout's owner, as dist/release is in a checkout whose own ancestors are. builder
-//! is there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and
-//! in a local run its uid can be the checkout owner's. What a root run guards is root's own lookups: none can be steered into a
-//! write or removal outside DIST. Root reads Cargo.toml and opens DIST before its first program as
+//! root searches for `id`, `useradd`, `setsid`, `setpriv`, `timeout` and `runuser` and so must be
+//! root's, the descriptors the caller leaves open, as builder's programs inherit any above 2 that
+//! are not close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), and
+//! DIST's path: root makes and opens DIST by path, so DIST and every directory above it must be
+//! writable only by root, the caller or the checkout's owner, as dist/release is in a checkout
+//! whose own ancestors are. builder is there because makepkg refuses root, not as a sandbox: it
+//! runs the repository's own build, and in a local run its uid can be the checkout owner's. What a
+//! root run guards is root's own lookups: none can be steered into a write or removal outside DIST.
+//! Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
@@ -153,14 +154,17 @@ fn arch_package() -> Result {
 /// ever has root's terminal as its own; builder's programs read nothing from root's standard input
 /// and get root's terminal, where standard output or standard error is one, opened for writing
 /// only, so none can push input into root's terminal or read from it. As that session is not the
-/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send runuser SIGTERM
-/// when the helper dies, and runuser then ends builder's program.
+/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send `timeout`, root's
+/// process that waits on runuser, SIGTERM when the helper dies, and `timeout` (with no time limit)
+/// passes it on to runuser and builder's program. The signal goes to `timeout`, not runuser, as
+/// runuser's setup for builder clears it.
 fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
     if !as_root {
         return Ok(Command::new(program));
     }
     let mut command = Command::new("setsid");
-    command.args(["--wait", "setpriv", "--pdeathsig", "TERM", "runuser", "-u", "builder", "--", "env", "HOME=/home/builder", program]);
+    command.args(["--wait", "setpriv", "--pdeathsig", "TERM", "timeout", "0"]);
+    command.args(["runuser", "-u", "builder", "--", "env", "HOME=/home/builder", program]);
     command.stdin(Stdio::null()).stdout(write_only(io::stdout())?).stderr(write_only(io::stderr())?);
     Ok(command)
 }
