@@ -292,7 +292,7 @@ mod tests {
         {
             let app = h.state_mut();
             app.dialog = Some(crate::Dialog::Protect);
-            app.protect_draft.password = "AnotherSecret!".into();
+            app.protect_draft.password = "AnotherSecret!".into(); // NOSONAR: a test's draft password, never a credential
             app.protect_draft.confirm = "AnotherSecret!".into();
         }
         h.run_steps(2);
