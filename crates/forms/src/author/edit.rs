@@ -450,7 +450,8 @@ fn seed_with_reasons(doc: &Document, field: ObjRef, reasons: Option<&[String]>) 
         }
     }
     sv.set(b"Type".to_vec(), Object::name("SV"));
-    sv.iter().any(|(k, _)| k != b"Type").then_some(sv)
+    let kept = sv.iter().any(|(k, _)| k != b"Type");
+    kept.then_some(sv)
 }
 
 /// Apply a new name from `props`: rename the field, move it under the parents a full name
