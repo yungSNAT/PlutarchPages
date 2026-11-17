@@ -1,7 +1,7 @@
 use super::join::{check_join, join_radio_group};
 use super::look::{BorderStyle, da_string, patch_da, patch_widget_look, redraw_widgets};
 use super::tree::{ancestor_sets, attach, check_place, child_named, clash, detach, ensure_form, inherited, name_parts, own_inherited};
-use super::{Dict, Document, Field, FieldKind, FieldProps, FormError, MIN_FIELD_SIDE, ObjRef, Object, PdfString, fields, flags, invalid};
+use super::{Dict, Document, Field, FieldKind, FieldProps, FormError, MIN_FIELD_SIDE, ObjRef, Object, PdfString, SigLock, fields, flags, invalid};
 
 /// Re-point a choice field's `/I`, positions in `/Opt`, at the new list `exports` after `/Opt` was
 /// replaced (ISO 32000-2 §12.7.5.4): the positions of the selected `values` still offered. `kept`
@@ -163,6 +163,17 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
     if let Some(rotation) = props.rotation {
         check_rotation(&f, name, rotation)?;
     }
+    if props.signature_lock.is_some() || props.signature_reasons.is_some() {
+        if f.kind != FieldKind::Signature {
+            return invalid("only signature fields lock fields or ask for a reason");
+        }
+        if doc.get(f.obj).as_dict().and_then(|d| d.get(b"V").map(|v| doc.resolve(v))).is_some_and(|v| v.as_dict().is_some()) {
+            return invalid(format!("{name} is signed: what it locks and its reasons are part of the signature"));
+        }
+    }
+    if props.signature_reasons.as_ref().is_some_and(|r| r.as_ref().is_some_and(|r| r.is_empty() || r.iter().any(|r| r.trim().is_empty()))) {
+        return invalid("give each reason to sign for, none of them blank");
+    }
     // A locked field only takes unlocking (Acrobat greys its properties out).
     if f.locked() && props.locked != Some(false) && *props != (FieldProps { locked: props.locked, ..FieldProps::default() }) {
         return invalid(format!("{name} is locked: unlock it first"));
@@ -243,7 +254,22 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
     let (sort_items, old_selection) = items_to_sort(doc, &f, props);
     let parent_default = ancestor_sets(doc, f.obj, b"DV");
     let parent_limit = ancestor_sets(doc, f.obj, b"MaxLen");
+    let seed = props.signature_reasons.as_ref().map(|r| seed_with_reasons(doc, f.obj, r.as_deref()));
     doc.update_dict(f.obj, |d| {
+        match &props.signature_lock {
+            Some(Some(lock)) => d.set(b"Lock".to_vec(), Object::Dict(lock_dict(lock))),
+            Some(None) => {
+                d.remove(b"Lock");
+            }
+            None => {}
+        }
+        match seed {
+            Some(Some(sv)) => d.set(b"SV".to_vec(), Object::Dict(sv)),
+            Some(None) => {
+                d.remove(b"SV");
+            }
+            None => {}
+        }
         d.set(b"Ff".to_vec(), Object::Int(ff as i64));
         if let Some(t) = &props.tooltip {
             if t.is_empty() {
@@ -383,6 +409,48 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
         crate::recalculate(doc)?;
     }
     Ok(new_name)
+}
+
+/// `/Lock` for `lock` (ISO 32000-2 Table 236).
+fn lock_dict(lock: &SigLock) -> Dict {
+    let (action, names) = match lock {
+        SigLock::All => ("All", None),
+        SigLock::Include(names) => ("Include", Some(names)),
+        SigLock::Exclude(names) => ("Exclude", Some(names)),
+    };
+    let mut d = Dict::new();
+    d.set(b"Type".to_vec(), Object::name("SigFieldLock"));
+    d.set(b"Action".to_vec(), Object::name(action));
+    if let Some(names) = names {
+        d.set(b"Fields".to_vec(), Object::Array(names.iter().map(|n| Object::String(PdfString::text(n))).collect()));
+    }
+    d
+}
+
+/// The signature field's `/SV` (ISO 32000-2 Table 237) with `reasons` as the ones a signer must
+/// choose from (`/Reasons`, and `/Ff` bit 4 set), or with neither; its other entries are kept.
+/// `None` when nothing else is left in it.
+fn seed_with_reasons(doc: &Document, field: ObjRef, reasons: Option<&[String]>) -> Option<Dict> {
+    const REASONS: i64 = 1 << 3;
+    let mut sv =
+        doc.get(field).as_dict().and_then(|d| d.get(b"SV").map(|sv| doc.resolve(sv))).and_then(|sv| sv.as_dict().cloned()).unwrap_or_default();
+    let ff = sv.get(b"Ff").and_then(|f| doc.resolve(f).as_int()).unwrap_or(0);
+    match reasons {
+        Some(reasons) => {
+            sv.set(b"Reasons".to_vec(), Object::Array(reasons.iter().map(|r| Object::String(PdfString::text(r))).collect()));
+            sv.set(b"Ff".to_vec(), Object::Int(ff | REASONS));
+        }
+        None => {
+            sv.remove(b"Reasons");
+            if ff & !REASONS == 0 {
+                sv.remove(b"Ff");
+            } else {
+                sv.set(b"Ff".to_vec(), Object::Int(ff & !REASONS));
+            }
+        }
+    }
+    sv.set(b"Type".to_vec(), Object::name("SV"));
+    sv.iter().any(|(k, _)| k != b"Type").then_some(sv)
 }
 
 /// Apply a new name from `props`: rename the field, move it under the parents a full name

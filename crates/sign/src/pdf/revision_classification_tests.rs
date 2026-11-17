@@ -65,7 +65,7 @@ fn r(num: u32, generation: u16) -> ObjRef {
 }
 
 fn assert_refused(doc: &Document, old: Document, p: u8) {
-    let verdict = classify_changes(doc, Some(old), Some(p));
+    let verdict = classify_changes(doc, Some(old), Some(p), None);
     assert!(matches!(verdict, Modification::Disallowed(_)), "P={p}: main returns {verdict:?}");
 }
 
@@ -207,7 +207,7 @@ fn hidden_shared_alias_form_fill() {
 }
 
 fn verdict(doc: &Document, old: Document, p: Option<u8>) -> Modification {
-    classify_changes(doc, Some(old), p)
+    classify_changes(doc, Some(old), p, None)
 }
 
 /// A widget whose /Annots entry is rewritten to a generation its slot never had no longer
@@ -396,4 +396,21 @@ fn a_widget_rect_saved_back_as_integers_is_a_form_fill() {
     assert_eq!(verdict(&filled, signed.open(), Some(2)), Modification::Allowed(vec![super::kind::FORM_FILL]));
     let moved = save(Some(20.5));
     assert_eq!(verdict(&moved, signed.open(), Some(2)), Modification::Disallowed(vec![super::kind::PAGE_CONTENT]));
+}
+
+/// A field a signature locked (FieldMDP) may not change, though its DocMDP permissions or an
+/// approval signature allow form fill; when the form could not be read whole, any form fill may
+/// have changed a locked field, and is refused as one.
+#[test]
+fn a_change_to_a_locked_field_is_refused_whatever_else_is_permitted() {
+    let signed = form("/Annots [5 0 R]");
+    let filled = TEXT_FIELD.replace("(Ann)", "(Bob)");
+    let now = signed.clone().revision(&[(5, Row::Obj(0, 0, &filled))]);
+    let locked = |objects: &[u32], whole| super::locks::Locked { objects: objects.iter().copied().collect(), whole };
+    for p in [None, Some(2), Some(3)] {
+        let judge = |l: &super::locks::Locked| classify_changes(&now.open(), Some(signed.open()), p, Some(l));
+        assert_eq!(judge(&locked(&[5], true)), Modification::Disallowed(vec![super::kind::LOCKED_FORM_FIELDS]), "P={p:?}");
+        assert_eq!(judge(&locked(&[], false)), Modification::Disallowed(vec![super::kind::LOCKED_FORM_FIELDS]), "P={p:?}, not read whole");
+        assert_eq!(judge(&locked(&[], true)), Modification::Allowed(vec![super::kind::FORM_FILL]), "P={p:?}, another field locked");
+    }
 }

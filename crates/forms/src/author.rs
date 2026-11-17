@@ -128,6 +128,20 @@ pub struct FieldProps {
     /// turns the annotation relative to the page, and its `/Rect` stays in default user space), so
     /// a tall field turned 90 degrees holds text running up its long side.
     pub rotation: Option<(usize, i64)>,
+    /// Signature fields: the fields that signing this one locks (`/Lock`). `Some(None)` removes it.
+    pub signature_lock: Option<Option<SigLock>>,
+    /// Signature fields: the reasons a signer must choose one of (`/SV /Reasons`, with `/Ff` bit 4
+    /// set so a signer has to). `Some(None)` removes them.
+    pub signature_reasons: Option<Option<Vec<String>>>,
+}
+
+/// The fields a signature field locks once it is signed (`/Lock`, ISO 32000-2 Table 236), by their
+/// full names: a name also covers the fields below it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SigLock {
+    All,
+    Include(Vec<String>),
+    Exclude(Vec<String>),
 }
 
 /// A [`FormError::Invalid`] with message `m`.

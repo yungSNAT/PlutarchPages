@@ -34,6 +34,8 @@ pub mod kind {
     pub const FORM_FILL: &str = "form fill";
     pub const COMMENTS: &str = "comments";
     pub const SIGNATURE: &str = "signature";
+    /// A change to a field a signature locked (FieldMDP), which no DocMDP permission allows.
+    pub const LOCKED_FORM_FIELDS: &str = "locked form fields";
     pub const SECURITY_STORE: &str = "document security store";
     pub const METADATA: &str = "metadata";
     pub const LINKS: &str = "links";
@@ -45,7 +47,7 @@ pub mod kind {
     pub const UNREADABLE: &str = "the signed version could not be read";
 
     /// Every word above, for an interface to translate.
-    pub const ALL: &[&str] = &[PAGE_CONTENT, FORM_FILL, COMMENTS, SIGNATURE, SECURITY_STORE, METADATA, LINKS, STRUCTURE, PAGES, OTHER, UNREADABLE];
+    pub const ALL: &[&str] = &[PAGE_CONTENT, FORM_FILL, COMMENTS, SIGNATURE, LOCKED_FORM_FIELDS, SECURITY_STORE, METADATA, LINKS, STRUCTURE, PAGES, OTHER, UNREADABLE];
 }
 
 /// Changes made after signing.

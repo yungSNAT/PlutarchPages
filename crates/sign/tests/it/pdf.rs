@@ -3429,3 +3429,106 @@ fn the_catalogs_perms_do_not_change_under_no_changes() {
         );
     }
 }
+
+/// One page with the signature fields "Approval" (6, with `approval` added to it) and "Seller" (9,
+/// with `seller`), and the text fields "Buyer" (7) and "Notes" (8).
+fn locking_fixture(approval: &str, seller: &str) -> Vec<u8> {
+    let approval = format!("<< /Type /Annot /Subtype /Widget /FT /Sig /T (Approval) /Rect [150 20 280 70] /P 3 0 R /F 4 {approval} >>");
+    let seller = format!("<< /Type /Annot /Subtype /Widget /FT /Sig /T (Seller) /Rect [150 80 280 130] /P 3 0 R /F 4 {seller} >>");
+    write_pdf(&[
+        b"<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R 7 0 R 8 0 R 9 0 R] >> >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [6 0 R 7 0 R 8 0 R 9 0 R] >>",
+        b"<< /Length 44 >>\nstream\nBT /F1 14 Tf 20 250 Td (Contract text) Tj ET\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        approval.as_bytes(),
+        b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (Buyer) /V (Ann) /Rect [20 20 120 40] /P 3 0 R >>",
+        b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (Notes) /V (none) /Rect [20 50 120 70] /P 3 0 R >>",
+        seller.as_bytes(),
+    ])
+}
+
+/// A `/Lock` that locks the fields `names` (written as PDF strings).
+fn lock_of(names: &str) -> String {
+    format!("/Lock << /Type /SigFieldLock /Action /Include /Fields [{names}] >>")
+}
+
+fn set_value(num: u32, value: &'static str) -> impl FnOnce(&mut Document) {
+    move |doc| doc.update_dict(ObjRef { num, generation: 0 }, |d| d.set(b"V".to_vec(), PdfString::text(value))).unwrap()
+}
+
+/// Signing a field that locks others makes them read-only in the signed revision and records the
+/// lock in a FieldMDP reference, after any DocMDP one. Validation then refuses a later change to a
+/// locked field, though an approval signature or a form-fill certification permits form fill,
+/// while the fields it doesn't lock can still be filled.
+#[test]
+fn a_signature_fields_lock_is_kept_by_signing_and_checked_by_validation() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let fixture = locking_fixture(&lock_of("(Buyer)"), "");
+    for certify in [None, Some(2)] {
+        let signed = pdfcraft_sign::sign(&open(&fixture), &id, &SignOptions { field: Some("Approval".into()), certify, ..opts() }).unwrap();
+        let doc = open(&signed);
+        let flags = |num| doc.get(ObjRef { num, generation: 0 }).as_dict().and_then(|d| d.get(b"Ff").and_then(Object::as_int)).unwrap_or(0) & 1;
+        assert_eq!((flags(7), flags(8), flags(6)), (1, 0, 0), "only Buyer is read-only ({certify:?})");
+        let field = doc.get(ObjRef { num: 6, generation: 0 });
+        let v = doc.resolve(field.as_dict().unwrap().get(b"V").unwrap());
+        let methods: Vec<Vec<u8>> = doc
+            .resolve(v.as_dict().unwrap().get(b"Reference").unwrap())
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| doc.resolve(r).as_dict().unwrap().name(b"TransformMethod").unwrap().to_vec())
+            .collect();
+        let expected: Vec<&[u8]> = if certify.is_some() { vec![b"DocMDP", b"FieldMDP"] } else { vec![b"FieldMDP"] };
+        assert_eq!(methods, expected);
+        let approval = |bytes: &[u8]| signatures(&open(bytes), bytes, &TrustStore::default()).into_iter().find(|s| s.field == "Approval").unwrap();
+        assert_eq!(approval(&signed).modification, Modification::None);
+        assert_eq!(approval(&edit_after(&signed, set_value(8, "later"))).modification, Modification::Allowed(vec![kind::FORM_FILL]));
+        assert_eq!(
+            approval(&edit_after(&signed, set_value(7, "Bob"))).modification,
+            Modification::Disallowed(vec![kind::LOCKED_FORM_FIELDS]),
+            "{certify:?}"
+        );
+    }
+}
+
+/// Signers in order: the second signature's lock repeats the first one's and adds the first
+/// signature field, and leaves the first signature's locked fields as they were. Out of order, a
+/// field an earlier signature locked can no longer be signed. A lock PdfCraft can't read refuses
+/// the signing rather than locking less.
+#[test]
+fn signers_in_order_keep_each_lock_and_a_locked_field_cannot_be_signed() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let sign_field = |bytes: &[u8], field: &str| pdfcraft_sign::sign(&open(bytes), &id, &SignOptions { field: Some(field.into()), ..opts() });
+    let first = sign_field(&locking_fixture(&lock_of("(Buyer)"), &lock_of("(Buyer) (Approval)")), "Approval").unwrap();
+    let second = sign_field(&first, "Seller").unwrap();
+    let sigs = signatures(&open(&second), &second, &TrustStore::default());
+    let modification = |field: &str| sigs.iter().find(|s| s.field == field).unwrap().modification.clone();
+    assert!(matches!(modification("Approval"), Modification::Allowed(k) if !k.contains(&kind::LOCKED_FORM_FIELDS)), "{:?}", modification("Approval"));
+    assert_eq!(modification("Seller"), Modification::None);
+    let locks_seller = sign_field(&locking_fixture(&lock_of("(Seller)"), ""), "Approval").unwrap();
+    assert!(matches!(sign_field(&locks_seller, "Seller"), Err(SignError::Pdf(m)) if m.contains("read-only")));
+    let unreadable = locking_fixture("/Lock << /Type /SigFieldLock /Action /Some >>", "");
+    assert!(matches!(sign_field(&unreadable, "Approval"), Err(SignError::Pdf(m)) if m.contains("can't read")));
+}
+
+/// A field whose seed values require a reason (`/SV /Ff` bit 4) is signed only for one of its
+/// `/Reasons`, and for none when that list is a single period; without the bit they are
+/// suggestions.
+#[test]
+fn a_field_asking_for_a_reason_is_signed_only_for_one_of_them() {
+    let id = pkcs12::open(&data("ec-p256.p12"), "test").unwrap();
+    let sign_for = |sv: &str, reason: Option<&str>| {
+        let doc = open(&locking_fixture(sv, ""));
+        pdfcraft_sign::sign(&doc, &id, &SignOptions { field: Some("Approval".into()), reason: reason.map(Into::into), ..opts() })
+    };
+    let required = "/SV << /Type /SV /Reasons [(Approved as buyer) (Witnessed)] /Ff 8 >>";
+    assert!(sign_for(required, Some("Witnessed")).is_ok());
+    for reason in [Some("I approve this document"), None] {
+        assert!(matches!(sign_for(required, reason), Err(SignError::Pdf(m)) if m.contains("Approved as buyer; Witnessed")), "{reason:?}");
+    }
+    assert!(sign_for("/SV << /Type /SV /Reasons [(Witnessed)] >>", Some("Another")).is_ok());
+    let none = "/SV << /Type /SV /Reasons [(.)] /Ff 8 >>";
+    assert!(sign_for(none, None).is_ok());
+    assert!(sign_for(none, Some("Witnessed")).is_err());
+}
