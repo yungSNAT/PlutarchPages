@@ -21,18 +21,16 @@
 //! scratch directory that builder owns. It then writes the package as a new file in DIST, owned by
 //! DIST's owner. DIST itself keeps its owner and mode.
 //!
-//! It trusts the checkout it runs in, that checkout's owner and the caller's environment, such as
-//! `PATH` (root finds `runuser` through it) and `TMPDIR`. builder is there because makepkg
-//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
-//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
-//! into a write outside DIST. Before anything runs as builder, root reads Cargo.toml, opens DIST,
-//! makes the scratch directory in `TMPDIR` with mktemp and writes the recipe into it. After that,
-//! builder enters the scratch directory and reads the package itself, and root follows no link
-//! builder could have made in DIST or at or in the scratch directory: it makes the package a new
-//! name in the opened DIST, never through a link, gives it DIST's owner through the handle, and
-//! removes the scratch directory without following links in or to it. That removal looks the
-//! directory up by path again, so where builder can rename a directory above it (a `TMPDIR` in a
-//! checkout builder's uid owns), it can at most remove a directory builder made itself.
+//! It trusts the checkout it runs in, that checkout's owner and the caller's environment: `TMPDIR`,
+//! and `PATH`, whose directories root searches for `runuser` and so must be root's. builder is
+//! there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and in
+//! a local run its uid can be the checkout owner's. What a root run guards is root's own lookups:
+//! none can be steered into a write or removal outside DIST. Before anything runs as builder, root
+//! reads Cargo.toml, opens DIST, makes the scratch directory in `TMPDIR` with mktemp, gives it to
+//! builder and writes the recipe into it. After that, builder enters the scratch directory, reads
+//! the package and removes the directory itself, and root follows no link builder could have made:
+//! it makes the package a new name in the opened DIST, never through a link, and gives it DIST's
+//! owner through the handle.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -136,8 +134,14 @@ fn arch_package() -> Result {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
-    let packaged = package(arch, &archive, &work, &dist_dir, &version, as_root);
-    if let Err(error) = fs::remove_dir_all(&work) {
+    // builder owns the scratch directory from the start and removes it at the end: by then a lookup
+    // by root could find another directory under its name, even one of root's, that builder put
+    // there.
+    let handed = if as_root { run(Command::new("chown").args(["--", "builder"]).arg(&work)) } else { Ok(()) };
+    let packaged = handed.and_then(|()| package(arch, &archive, &work, &dist_dir, &version, as_root));
+    let removed: Result =
+        if as_root { run(unprivileged("rm", as_root).args(["-rf", "--"]).arg(&work)) } else { fs::remove_dir_all(&work).map_err(Into::into) };
+    if let Err(error) = removed {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
     packaged
