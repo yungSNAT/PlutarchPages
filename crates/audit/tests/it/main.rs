@@ -10,6 +10,7 @@ use pdfcraft_testkit::{Pdf, stream_obj};
 
 mod covers;
 mod head_to_head;
+mod tool_made;
 
 /// Object 5 of every page [`page`] builds.
 const HELVETICA: &str = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
