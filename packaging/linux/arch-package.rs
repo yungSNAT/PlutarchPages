@@ -16,21 +16,21 @@
 //! directory `DIST`, or dist/release, as packaging/env.sh sets them. TARBALL, when not given or empty, is
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
-//! archlinux:base-devel container. makepkg refuses root, so as root it unpacks the tarball, runs
-//! makepkg and checks the package as the unprivileged user `builder`, which it adds if needed, in a
-//! scratch directory that builder owns. It then writes the package as a new file in DIST, owned by
-//! DIST's owner. DIST itself keeps its owner and mode.
+//! archlinux:base-devel container. makepkg refuses root, so as root it does all its work on the
+//! package as the unprivileged user `builder`, which it adds if needed: builder makes a scratch
+//! directory in `TMPDIR` with mktemp, so must be able to write there, writes the recipe root gives
+//! it, unpacks the tarball, runs makepkg, checks the package and removes the directory. Root then
+//! writes the package as a new file in DIST, owned by DIST's owner. DIST itself keeps its owner and
+//! mode.
 //!
-//! It trusts the checkout it runs in, that checkout's owner and the caller's environment: `TMPDIR`,
-//! and `PATH`, whose directories root searches for `runuser` and so must be root's. builder is
-//! there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and in
-//! a local run its uid can be the checkout owner's. What a root run guards is root's own lookups:
-//! none can be steered into a write or removal outside DIST. Before anything runs as builder, root
-//! reads Cargo.toml, opens DIST, makes the scratch directory in `TMPDIR` with mktemp, gives it to
-//! builder and writes the recipe into it. After that, builder enters the scratch directory, reads
-//! the package and removes the directory itself, and root follows no link builder could have made:
-//! it makes the package a new name in the opened DIST, never through a link, and gives it DIST's
-//! owner through the handle.
+//! It trusts the checkout it runs in, that checkout's owner and the caller's `PATH`, whose
+//! directories root searches for `runuser` and so must be root's. builder is there because makepkg
+//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
+//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
+//! into a write or removal outside DIST. Root reads Cargo.toml and opens DIST before anything runs
+//! as builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
+//! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
+//! gives it DIST's owner through the handle.
 //!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
@@ -128,20 +128,16 @@ fn arch_package() -> Result {
         }
     }
 
-    // A private directory of its own, as arch-package.sh made: std makes none.
-    let mut work = capture(Command::new("mktemp").arg("-d"))?.stdout;
+    // builder makes, fills and removes its own private directory, and root only passes its path on:
+    // a lookup there by root could follow a link, or find another directory under its name, that a
+    // builder process put there.
+    let mut work = capture(unprivileged("mktemp", as_root).arg("-d"))?.stdout;
     if work.ends_with(b"\n") {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
-    // builder owns the scratch directory from the start and removes it at the end: by then a lookup
-    // by root could find another directory under its name, even one of root's, that builder put
-    // there.
-    let handed = if as_root { run(Command::new("chown").args(["--", "builder"]).arg(&work)) } else { Ok(()) };
-    let packaged = handed.and_then(|()| package(arch, &archive, &work, &dist_dir, &version, as_root));
-    let removed: Result =
-        if as_root { run(unprivileged("rm", as_root).args(["-rf", "--"]).arg(&work)) } else { fs::remove_dir_all(&work).map_err(Into::into) };
-    if let Err(error) = removed {
+    let packaged = package(arch, &archive, &work, &dist_dir, &version, as_root);
+    if let Err(error) = run(unprivileged("rm", as_root).args(["-rf", "--"]).arg(&work)) {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
     packaged
@@ -157,6 +153,19 @@ fn unprivileged(program: &str, as_root: bool) -> Command {
     command
 }
 
+/// Writes `contents` to `path` through `tee` run by [`unprivileged`], so root opens nothing there.
+fn write_unprivileged(path: &Path, contents: &str, as_root: bool) -> Result {
+    let mut tee = unprivileged("tee", as_root);
+    tee.arg("--").arg(path).stdin(Stdio::piped()).stdout(Stdio::null());
+    let mut child = tee.spawn()?;
+    let written = child.stdin.take().map_or(Ok(()), |mut stdin| stdin.write_all(contents.as_bytes()));
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(format!("{tee:?} failed with {status}").into());
+    }
+    written.map_err(Into::into)
+}
+
 fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version: &str, as_root: bool) -> Result {
     let pkgver = version.replace('-', "");
     if pkgver.is_empty() || !pkgver.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+')) {
@@ -164,14 +173,11 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
     }
 
     let stage = work.join("stage");
-    fs::create_dir(&stage)?;
+    run(unprivileged("mkdir", as_root).arg("--").arg(&stage))?;
     let config = work.join("makepkg.conf");
-    fs::write(&config, format!("source /etc/makepkg.conf\nCARCH={arch}\nCHOST={arch}-unknown-linux-gnu\nPKGEXT=.pkg.tar.zst\n"))?;
+    write_unprivileged(&config, &format!("source /etc/makepkg.conf\nCARCH={arch}\nCHOST={arch}-unknown-linux-gnu\nPKGEXT=.pkg.tar.zst\n"), as_root)?;
     let recipe = include_str!("arch.PKGBUILD").replace("@VERSION@", &pkgver).replace("@ARCH@", arch);
-    fs::write(work.join("PKGBUILD"), recipe)?;
-    if as_root {
-        run(Command::new("chown").args(["-R", "--", "builder"]).arg(work))?;
-    }
+    write_unprivileged(&work.join("PKGBUILD"), &recipe, as_root)?;
     run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
     // builder enters the scratch directory itself: once its tar has run, builder could have put a
     // link where the directory was, and a chdir by root would follow it.
