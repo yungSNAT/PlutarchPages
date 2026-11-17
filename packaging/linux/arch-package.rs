@@ -23,12 +23,14 @@
 //! package. Root then makes the package a new file in DIST, owned by DIST's owner, which builder's
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
-//! It trusts the checkout it runs in, that checkout's owner and the caller's `PATH`, whose
-//! directories root searches for `runuser` and so must be root's. builder is there because makepkg
-//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
-//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
-//! into a write or removal outside DIST. Root reads Cargo.toml and opens DIST before anything runs
-//! as builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
+//! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
+//! root searches for `runuser` and so must be root's, and DIST's path: root makes and opens DIST by
+//! path, so DIST and every directory above it must be writable only by root, the caller or the
+//! checkout's owner, as dist/release in the checkout is. builder is there because makepkg refuses
+//! root, not as a sandbox: it runs the repository's own build, and in a local run its uid can be
+//! the checkout owner's. What a root run guards is root's own lookups: none can be steered into a
+//! write or removal outside DIST. Root reads Cargo.toml and opens DIST before its first program as
+//! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
 //!
