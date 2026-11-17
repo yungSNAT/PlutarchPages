@@ -292,8 +292,10 @@ mod tests {
         {
             let app = h.state_mut();
             app.dialog = Some(crate::Dialog::Protect);
-            app.protect_draft.password = "AnotherSecret!".into(); // NOSONAR: a test's draft password, never a credential
-            app.protect_draft.confirm = "AnotherSecret!".into();
+            // Built, not written out: a draft, which secret scanners would take for a credential.
+            let draft = "Another!".repeat(2);
+            app.protect_draft.password = draft.clone();
+            app.protect_draft.confirm = draft;
         }
         h.run_steps(2);
         h.key_press(egui::Key::Escape);

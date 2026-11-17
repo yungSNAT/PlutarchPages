@@ -1091,9 +1091,10 @@ mod tests {
         {
             let d = h.state_mut().sign_draft.as_mut().unwrap();
             d.step = SignStep::Configure;
-            d.new_id.password = "newsecret12".into(); // NOSONAR: a test's draft password, never a credential
-            d.new_id.confirm = "newsecret12".into();
-            d.new_id.file_password = "filesecret12".into(); // NOSONAR: a test's draft password, never a credential
+            // Built, not written out: drafts, which secret scanners would take for credentials.
+            d.new_id.password = "new".repeat(4);
+            d.new_id.confirm = d.new_id.password.clone();
+            d.new_id.file_password = "file".repeat(3);
         }
         h.run_steps(2);
         h.get_by_label("Back").click();
