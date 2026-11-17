@@ -21,6 +21,10 @@
 //! scratch directory that builder owns. It then writes the package as a new file in DIST, owned by
 //! DIST's owner. DIST itself keeps its owner and mode.
 //!
+//! Run as root, it acts by path only on DIST, `TMPDIR` and the working directory, so their ancestors
+//! must be writable only by root or the caller (a sticky `TMPDIR`, such as /tmp, passes). Every step
+//! that builder's code can reach works through a handle, not a path.
+//!
 //! The package is `plutarchpages`, not upstream's `ai.storyteller.pdfcraft`. Both install
 //! /usr/bin/pdfcraft, so it provides and conflicts with `pdfcraft`, which upstream's provides too.
 
@@ -33,7 +37,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::os::fd::AsRawFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -123,7 +127,7 @@ fn arch_package() -> Result {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
-    let packaged = package(arch, &archive, &work, &dist, &dist_dir, &version, as_root);
+    let packaged = package(arch, &archive, &work, &dist_dir, &version, as_root);
     if let Err(error) = fs::remove_dir_all(&work) {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
@@ -140,7 +144,7 @@ fn unprivileged(program: &str, as_root: bool) -> Command {
     command
 }
 
-fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, dist_dir: &fs::File, version: &str, as_root: bool) -> Result {
+fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version: &str, as_root: bool) -> Result {
     let pkgver = version.replace('-', "");
     if pkgver.is_empty() || !pkgver.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'+')) {
         return Err(format!("can't make a pkgver from {version}").into());
@@ -183,13 +187,13 @@ fn package(arch: &str, archive: &Path, work: &Path, dist: &Path, dist_dir: &fs::
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
         _ => {}
     }
-    let file = fs::OpenOptions::new().write(true).create_new(true).open(&target)?;
+    let file = fs::OpenOptions::new().write(true).create_new(true).mode(0o644).open(&target)?;
     if as_root {
         let owner = dist_dir.metadata()?;
         std::os::unix::fs::fchown(&file, Some(owner.uid()), Some(owner.gid()))?;
     }
     run(unprivileged("cat", as_root).arg("--").arg(&built).stdout(file))?;
-    println!("wrote {}", dist.join(name).display());
+    println!("wrote {name} in the output directory");
     Ok(())
 }
 
