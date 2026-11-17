@@ -24,7 +24,9 @@
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
-//! root searches for `id`, `useradd` and `runuser` and so must be root's, and DIST's path: root makes
+//! root searches for `id`, `useradd`, `setsid`, `setpriv` and `runuser` and so must be root's, the
+//! descriptors the caller leaves open, as builder's programs inherit any above 2 that are not
+//! close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), and DIST's path: root makes
 //! and opens DIST by path, so DIST and every directory above it must be writable only by root, the
 //! caller or the checkout's owner, as dist/release is in a checkout whose own ancestors are. builder
 //! is there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and
@@ -146,16 +148,19 @@ fn arch_package() -> Result {
     packaged
 }
 
-/// `program` run as `builder` when the helper runs as root, and as the caller otherwise. builder's
-/// programs start a session of their own, read nothing from root's standard input and get root's
-/// terminal, where standard output or standard error is one, opened for writing only, so none can
-/// push input into root's terminal or read from it.
+/// `program` run as `builder` when the helper runs as root, and as the caller otherwise. Root starts
+/// a session without a controlling terminal before runuser drops to builder, so no builder process
+/// ever has root's terminal as its own; builder's programs read nothing from root's standard input
+/// and get root's terminal, where standard output or standard error is one, opened for writing
+/// only, so none can push input into root's terminal or read from it. As that session is not the
+/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send runuser SIGTERM
+/// when the helper dies, and runuser then ends builder's program.
 fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
     if !as_root {
         return Ok(Command::new(program));
     }
-    let mut command = Command::new("runuser");
-    command.args(["-u", "builder", "--", "setsid", "--wait", "env", "HOME=/home/builder", program]);
+    let mut command = Command::new("setsid");
+    command.args(["--wait", "setpriv", "--pdeathsig", "TERM", "runuser", "-u", "builder", "--", "env", "HOME=/home/builder", program]);
     command.stdin(Stdio::null()).stdout(write_only(io::stdout())?).stderr(write_only(io::stderr())?);
     Ok(command)
 }
