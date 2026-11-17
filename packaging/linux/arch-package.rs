@@ -24,11 +24,11 @@
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
-//! root searches for `runuser` and so must be root's, and DIST's path: root makes and opens DIST by
-//! path, so DIST and every directory above it must be writable only by root, the caller or the
-//! checkout's owner, as dist/release in the checkout is. builder is there because makepkg refuses
-//! root, not as a sandbox: it runs the repository's own build, and in a local run its uid can be
-//! the checkout owner's. What a root run guards is root's own lookups: none can be steered into a
+//! root searches for `id`, `useradd` and `runuser` and so must be root's, and DIST's path: root makes
+//! and opens DIST by path, so DIST and every directory above it must be writable only by root, the
+//! caller or the checkout's owner, as dist/release is in a checkout whose own ancestors are. builder
+//! is there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and
+//! in a local run its uid can be the checkout owner's. What a root run guards is root's own lookups: none can be steered into a
 //! write or removal outside DIST. Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
@@ -113,8 +113,8 @@ fn arch_package() -> Result {
         None => return Err(outside.into()),
     };
     fs::create_dir_all(&dist)?;
-    // The package goes into this directory, opened before anything runs as builder: renaming DIST
-    // or putting a link in its place later can't move where it goes.
+    // The package goes into this directory, opened before root's first program as builder: renaming
+    // DIST or putting a link in its place later can't move where it goes.
     let dist_dir = fs::File::open(&dist)?;
     let archive =
         args.get(1).filter(|archive| !archive.is_empty()).map_or_else(|| dist.join(format!("pdfcraft-{version}-linux-{arch}.tar.gz")), PathBuf::from);

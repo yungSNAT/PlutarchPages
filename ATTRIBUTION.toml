@@ -2910,6 +2910,138 @@ usage = "Signature validation tests (crates/sign/tests/it/pdf.rs): a signature P
 sha256 = "8b91c3b4e39c4a31717a0dd0685bd7d0468671df32aee5b9818d44dc72c2bc3c"
 
 [[asset]]
+path = "crates/audit/tests/data/tool-made/base.pdf"
+title = "Base page for the tool-made redaction files"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "47797230b08916f03df989e5c80c5dc40ac896e89ccb74aee2d2f5f91f8b96ea"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-applied.pdf"
+title = "Redaction applied with PyMuPDF's apply_redactions, saved with garbage collection"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "8fd3be0a8392dcafbccd80c7bc9801c755e4b99415582f823c282a6eaf8b10e0"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-applied-no-garbage.pdf"
+title = "Redaction applied with PyMuPDF's apply_redactions, saved without garbage collection"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "ed35538ca08760b61e1d489df62dabe3efc63e2d6262af20ec414ae933b78bfe"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-mark-unapplied.pdf"
+title = "Redaction mark left unapplied by PyMuPDF"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "be5aebaf969d3778cbee62e55359b6e780e9607daf5dea604d24cb2aadf80160"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-drawn-box.pdf"
+title = "Black box PyMuPDF drew over text"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "7659d82c6089ae1bdf23728c206c62c2fe22cb425983798c80752e2778ad5893"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-square-annot.pdf"
+title = "Black Square annotation PyMuPDF added over text"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "7bd4c80ef7a138fd811cc4e4739600fd95bc67419f9e1aa0e0101b151689c0c6"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/mutool-applied.pdf"
+title = "Redaction applied with mutool's applyRedactions, saved with garbage collection"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then mutool 1.28.6 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "6168c6e69ce434e56bf048bedf2101ae48c40a3a8f939835a007da8e16a5b017"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/mutool-applied-no-garbage.pdf"
+title = "Redaction applied with mutool's applyRedactions, saved without garbage collection"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then mutool 1.28.6 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "73301b75e8a9981e7021da1b3ca428f49d7378c0915b9938040699c95ade771b"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/mutool-mark-unapplied.pdf"
+title = "Redaction mark left unapplied by mutool"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then mutool 1.28.6 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "6abdf854a38d13f67a7d26e755629053c4e44245e1308fa965465299ac49aab6"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/mutool-square-annot.pdf"
+title = "Black Square annotation mutool added over text"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then mutool 1.28.6 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "56f36817130400f79fc4029d339b7ac8d120b4704998445c2244e0ad70fd8b8c"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pdfjs-highlight.pdf"
+title = "Black highlight pdf.js saved over text"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then pdf.js 6.5.438 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "04f2e68f70d4ff3a7969265c49f8d8a0e16275b8c813688d92685f76827d1c8e"
+
+[[asset]]
+path = "crates/audit/tests/data/tool-made/pdfjs-ink.pdf"
+title = "Black ink stroke pdf.js saved over text"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1, then pdf.js 6.5.438 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "a31029a18960af2a15e71c40a63d7c753486a26bd2e67093acaeac432d5964ea"
+
+[[asset]]
 path = "assets/icons/clipboard-paste.svg"
 title = "Lucide icon \"clipboard-paste\""
 author = "Lucide Contributors (portions Cole Bemis, Feather)"
