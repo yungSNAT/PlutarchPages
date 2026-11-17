@@ -422,54 +422,8 @@ impl<'a> Walker<'a> {
                         line = Line::Other;
                     }
                 }
-                name @ (b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K") => {
-                    let n = match name {
-                        b"g" | b"G" => 1,
-                        b"rg" | b"RG" => 3,
-                        _ => 4,
-                    };
-                    if let Some(color) = op.operands.len().checked_sub(n).and_then(|k| numbers(&op.operands[k..])).and_then(|v| rgb(&v)) {
-                        if name[0].is_ascii_lowercase() {
-                            (gs.fill, gs.space) = (Some(color), n);
-                        } else {
-                            (gs.stroke, gs.stroke_space) = (Some(color), n);
-                        }
-                    }
-                }
-                b"cs" => (gs.space, gs.fill) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
-                b"CS" => (gs.stroke_space, gs.stroke) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
-                name @ (b"sc" | b"scn" | b"SC" | b"SCN") => {
-                    if name[0] == b's' {
-                        gs.fill = numbers(&op.operands).filter(|v| v.len() == gs.space).and_then(|v| rgb(&v));
-                    } else {
-                        gs.stroke = numbers(&op.operands).filter(|v| v.len() == gs.stroke_space).and_then(|v| rgb(&v));
-                    }
-                    if let Some(name) = op.operands.last().and_then(Object::as_name) {
-                        self.walk_pattern(name, i, res, calls)?;
-                    }
-                }
-                b"w" => {
-                    if let Some([w]) = op.nums::<1>().filter(|[w]| w.is_finite() && *w >= 0.0) {
-                        gs.line_width = w;
-                    }
-                }
-                b"d" => {
-                    if let Some(dashes) = op.operands.first().and_then(Object::as_array) {
-                        gs.dashed = !dashes.is_empty();
-                    }
-                }
-                b"gs" => {
-                    if let Some(name) = op.name(0) {
-                        // A state leaves what it doesn't set as it was (ISO 32000-2 §8.4.5).
-                        let set = ext_state(self.doc, resources, name);
-                        gs.alpha = set.alpha.unwrap_or(gs.alpha);
-                        gs.stroke_alpha = set.stroke_alpha.unwrap_or(gs.stroke_alpha);
-                        gs.line_width = set.line_width.unwrap_or(gs.line_width);
-                        gs.dashed = set.dashed.unwrap_or(gs.dashed);
-                        gs.blended = set.blended.unwrap_or(gs.blended);
-                        gs.masked = set.masked.unwrap_or(gs.masked);
-                        self.walk_state_font(name, i, res, calls)?;
-                    }
+                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"d" | b"gs" => {
+                    self.set_state(op, gs, res, calls, i)?;
                 }
                 b"re" => {
                     let rect = op.nums::<4>().and_then(|[x, y, w, h]| {
@@ -575,6 +529,65 @@ impl<'a> Walker<'a> {
                 path_box = None;
                 line = Line::Empty;
             }
+        }
+        Ok(())
+    }
+
+    /// Apply the graphics state operator `op` (index `i`): colours, colour spaces, line width,
+    /// dash and `gs`, walking any pattern or `gs` font it names.
+    fn set_state(&mut self, op: &Op, gs: &mut Gs, res: Res<'_>, calls: &mut Vec<usize>, i: usize) -> Result<(), AuditError> {
+        let resources = res.dict;
+        match op.op.as_slice() {
+            name @ (b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K") => {
+                let n = match name {
+                    b"g" | b"G" => 1,
+                    b"rg" | b"RG" => 3,
+                    _ => 4,
+                };
+                if let Some(color) = op.operands.len().checked_sub(n).and_then(|k| numbers(&op.operands[k..])).and_then(|v| rgb(&v)) {
+                    if name[0].is_ascii_lowercase() {
+                        (gs.fill, gs.space) = (Some(color), n);
+                    } else {
+                        (gs.stroke, gs.stroke_space) = (Some(color), n);
+                    }
+                }
+            }
+            b"cs" => (gs.space, gs.fill) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
+            b"CS" => (gs.stroke_space, gs.stroke) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
+            name @ (b"sc" | b"scn" | b"SC" | b"SCN") => {
+                if name[0] == b's' {
+                    gs.fill = numbers(&op.operands).filter(|v| v.len() == gs.space).and_then(|v| rgb(&v));
+                } else {
+                    gs.stroke = numbers(&op.operands).filter(|v| v.len() == gs.stroke_space).and_then(|v| rgb(&v));
+                }
+                if let Some(name) = op.operands.last().and_then(Object::as_name) {
+                    self.walk_pattern(name, i, res, calls)?;
+                }
+            }
+            b"w" => {
+                if let Some([w]) = op.nums::<1>().filter(|[w]| w.is_finite() && *w >= 0.0) {
+                    gs.line_width = w;
+                }
+            }
+            b"d" => {
+                if let Some(dashes) = op.operands.first().and_then(Object::as_array) {
+                    gs.dashed = !dashes.is_empty();
+                }
+            }
+            b"gs" => {
+                if let Some(name) = op.name(0) {
+                    // A state leaves what it doesn't set as it was (ISO 32000-2 §8.4.5).
+                    let set = ext_state(self.doc, resources, name);
+                    gs.alpha = set.alpha.unwrap_or(gs.alpha);
+                    gs.stroke_alpha = set.stroke_alpha.unwrap_or(gs.stroke_alpha);
+                    gs.line_width = set.line_width.unwrap_or(gs.line_width);
+                    gs.dashed = set.dashed.unwrap_or(gs.dashed);
+                    gs.blended = set.blended.unwrap_or(gs.blended);
+                    gs.masked = set.masked.unwrap_or(gs.masked);
+                    self.walk_state_font(name, i, res, calls)?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
