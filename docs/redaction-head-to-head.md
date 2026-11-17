@@ -61,27 +61,26 @@ the file.
 | --- | --- | --- | --- | --- | --- |
 | `base` (no cover) | shows | yes | yes | nothing | nothing |
 | `pymupdf-applied` | hidden | no | no | nothing | nothing |
-| `pymupdf-applied-no-garbage` | hidden | no | yes, unreferenced | **missed** | missed |
+| `pymupdf-applied-no-garbage` | hidden | no | yes, unreferenced | `unreferenced-text` | missed |
 | `pymupdf-mark-unapplied` | shows | yes | yes | `unapplied-mark` | `unapplied-mark` |
 | `pymupdf-drawn-box` | hidden | yes | yes | `covered-text` | `covered-text` |
 | `pymupdf-square-annot` | hidden | yes | yes | `covered-text` | `covered-text` |
 | `mutool-applied` | hidden | no | no | nothing | nothing |
-| `mutool-applied-no-garbage` | hidden | no | yes, unreferenced | **missed** | missed |
+| `mutool-applied-no-garbage` | hidden | no | yes, unreferenced | `unreferenced-text` | missed |
 | `mutool-mark-unapplied` | shows | yes | yes | `unapplied-mark` | `unapplied-mark` |
 | `mutool-square-annot` | hidden | yes | yes | `covered-text` | `covered-text` |
 | `pdfjs-highlight` (black, opacity 1) | hidden | yes | yes | `covered-text` | missed |
-| `pdfjs-ink` (one black stroke) | hidden | yes | yes | **missed** | missed |
+| `pdfjs-ink` (one black stroke) | hidden | yes | yes | `covered-text` | missed |
 
-Of the 9 unsafe files, main flags 6 and 0.18.2 flags 5. Both pass the 2 redactions applied and
-saved with garbage collection. Both miss pdf.js's ink stroke: the audit reads filled boxes, images,
-shadings and words of block characters, in page content or annotation appearances, as covers,
-not stroked paths, so a line
-drawn thick enough hides text the audit still treats as on show. Both also miss the 2 redactions
-applied and saved without garbage collection: the page's original content stream, with the text,
-stays in the file with nothing referring to it, and the audit reads what the pages draw, not objects nothing refers to.
-[`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column, with the 3 misses in
-ignored tests until the audit reads strokes and unreferenced objects. The 0.18.2 CLI ran from its
-release archive, as above. pdf.js saves both its files as an incremental update, and both CLIs also
+Of the 9 unsafe files, main flags all 9 and 0.18.2 flags 5. Both pass the 2 redactions applied
+and saved with garbage collection. Main reads a straight stroke as a cover over the band its width
+paints, so pdf.js's ink stroke is `covered-text`. A redaction applied and saved without garbage
+collection leaves the page's original content streams, one of them with the secret, in the file
+with nothing referring to them: main counts each such stream that shows text as the document
+finding `unreferenced-text`, and `pdfcraft-cli audit` fails on it as on covered text. Until
+17 November main missed those 3 files too, and flagged 6. 0.18.2 misses them and pdf.js's
+highlight. [`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column. The 0.18.2
+CLI ran from its release archive, as above. pdf.js saves both its files as an incremental update, and both CLIs also
 report an `earlier-revisions` document finding on each; that finding is about the original revision
 kept in the file, not the cover. Upstream pdfcraft 0.21.1 was not run on these files. Whether
 PyMuPDF, MuPDF or pdf.js check for covers themselves was not assessed.
