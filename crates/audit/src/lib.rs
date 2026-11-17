@@ -23,8 +23,10 @@
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
 //! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
 //! that holds its clip and within its `/BBox`, an image without a mask of its own, over the box the
-//! CTM places it in, and a word of block characters (`█`, `■` and the like) drawn filled; other
-//! filled paths and glyphs are not. An image doesn't hide invisible text (rendering mode 3 or 7):
+//! CTM places it in, a word of block characters (`█`, `■` and the like) drawn filled, and a
+//! straight solid stroke along one horizontal or vertical line, over the band its width paints
+//! between its ends, under a CTM that keeps the axes; other filled paths, strokes and glyphs are
+//! not. An image doesn't hide invisible text (rendering mode 3 or 7):
 //! an OCR tool draws a scan over the text it read from it. A cover in a color the audit doesn't
 //! read (a pattern's, a spot color's, an image's) counts as dark as the text, and a block is judged
 //! by its colour against the text's. Filled `/Square` annotations count as covers too, by their

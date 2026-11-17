@@ -8,9 +8,10 @@ let report = audit_document(&doc)?; // page_findings and document_findings
 
 The report checks for:
 
-- **faux redaction**: a filled rectangle, an image, or a word of block characters (`█`, `■` and
-  the like), painted *after* text it overlaps, while the text is still extractable underneath;
-  filled Square annotations count as covers too. A cover painted fully opaque in the Normal blend
+- **faux redaction**: a filled rectangle, a thick straight stroke (a pen line across the text),
+  an image, or a word of block characters (`█`, `■` and the like), painted *after* text it
+  overlaps, while the text is still extractable underneath; filled Square annotations count as
+  covers too. A cover painted fully opaque in the Normal blend
   mode hides the text whatever its colour: it replaces what lies under it, so a black box over red
   text or a white box over black text both hide it. A translucent cover (`/ca` above 0 and below 1,
   or a Square's interior colour at `/CA` below 1), a blended one (`/BM` other than Normal, as a
