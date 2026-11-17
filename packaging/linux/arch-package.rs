@@ -187,7 +187,8 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
         Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error.into()),
         _ => {}
     }
-    let file = fs::OpenOptions::new().write(true).create_new(true).mode(0o644).open(&target)?;
+    // The package is published, so others must read it; group and others never get write.
+    let file = fs::OpenOptions::new().write(true).create_new(true).mode(0o644).open(&target)?; // NOSONAR
     if as_root {
         let owner = dist_dir.metadata()?;
         std::os::unix::fs::fchown(&file, Some(owner.uid()), Some(owner.gid()))?;
