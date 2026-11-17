@@ -191,7 +191,16 @@ struct Stage {
 
 impl Stage {
     fn new() -> Result<Stage, ExternalError> {
-        let dir = tempfile::Builder::new().prefix("plutarchpages-convert-").tempdir().map_err(io("couldn't create a private folder"))?;
+        let mut builder = tempfile::Builder::new();
+        builder.prefix("plutarchpages-convert-");
+        // Owner-only on Unix, where the temporary folder is shared: tempfile otherwise leaves a
+        // folder at the umask's mode, and the document staged in it is not for other users.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
+        let dir = builder.tempdir().map_err(io("couldn't create a private folder"))?;
         for sub in ["in", "out", "profile", "home", "scratch"] {
             std::fs::create_dir(dir.path().join(sub)).map_err(io("couldn't prepare the private folder"))?;
         }
@@ -314,14 +323,13 @@ fn read_output(path: &Path, max: u64) -> Result<Vec<u8>, ExternalError> {
     if !meta.file_type().is_file() {
         return Err(ExternalError::InvalidOutput("the program's result is not a regular file".into()));
     }
-    let too_large = || ExternalError::InvalidOutput(format!("the result is larger than {} MB", max >> 20));
     if meta.len() > max {
-        return Err(too_large());
+        return Err(too_large(max));
     }
     let mut bytes = Vec::new();
     file.take(max.saturating_add(1)).read_to_end(&mut bytes).map_err(io("couldn't read the result"))?;
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > max {
-        return Err(too_large());
+        return Err(too_large(max));
     }
     let head = bytes.get(..bytes.len().min(1024)).unwrap_or_default();
     let tail = bytes.get(bytes.len().saturating_sub(1024)..).unwrap_or_default();
@@ -331,9 +339,47 @@ fn read_output(path: &Path, max: u64) -> Result<Vec<u8>, ExternalError> {
     Ok(bytes)
 }
 
-/// Whether the file at `path` has grown past `max` bytes (the program is then stopped).
-fn grown_past(path: &Path, max: u64) -> bool {
-    std::fs::metadata(path).is_ok_and(|m| m.len() > max)
+fn too_large(max: u64) -> ExternalError {
+    ExternalError::InvalidOutput(format!("the result is larger than {} MB", max >> 20))
+}
+
+/// How many entries, and how deep, [`bytes_under`] measures before it gives up. A fresh
+/// LibreOffice profile holds a few hundred files, a few folders deep.
+const MAX_STAGE_ENTRIES: usize = 10_000;
+const MAX_STAGE_DEPTH: usize = 32;
+
+/// The bytes in the regular files under `dirs`, links not followed. Anything unreadable counts as
+/// nothing and the sum saturates. Each size is read from the file itself: on Windows a directory
+/// listing keeps the old size while a process still has the file open. More than
+/// [`MAX_STAGE_ENTRIES`] entries in all, or folders deeper than [`MAX_STAGE_DEPTH`], count as
+/// `u64::MAX`, past any limit, so the walk stays cheap and the program that made them is stopped.
+/// `stop` is asked before each folder and every 256 entries; once it is true the walk returns what
+/// it has counted, so a cancel or a deadline is not held up by it.
+fn bytes_under(dirs: &[PathBuf], stop: &dyn Fn() -> bool) -> u64 {
+    let (mut pending, mut sum, mut seen): (Vec<_>, _, _) = (dirs.iter().map(|d| (d.clone(), 0)).collect(), 0u64, 0usize);
+    while let Some((dir, depth)) = pending.pop() {
+        if stop() {
+            return sum;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            seen += 1;
+            if seen > MAX_STAGE_ENTRIES {
+                return u64::MAX;
+            }
+            if seen % 256 == 0 && stop() {
+                return sum;
+            }
+            let path = entry.path();
+            match std::fs::symlink_metadata(&path) {
+                Ok(meta) if meta.is_dir() && depth < MAX_STAGE_DEPTH => pending.push((path, depth + 1)),
+                Ok(meta) if meta.is_dir() => return u64::MAX,
+                Ok(meta) if meta.is_file() => sum = sum.saturating_add(meta.len()),
+                _ => {}
+            }
+        }
+    }
+    sum
 }
 
 fn check_input(bytes: &[u8], limits: &Limits) -> Result<(), ExternalError> {
@@ -436,7 +482,29 @@ pub fn url_to_pdf(browser: &Path, url: &str, limits: &Limits, cancel: &AtomicBoo
 
 // ── LibreOffice ───────────────────────────────────────────────────────────────────────────────
 
+/// The fresh profile's settings: no macros at all, no links to untrusted locations, and
+/// linked content in Writer and Calc documents (sections, files, external data) never
+/// updated on load, so a document can't make LibreOffice fetch from the network or a share.
+/// The two `Link` settings number "Never" differently (Writer.xcs: 0 Always, 1 On request,
+/// 2 Never; Calc.xcs: 0 Always, 1 Never, 2 On request). Impress has no such setting.
+/// From upstream's `crates/create/src/office.rs`.
+const PROFILE_SETTINGS: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<oor:items xmlns:oor="http://openoffice.org/2001/registry" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="DisableMacrosExecution" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="MacroSecurityLevel" oor:op="fuse"><value>3</value></prop></item>
+<item oor:path="/org.openoffice.Office.Common/Security/Scripting"><prop oor:name="BlockUntrustedRefererLinks" oor:op="fuse"><value>true</value></prop></item>
+<item oor:path="/org.openoffice.Office.Writer/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>2</value></prop></item>
+<item oor:path="/org.openoffice.Office.Calc/Content/Update"><prop oor:name="Link" oor:op="fuse"><value>1</value></prop></item>
+</oor:items>
+"#;
+
+/// A fresh LibreOffice profile in `stage`, holding [`PROFILE_SETTINGS`], as the
+/// `-env:UserInstallation` argument.
 fn profile_arg(stage: &Stage) -> Result<OsString, ExternalError> {
+    let user = stage.path("profile").join("user");
+    std::fs::create_dir(&user)
+        .and_then(|()| std::fs::write(user.join("registrymodifications.xcu"), PROFILE_SETTINGS))
+        .map_err(io("couldn't prepare the LibreOffice profile"))?;
     let url = file_url(&stage.path("profile"), true).ok_or_else(|| ExternalError::Io("couldn't address the profile folder".into()))?;
     Ok(OsString::from(format!("-env:UserInstallation={url}")))
 }
@@ -520,12 +588,22 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
     let out = stage.path("out").join("input.pdf");
     let result = (|| {
         let mut child = supervise::spawn(cmd, "LibreOffice")?;
-        // Stopped at once when the result grows too large; the read then refuses it.
-        match supervise::wait(&mut child, Instant::now() + limits.timeout, cancel, || grown_past(&out, limits.max_output)) {
+        // Stopped at once when what it writes anywhere in its stage grows too large: the result,
+        // or a file under another name (a result may be written as one first), its profile and
+        // home included. Only the staged input is left out. The walk gives way to a cancel or the
+        // deadline, which `wait` then acts on.
+        let deadline = Instant::now() + limits.timeout;
+        let watched: Vec<PathBuf> = ["out", "scratch", "profile", "home"].iter().map(|sub| stage.path(sub)).collect();
+        let stop = || cancel.load(std::sync::atomic::Ordering::Relaxed) || Instant::now() >= deadline;
+        match supervise::wait(&mut child, deadline, cancel, || bytes_under(&watched, &stop) > limits.max_output) {
             Ended::Exited(status) if !status.success() => {
                 Err(ExternalError::ProcessFailed(format!("LibreOffice stopped ({status}) without finishing the PDF")))
             }
-            Ended::Exited(_) | Ended::Done => read_output(&out, limits.max_output),
+            Ended::Exited(_) => read_output(&out, limits.max_output),
+            Ended::Done => Err(ExternalError::InvalidOutput(format!(
+                "what LibreOffice wrote is larger than {} MB, or holds more files or folders than allowed",
+                limits.max_output >> 20
+            ))),
             Ended::TimedOut => Err(ExternalError::TimedOut("LibreOffice".into(), limits.timeout.as_secs())),
             Ended::Cancelled => Err(ExternalError::Cancelled),
         }
@@ -545,6 +623,33 @@ mod tests {
         assert_eq!(office_extension("no-extension"), None);
         assert_eq!(html_extension("page.HTM"), Some("htm"));
         assert_eq!(html_extension("page.html.exe"), None);
+    }
+
+    #[test]
+    fn the_profile_turns_off_macros_and_never_updates_links() {
+        let stage = Stage::new().unwrap();
+        profile_arg(&stage).unwrap();
+        let written = std::fs::read_to_string(stage.path("profile").join("user").join("registrymodifications.xcu")).unwrap();
+        let between = |s: &str, start: &str, end: &str| s.split_once(start).and_then(|(_, rest)| rest.split_once(end)).map(|(v, _)| v.to_string());
+        // Each setting, as (path, property, value).
+        let settings: Vec<(String, String, String)> = written
+            .split("<item ")
+            .skip(1)
+            .filter_map(|item| {
+                Some((between(item, "oor:path=\"", "\"")?, between(item, "oor:name=\"", "\"")?, between(item, "<value>", "</value>")?))
+            })
+            .collect();
+        let has = |path: &str, name: &str, value: &str| settings.iter().any(|(p, n, v)| p == path && n == name && v == value);
+        let scripting = "/org.openoffice.Office.Common/Security/Scripting";
+        assert!(has(scripting, "DisableMacrosExecution", "true"), "{settings:?}");
+        assert!(has(scripting, "MacroSecurityLevel", "3"), "{settings:?}");
+        assert!(has(scripting, "BlockUntrustedRefererLinks", "true"), "{settings:?}");
+        // "Never" is 2 for Writer but 1 for Calc (Writer.xcs and Calc.xcs); Writer's 1 is
+        // its default, "On request".
+        assert!(has("/org.openoffice.Office.Writer/Content/Update", "Link", "2"), "{settings:?}");
+        assert!(has("/org.openoffice.Office.Calc/Content/Update", "Link", "1"), "{settings:?}");
+        assert_eq!(settings.len(), 5, "{settings:?}");
+        let _ = stage.dir.close();
     }
 
     #[test]
@@ -671,5 +776,76 @@ mod tests {
         assert!(env.lines().any(|l| l.starts_with("PATH=")), "{env}");
         let home = env.lines().find_map(|l| l.strip_prefix("HOME="));
         assert!(home.is_some_and(|h| h.ends_with("/home")) && home != std::env::var("HOME").ok().as_deref(), "{home:?}");
+    }
+
+    /// The size walk counts every folder it is given against one entry budget, and gives way at
+    /// once to a cancel or the deadline (`stop`).
+    #[test]
+    fn the_size_walk_has_one_budget_and_gives_way() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        let half = MAX_STAGE_ENTRIES / 2 + 1;
+        for d in [&a, &b] {
+            std::fs::create_dir(d).unwrap();
+            for i in 0..half {
+                std::fs::write(d.join(i.to_string()), b"x").unwrap();
+            }
+        }
+        assert_eq!(bytes_under(std::slice::from_ref(&a), &|| false), half as u64);
+        assert_eq!(bytes_under(&[a.clone(), b.clone()], &|| false), u64::MAX, "one budget for both");
+        let asked = std::cell::Cell::new(0);
+        let stop_on_second_ask = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 2
+        };
+        assert_eq!(bytes_under(std::slice::from_ref(&a), &stop_on_second_ask), 255, "asked again at entry 256");
+        assert_eq!(bytes_under(&[a, b], &|| true), 0, "stopped before the first folder");
+    }
+
+    /// The temporary folder is shared on Unix: a conversion's folder, and the document staged in
+    /// it, are for its owner alone.
+    #[cfg(unix)]
+    #[test]
+    fn the_conversion_folder_is_the_owners_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let stage = Stage::new().unwrap();
+        let mode = std::fs::metadata(stage.dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "{mode:o}");
+    }
+
+    /// LibreOffice may write its result under another name first, in any folder of its stage:
+    /// growth there stops it too, with a size error, as growth of the result does, and so do
+    /// more folders or files than the watcher measures cheaply.
+    #[cfg(unix)]
+    #[test]
+    fn an_office_conversion_growing_under_another_name_is_stopped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        // Read as the version, so no `--version` run is needed.
+        std::fs::write(dir.path().join("version.ini"), "MsiProductVersion=26.2.5.2\n").unwrap();
+        let limits = Limits { timeout: Duration::from_secs(20), max_input: 1 << 20, max_output: 4096 };
+        let cancel = AtomicBool::new(false);
+        let writes = [
+            "head -c 100000 /dev/zero > \"$outdir/part.tmp\"",
+            "head -c 100000 /dev/zero > \"$TMPDIR/lu1.tmp\"",
+            "head -c 100000 /dev/zero > \"$HOME/lu2.tmp\"",
+            // Too many folders or files to measure cheaply: stopped as well.
+            "d=\"$TMPDIR\"; i=0; while [ $i -lt 80 ]; do d=\"$d/d\"; mkdir \"$d\"; i=$((i+1)); done",
+            "i=0; while [ $i -lt 12000 ]; do : > \"$outdir/f$i\"; i=$((i+1)); done",
+            // The count is for the whole stage, not each folder.
+            "i=0; while [ $i -lt 4000 ]; do : > \"$outdir/f$i\"; : > \"$TMPDIR/f$i\"; : > \"$HOME/f$i\"; i=$((i+1)); done",
+        ];
+        for write in writes {
+            let soffice = dir.path().join("soffice");
+            let args = "prev=; for a in \"$@\"; do [ \"$prev\" = --outdir ] && outdir=\"$a\"; prev=\"$a\"; done";
+            std::fs::write(&soffice, format!("#!/bin/sh\n{args}\n{write}\nsleep 30\n")).unwrap();
+            std::fs::set_permissions(&soffice, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let started = Instant::now();
+            let r = office_to_pdf(&soffice, "letter.docx", b"PK", &limits, &cancel);
+            assert!(
+                matches!(&r, Err(ExternalError::InvalidOutput(m)) if m.contains("larger")) && started.elapsed() < Duration::from_secs(15),
+                "{write}: {r:?}"
+            );
+        }
     }
 }

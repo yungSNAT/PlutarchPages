@@ -33,6 +33,13 @@ program can briefly write more before it is stopped), and the result is read onc
 link on Unix), at most 512 MB, and must start like a PDF and end with `%%EOF`; the engine then
 parses it before showing it.
 
+LibreOffice's fresh profile turns macros off, blocks untrusted links and sets Writer and Calc never
+to update linked content (sections, files, external data) on load. Impress has no setting for
+linked content. Upstream converted test documents whose linked sections, pictures and external
+cell references point at a local listener, and saw no connection with or without the Writer and
+Calc settings (LibreOffice 26.8.1, Windows, 26 October 2026), so the settings are a second line of
+defence rather than a measured fix.
+
 This is not an operating-system sandbox. A converter that a hostile file compromises runs with the
 user's rights, and a local HTML file can still include other local files it names (as a browser
 would). The engine therefore keeps conversion off until the user turns it on (Preferences ▸ External
