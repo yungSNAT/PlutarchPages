@@ -8,3 +8,9 @@ nextest-version = "0.9.150"
 [[profile.default.overrides]]
 filter = 'package(pdfcraft-ui-egui) & binary(perf)'
 threads-required = "num-test-threads"
+
+# Upstream's bound on reading 60,000 unclosed addresses is wall-clock time too: under coverage it
+# took 1.3 to 2.4 s in some runs and 4.6 to 5.4 s (bound 5 s) when scheduled beside other tests.
+[[profile.default.overrides]]
+filter = 'package(pdfcraft-annot) & test(=tests::unclosed_brackets_in_text_without_spaces_are_read_once_per_address)'
+threads-required = "num-test-threads"
