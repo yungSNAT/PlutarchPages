@@ -146,28 +146,45 @@ fn unreferenced_streams_that_show_text_are_counted() {
 }
 
 /// A font program is not content, however its bytes read: an unreferenced stream that a font
-/// descriptor names as its `/FontFile` or `/FontFile2` is skipped. `/Length1` alone, which any
-/// stream can carry, does not make one a font program, so a stream with it that shows text and that
-/// no descriptor names is counted.
+/// descriptor names as its `/FontFile` or `/FontFile2` is skipped, the descriptor an object of its
+/// own or written out in place in a font. A reference names one object by number and generation,
+/// so a stale one to an earlier generation skips nothing. `/Length1` alone, which any stream can
+/// carry, does not make one a font program, so a stream with it that shows text and that no
+/// descriptor names is counted, and one that can't be decoded fails the audit.
 #[test]
 fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
-    let mut b = Builder::new();
-    b.add("<< /Type /Catalog /Pages 2 0 R >>");
-    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
-    b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
-    b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
-    b.add(FONT);
-    b.add_stream_with(b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET", "/Length1 38");
-    b.add(
-        "<< /Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 \
-         /CapHeight 700 /StemV 80 /FontFile 8 0 R /FontFile2 9 0 R >>",
-    );
-    b.add_stream_with(b"(SECRET) Tj", "/Length1 11 /Length2 0 /Length3 0");
-    b.add_stream_with(b"(SECRET) Tj", "/Length1 11");
-    let report = crate::audit_document(&open(b.build())).unwrap();
-    assert!(report.page_findings.is_empty());
-    let kinds: Vec<_> = report.document_findings.iter().map(|f| (f.kind, f.count)).collect();
-    assert_eq!(kinds, [("unreferenced-text", 1)]);
+    const DESCRIPTOR: &str = "/Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200                               /CapHeight 700 /StemV 80";
+    // A page showing PUBLIC, then `objects` from object 6.
+    let audit = |objects: &[(&str, &[u8])]| {
+        let mut b = Builder::new();
+        b.add("<< /Type /Catalog /Pages 2 0 R >>");
+        b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
+        b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
+        b.add(FONT);
+        for (dict, data) in objects {
+            if data.is_empty() {
+                b.add(dict);
+            } else {
+                b.add_stream_with(data, dict);
+            }
+        }
+        crate::audit_document(&open(b.build()))
+    };
+    let count = |objects: &[(&str, &[u8])]| {
+        let report = audit(objects).unwrap();
+        assert!(report.page_findings.is_empty());
+        report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>()
+    };
+    let text: &[u8] = b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET";
+    let program: &[u8] = b"(SECRET) Tj";
+    let named = format!("<< {DESCRIPTOR} /FontFile 8 0 R /FontFile2 9 0 R >>");
+    assert_eq!(count(&[("/Length1 38", text), (&named, b""), ("/Length1 11 /Length2 0 /Length3 0", program), ("/Length1 11", program)]), 1);
+    let in_place = format!("<< /Type /Font /Subtype /TrueType /BaseFont /Old /FontDescriptor << {DESCRIPTOR} /FontFile2 7 0 R >> >>");
+    assert_eq!(count(&[(&in_place, b""), ("/Length1 11", program)]), 0);
+    let stale = format!("<< {DESCRIPTOR} /FontFile 7 1 R >>");
+    assert_eq!(count(&[(&stale, b""), ("/Length1 38", text)]), 1);
+    assert!(audit(&[("/Length1 5 /Filter /FlateDecode", b"xxxxx")]).is_err(), "an undecodable stream must fail the audit");
 }
 
 #[test]
