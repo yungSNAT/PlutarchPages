@@ -17,11 +17,11 @@
 //! $DIST/pdfcraft-<version>-linux-<arch>.tar.gz from package.sh. Needs makepkg. Nothing in the
 //! tarball runs here, so an x86_64 machine can package aarch64. On another distribution run it in an
 //! archlinux:base-devel container. makepkg refuses root, so as root it does all its work on the
-//! package as the unprivileged user `builder`, which it adds if needed: builder makes a scratch
-//! directory in `TMPDIR` with mktemp, so must be able to write there, writes the recipe root gives
-//! it, unpacks the tarball, runs makepkg, checks the package and removes the directory. Root then
-//! writes the package as a new file in DIST, owned by DIST's owner. DIST itself keeps its owner and
-//! mode.
+//! package as the unprivileged user `builder`, which it adds if needed (when not root, the caller
+//! does that work): builder makes a scratch directory in `TMPDIR` with mktemp, so must be able to
+//! write there, writes the recipe root gives it, unpacks the tarball, runs makepkg and checks the
+//! package. Root then makes the package a new file in DIST, owned by DIST's owner, which builder's
+//! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner and the caller's `PATH`, whose
 //! directories root searches for `runuser` and so must be root's. builder is there because makepkg
@@ -128,9 +128,9 @@ fn arch_package() -> Result {
         }
     }
 
-    // builder makes, fills and removes its own private directory, and root only passes its path on:
-    // a lookup there by root could follow a link, or find another directory under its name, that a
-    // builder process put there.
+    // builder (or the caller, when not root) makes, fills and removes its own private directory, and
+    // root only passes its path on: a lookup there by root could follow a link, or find another
+    // directory under its name, that a builder process put there.
     let mut work = capture(unprivileged("mktemp", as_root).arg("-d"))?.stdout;
     if work.ends_with(b"\n") {
         work.pop();
@@ -163,7 +163,7 @@ fn write_unprivileged(path: &Path, contents: &str, as_root: bool) -> Result {
     if !status.success() {
         return Err(format!("{tee:?} failed with {status}").into());
     }
-    written.map_err(Into::into)
+    written.map_err(|error| format!("writing {}: {error}", path.display()).into())
 }
 
 fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version: &str, as_root: bool) -> Result {
