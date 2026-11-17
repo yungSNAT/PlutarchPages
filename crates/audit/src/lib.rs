@@ -203,10 +203,10 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
 /// How many streams nothing in the file refers to show text (`Tj`, `TJ`, `'` or `"`): text no viewer
 /// draws that any reader of the file's objects recovers, as a redaction applied and saved without
 /// garbage collection leaves the page's old content. Only a stream that can be content is read: a
-/// form, or one without a `/Type` or `/Subtype` and not a font program (`/Length1`); images, fonts,
-/// metadata and object streams are not. When an edit has marked the document for a full rewrite
-/// ([`Document::full_save_required`], as applying a redaction does), its next save keeps only what
-/// is referred to, and none are counted. One that can't be read or decoded within
+/// form, or one without a `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or
+/// `/FontFile2`; images, fonts, metadata and object streams are not. When an edit has marked the
+/// document for a full rewrite ([`Document::full_save_required`], as applying a redaction does),
+/// its next save keeps only what is referred to, and none are counted. One that can't be read or decoded within
 /// one page's [`DecodeBudget`](pdfcraft_cos::DecodeBudget) in all fails the audit.
 fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
     if doc.full_save_required() {
@@ -214,16 +214,33 @@ fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
     }
     let reachable = pdfcraft_cos::reachable_objects(doc)?;
     let unreferenced = doc.object_numbers().into_iter().filter(|n| !reachable.contains(n)).collect();
+    // The streams that can be content, and the font programs: what a descriptor names as one. A
+    // descriptor something refers to names only streams something refers to, so these are all
+    // among the unreferenced objects.
+    let mut candidates = Vec::new();
+    let mut programs = std::collections::HashSet::new();
+    for (reference, object) in doc.scan_objects_subset(unreferenced) {
+        match &*object? {
+            Object::Dict(dict) => {
+                programs.extend([&b"FontFile"[..], b"FontFile2"].into_iter().filter_map(|key| dict.get(key)?.as_ref()).map(|r| r.num))
+            }
+            Object::Stream(stream) => {
+                let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
+                if matches!(name(b"Type").as_deref(), None | Some(b"XObject"))
+                    && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form"))
+                {
+                    candidates.push(reference.num);
+                }
+            }
+            _ => {}
+        }
+    }
+    candidates.retain(|n| !programs.contains(n));
     let mut budget = pdfcraft_cos::DecodeBudget::page();
     let mut count = 0;
-    for (_, object) in doc.scan_objects_subset(unreferenced) {
-        let object = object?;
-        let Object::Stream(stream) = &*object else { continue };
-        let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
-        let content = matches!(name(b"Type").as_deref(), None | Some(b"XObject"))
-            && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form"))
-            && !stream.dict.contains(b"Length1");
-        if content && pdfcraft_content::ops(&budget.decode_strict(doc, stream)?).any(|op| matches!(op.op.as_slice(), b"Tj" | b"TJ" | b"'" | b"\"")) {
+    for (_, object) in doc.scan_objects_subset(candidates) {
+        let Object::Stream(stream) = &*object? else { continue };
+        if pdfcraft_content::ops(&budget.decode_strict(doc, stream)?).any(|op| matches!(op.op.as_slice(), b"Tj" | b"TJ" | b"'" | b"\"")) {
             count += 1;
         }
     }

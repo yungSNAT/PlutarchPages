@@ -78,8 +78,11 @@ Limits, by design and documented rather than hidden:
   an image mask) over the box the CTM places them in, within the box that holds their clip, and
   words of block characters drawn filled (render mode 0, 2, 4 or 6), over the box of each word. A
   stroke counts when it is one subpath along one horizontal or vertical line, solid (no dash
-  pattern), under a CTM that keeps the axes: it covers the band its line width paints between its
-  ends, its caps not counted. Other strokes, such as a stroked rectangle's border or a curved pen
+  pattern), under a CTM that keeps the axes, stroked alone (`S`, `s`) or over a fill (`B`, `B*`,
+  `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
+  It counts only under a clip that is a box on the page (a `re` or four-cornered path, or a form's
+  or appearance's `/BBox` under a CTM that keeps the axes), since another clip may cut the band
+  away from the text. Other strokes, such as a stroked rectangle's border or a curved pen
   line, are not covers. Other glyphs,
   such as a Type 3 box that maps to a letter, are not covers, and a run whose text doesn't split
   into as many words as it draws counts only when it is all blocks. An image's pixels are not
@@ -100,7 +103,8 @@ Limits, by design and documented rather than hidden:
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
 - the unreferenced-text check reads only streams that can be content (a form, or one without
-  `/Type` or `/Subtype` that is not a font program) and counts each that shows text with `Tj`,
+  `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or `/FontFile2`) and
+  counts each that shows text with `Tj`,
   `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
   counted there: the earlier-revisions count covers it;
 - annotation rectangles are compared in unrotated user space, so `/Rotate` pages may misalign;

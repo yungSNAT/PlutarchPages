@@ -8,8 +8,10 @@
 //! it on, within that box. A straight stroke counts too: one subpath whose points, control points
 //! included, lie on one horizontal or vertical line on the page, stroked solid (no dashes) under a
 //! CTM that keeps the axes, covers the band its line width paints between its ends, its caps not
-//! counted, painted in the stroking color and alpha. Graphics state tracked here is deliberately
-//! small: the CTM stack (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the
+//! counted, painted in the stroking color and alpha, whether stroked alone (`S`, `s`) or over a
+//! fill (`B`, `B*`, `b`, `b*`). It counts only under a clip that is a box on the page: a triangle
+//! or a sheared box may clip the band away from what it seems to cover. Graphics state tracked
+//! here is deliberately small: the CTM stack (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the
 //! page's crop box), the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
 //! one the audit can't read and counts as dark as the text) and the stroking one likewise
@@ -139,6 +141,10 @@ struct Gs {
     grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
+    /// The clip is that box exactly: every clip set was a box on the page (a `re` or four-cornered
+    /// path, or a `/BBox` under a CTM that keeps the axes). Only then can a stroke's band within
+    /// `clip` be taken as what it paints.
+    clip_exact: bool,
 }
 
 impl Gs {
@@ -157,6 +163,7 @@ impl Gs {
             masked: false,
             grouped: false,
             clip,
+            clip_exact: true,
         }
     }
 }
@@ -238,8 +245,7 @@ impl Line {
         const EPS: f64 = 1e-6;
         let Line::Straight { ends, all } = self else { return None };
         let [a, b, c, d, ..] = gs.ctm.0;
-        let keeps_axes = (b.abs() <= EPS && c.abs() <= EPS) || (a.abs() <= EPS && d.abs() <= EPS);
-        if !keeps_axes || gs.dashed || gs.line_width <= 0.0 {
+        if !keeps_axes(&gs.ctm) || gs.dashed || gs.line_width <= 0.0 {
             return None;
         }
         // The pen is a circle of the line's width in user space; the CTM stretches it by the
@@ -255,6 +261,14 @@ impl Line {
             None
         }
     }
+}
+
+/// Whether `ctm` maps every axis-aligned box to one: it scales, flips and turns by right angles only.
+fn keeps_axes(ctm: &Matrix) -> bool {
+    // CTM products leave rounding noise, so entries compare with a tolerance.
+    const EPS: f64 = 1e-6;
+    let [a, b, c, d, ..] = ctm.0;
+    (b.abs() <= EPS && c.abs() <= EPS) || (a.abs() <= EPS && d.abs() <= EPS)
 }
 
 /// The bounding box of a closed polygon that is an axis-aligned rectangle, or `None`. A repeated
@@ -367,9 +381,10 @@ impl<'a> Walker<'a> {
         let mut path = Path::Empty;
         let mut line = Line::Empty;
         // The box holding every point of the path, in user space (a curve lies within its control
-        // points), and whether `W` makes the path the clip once it is painted.
+        // points), and, once `W` makes the path the clip when it is painted, whether that path is
+        // the box.
         let mut path_box: Option<[f64; 4]> = None;
-        let mut clipping = false;
+        let mut clipping: Option<bool> = None;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
@@ -462,9 +477,11 @@ impl<'a> Walker<'a> {
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
-                    // `B` and `b` stroke the path too.
-                    self.unread |= matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") && self.inside.is_none();
                     self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i);
+                    // `B` and `b` stroke the path over the fill.
+                    if matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") {
+                        self.stroke(std::mem::replace(&mut line, Line::Empty), gs, calls, i);
+                    }
                 }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
@@ -488,20 +505,18 @@ impl<'a> Walker<'a> {
                     }
                 }
                 b"S" | b"s" => {
-                    self.unread |= self.inside.is_none();
                     path = Path::Empty;
-                    if let Some(band) = std::mem::replace(&mut line, Line::Empty).band(gs) {
-                        let area = meet(gs.clip, band);
-                        if gs.stroke_alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
-                            // Painted as a fill in the stroking color and alpha would paint it.
-                            let pen = Gs { alpha: gs.stroke_alpha, ..gs.clone() };
-                            self.paint(area, gs.stroke, &pen, false, calls, i);
-                        }
-                    }
+                    self.stroke(std::mem::replace(&mut line, Line::Empty), gs, calls, i);
                 }
                 b"n" => path = Path::Empty,
                 b"W" | b"W*" => {
-                    clipping = true;
+                    // The clip is the box exactly when the path is one box on the page and nothing more.
+                    let rect = match &path {
+                        Path::Rect(r) => keeps_axes(&gs.ctm).then_some(*r),
+                        Path::Lines(pts, _) => lines_rect(pts.clone()),
+                        Path::Empty | Path::Other => None,
+                    };
+                    clipping = Some(rect.is_some() && rect == path_box);
                     path = Path::Other;
                 }
                 b"c" | b"v" | b"y" => path = Path::Other,
@@ -521,10 +536,11 @@ impl<'a> Walker<'a> {
             }
             // A path ends where it is painted, and after `W` it is the clip from then on.
             if matches!(op.op.as_slice(), b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" | b"S" | b"s" | b"n") {
-                if std::mem::take(&mut clipping)
+                if let Some(exact) = clipping.take()
                     && let Some(b) = path_box
                 {
                     gs.clip = meet(gs.clip, b);
+                    gs.clip_exact &= exact;
                 }
                 path_box = None;
                 line = Line::Empty;
@@ -607,6 +623,20 @@ impl<'a> Walker<'a> {
         }
     }
 
+    /// Record the cover the stroke at index `at` paints along `line`: the band [`Line::band`] gives,
+    /// within the clip, as a fill in the stroking colour and alpha would paint it. Under a clip that
+    /// is not a box ([`Gs::clip_exact`]) the band may be clipped away from what it seems to cover, so
+    /// none is read.
+    fn stroke(&mut self, line: Line, gs: &Gs, calls: &[usize], at: usize) {
+        self.unread |= self.inside.is_none();
+        let Some(band) = line.band(gs).filter(|_| gs.clip_exact) else { return };
+        let area = meet(gs.clip, band);
+        if gs.stroke_alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
+            let pen = Gs { alpha: gs.stroke_alpha, ..gs.clone() };
+            self.paint(area, gs.stroke, &pen, false, calls, at);
+        }
+    }
+
     /// Record a cover painted over `rect` in `rgb` by the operator at index `at`, with the graphics
     /// state `gs`.
     fn paint(&mut self, rect: [f64; 4], rgb: Option<[f64; 3]>, gs: &Gs, image: bool, calls: &[usize], at: usize) {
@@ -675,6 +705,7 @@ impl<'a> Walker<'a> {
         sub_gs.grouped |= group && (gs.alpha < 1.0 || gs.blended || gs.masked);
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
+            sub_gs.clip_exact &= keeps_axes(&sub_gs.ctm);
         }
         calls.push(at);
         self.walk_nested(ops(&data), &mut sub_gs, sub, calls)?;
@@ -1002,8 +1033,9 @@ pub fn filled_rects(
         let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
         w.layer = a.layer;
         // A viewer clips the appearance to its box, as a form's.
-        let clip = form_bbox(doc, &form.dict).map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
-        let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };
+        let bbox = form_bbox(doc, &form.dict);
+        let clip = bbox.map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
+        let mut gs = Gs { ctm: a.ctm, clip_exact: bbox.is_none() || keeps_axes(&a.ctm), ..Gs::new(clip) };
         w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
     Ok((w.out, w.shaped, w.unread))
