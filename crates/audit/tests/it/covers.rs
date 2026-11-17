@@ -356,9 +356,11 @@ fn a_squares_appearance_is_painted_instead_of_its_interior_colour() {
 /// its line width paints, as a filled rectangle over that band does: a pen drawn across text, as
 /// pdf.js's ink editor saves it (a curve whose control points lie on the line). Its stroking colour
 /// and opacity (`G`, `RG`, `K`, `CS` with `SC`, `/CA`) decide, not the fill's; its width is in
-/// user space, set with `w` or an ExtGState's `/LW`. A dashed one, a thin one through the text,
-/// and one drawn before the text hide nothing. A stroke leaves what lies under the text unread, so
-/// a translucent one is judged by its colour against the text's.
+/// user space, set with `w` or an ExtGState's `/LW`. A path filled and stroked (`B`, `B*`, `b`,
+/// `b*`) is stroked over its fill, so its stroke hides the text whatever the fill's colour. A
+/// dashed one, a thin one through the text, and one drawn before the text hide nothing. A stroke
+/// leaves what lies under the text unread, so a translucent one is judged by its colour against
+/// the text's.
 #[test]
 fn a_stroke_over_text_hides_it() {
     let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Clear << /ca 0 >> /PenHalf << /CA 0.5 >> /Thick << /LW 33 >> \
@@ -383,10 +385,53 @@ fn a_stroke_over_text_hides_it() {
         (format!("0 G 33 w [4 4] 0 d {pen}"), false),
         (format!("/Dash gs 0 G 33 w {pen}"), false),
         ("0 G 2 w 100 708 m 320 708 l S".to_owned(), false),
+        ("1 g 0 G 33 w 100 704 m 320 704 l B".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l B*".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l b".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l b*".to_owned(), true),
     ] {
         let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
         assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &[])), want, "{paint}");
     }
     let before = page(resources, &format!("0 G 33 w {pen} {TWO_LINES}"), &[]);
     assert!(covered(&before).is_empty(), "text painted after the stroke is on it");
+}
+
+/// A stroke is read as a cover only where the clip is a box on the page, as the box the audit
+/// keeps for it then holds exactly what shows: a `re` or a four-cornered `m`/`l` path made the
+/// clip, or a form's or an appearance's `/BBox` under a CTM that keeps the axes. Under any other
+/// clip, a triangle or a box the CTM shears, the stroke may be clipped away from the text, so the
+/// audit reads no cover from it rather than report text it can't show is hidden.
+#[test]
+fn a_stroke_counts_only_under_a_clip_that_is_a_box() {
+    let pen = "0 G 33 w 100 704 m 320 704 l S";
+    // Each form or appearance shears its box, then shears back, so the stroke lands where `pen`
+    // paints on the page; only the clip differs.
+    let sheared = format!("1 0 -1 1 0 0 cm {pen}");
+    let resources = "<< /Font << /F1 5 0 R >> /XObject << /Shear 6 0 R /Plain 7 0 R >> >>";
+    let forms = [
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 100 800] /Matrix [1 0 1 1 0 0]", &sheared),
+        stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", pen),
+    ];
+    for (paint, hidden) in [
+        (format!("q 90 600 240 200 re W n {pen} Q"), true),
+        (format!("q 90 600 m 330 600 l 330 800 l 90 800 l h W n {pen} Q"), true),
+        (format!("q 200 600 130 200 re W n {pen} Q"), false),
+        (format!("q 100 800 m 320 800 l 320 600 l h W n {pen} Q"), false),
+        (format!("q 100 800 m 320 800 l 320 600 l h W* n {pen} Q"), false),
+        ("/Plain Do".to_owned(), true),
+        ("/Shear Do".to_owned(), false),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &forms)), want, "{paint}");
+    }
+    for (appearance, hidden) in [
+        (stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 612 792]", pen), true),
+        (stream_obj("/Type /XObject /Subtype /Form /BBox [0 0 100 800] /Matrix [1 0 1 1 0 0]", &sheared), false),
+    ] {
+        let rect = if hidden { "[0 0 612 792]" } else { "[0 0 900 800]" };
+        let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Ink /Rect {rect} /AP << /N 7 0 R >> >>"), &[appearance]);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "appearance {rect}");
+    }
 }

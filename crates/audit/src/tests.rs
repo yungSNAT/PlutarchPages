@@ -145,6 +145,31 @@ fn unreferenced_streams_that_show_text_are_counted() {
     assert!(kinds(&doc).is_empty());
 }
 
+/// A font program is not content, however its bytes read: an unreferenced stream that a font
+/// descriptor names as its `/FontFile` or `/FontFile2` is skipped. `/Length1` alone, which any
+/// stream can carry, does not make one a font program, so a stream with it that shows text and that
+/// no descriptor names is counted.
+#[test]
+fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
+    b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
+    b.add(FONT);
+    b.add_stream_with(b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET", "/Length1 38");
+    b.add(
+        "<< /Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 \
+         /CapHeight 700 /StemV 80 /FontFile 8 0 R /FontFile2 9 0 R >>",
+    );
+    b.add_stream_with(b"(SECRET) Tj", "/Length1 11 /Length2 0 /Length3 0");
+    b.add_stream_with(b"(SECRET) Tj", "/Length1 11");
+    let report = crate::audit_document(&open(b.build())).unwrap();
+    assert!(report.page_findings.is_empty());
+    let kinds: Vec<_> = report.document_findings.iter().map(|f| (f.kind, f.count)).collect();
+    assert_eq!(kinds, [("unreferenced-text", 1)]);
+}
+
 #[test]
 fn audit_reports_a_covered_text_advance_only_after_the_displacement() {
     let text = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";
