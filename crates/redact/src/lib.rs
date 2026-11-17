@@ -537,18 +537,42 @@ fn do_names(data: &[u8]) -> HashSet<Vec<u8>> {
     pdfcraft_content::ops(data).filter(|op| op.is("Do")).filter_map(|op| op.last_name().map(<[u8]>::to_vec)).collect()
 }
 
-/// What [`drawn_names`] read of each content stream, for the next page that reaches it: its
-/// decoded size and the names its `Do` operators use, each once, or `None` when it can't be read
-/// or is past [`DRAWN_BUDGET`]. Once the names kept pass [`DRAWN_BUDGET`] bytes, streams not yet
-/// kept are read each time they are reached.
+/// What [`drawn_names`] read of each content stream, and of each page's contents by the streams
+/// they list, for the next page that reaches it: its decoded size and the names its `Do`
+/// operators use, each once, or `None` when it can't be read or is past [`DRAWN_BUDGET`]. Once
+/// the names kept pass [`DRAWN_BUDGET`] bytes, what is not yet kept is read each time it is
+/// reached.
 #[derive(Default)]
 struct ReadStreams {
     streams: HashMap<ObjRef, StreamNames>,
+    contents: HashMap<Vec<ObjRef>, StreamNames>,
     name_bytes: usize,
 }
 
 /// A stream's decoded size and the names its `Do` operators use, each once ([`ReadStreams`]).
 type StreamNames = Option<(usize, Vec<Vec<u8>>)>;
+
+/// The bytes [`ReadStreams`] counts for keeping `got`.
+fn names_size(got: &StreamNames) -> usize {
+    got.as_ref().map_or(0, |(_, n)| n.iter().map(|n| n.len() + size_of::<Vec<u8>>()).sum())
+}
+
+/// The streams `page`'s `/Contents` lists, when every one is given by reference: pages that list
+/// the same ones draw the same content.
+fn contents_key(doc: &Document, page: &Dict) -> Option<Vec<ObjRef>> {
+    let c = page.get(b"Contents")?;
+    match &*doc.resolve(c) {
+        Object::Array(a) => a.iter().map(Object::as_ref).collect(),
+        _ => Some(vec![c.as_ref()?]),
+    }
+}
+
+/// [`StreamNames`] for page `index`'s contents, its streams read as one, as operators may be split
+/// between them.
+fn contents_names(doc: &Document, page: &Dict, index: usize) -> StreamNames {
+    let (_, data) = page_streams(doc, page, index).ok()?;
+    Some((data.iter().map(Vec::len).sum(), do_names(pdfcraft_content::Pieces::join(&data).data()).into_iter().collect()))
+}
 
 /// [`StreamNames`] for `s`, read with its `/DecodeParms` given by reference.
 fn stream_names(doc: &Document, s: &Stream) -> StreamNames {
@@ -562,9 +586,23 @@ fn stream_names(doc: &Document, s: &Stream) -> StreamNames {
 /// `None`, so that every name counts as drawn, when some of that content can't be read or is
 /// too large to read. `read` keeps what each stream gave for the next page that reaches it.
 fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read: &mut ReadStreams) -> Option<HashSet<Vec<u8>>> {
-    let (_, data) = page_streams(doc, page, index).ok()?;
-    let mut names = do_names(pdfcraft_content::Pieces::join(&data).data());
-    let mut budget = DRAWN_BUDGET.checked_sub(data.iter().map(Vec::len).sum())?;
+    let key = contents_key(doc, page);
+    let got = match key.as_ref().and_then(|k| read.contents.get(k)) {
+        Some(got) => got.clone(),
+        None => {
+            let got = contents_names(doc, page, index);
+            if let Some(key) = key
+                && read.name_bytes <= DRAWN_BUDGET
+            {
+                read.name_bytes += names_size(&got);
+                read.contents.insert(key, got.clone());
+            }
+            got
+        }
+    };
+    let (len, drawn) = got?;
+    let mut names: HashSet<Vec<u8>> = drawn.into_iter().collect();
+    let mut budget = DRAWN_BUDGET.checked_sub(len)?;
     let mut queue = Vec::new();
     roots.iter().for_each(|o| refs_in(o, &mut queue));
     let mut seen = HashSet::new();
@@ -586,7 +624,7 @@ fn drawn_names(doc: &Document, page: &Dict, index: usize, roots: &[Object], read
                 names.extend(drawn);
                 continue;
             }
-            read.name_bytes += got.as_ref().map_or(0, |(_, n)| n.iter().map(|n| n.len() + size_of::<Vec<u8>>()).sum());
+            read.name_bytes += names_size(&got);
             read.streams.insert(r, got);
         }
         let (len, drawn) = read.streams.get(&r)?.as_ref()?;
