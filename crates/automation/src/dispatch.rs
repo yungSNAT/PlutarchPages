@@ -678,7 +678,8 @@ impl Automation {
                 let [dx, dy] = style.offset.unwrap_or([0.0, 0.0]);
                 let moved = [block.rect[0] + dx, block.rect[1] + dy, block.rect[2] + dx, block.rect[3] + dy];
                 let wanted: String = text.split_whitespace().collect();
-                let mut out = self.apply(&a, Edit::EditTextBlock { page, block: index, text, style })?;
+                let edit = self.keeping_font(&a, Edit::EditTextBlock { page, block: index, text, style })?;
+                let mut out = self.apply(&a, edit)?;
                 let doc = self.doc(&a)?;
                 let after = doc.text_blocks(page);
                 // Without `text` the paragraph keeps the document's own words: not echoed when
@@ -710,7 +711,8 @@ impl Automation {
                     return Err(ToolError::InvalidArgs(format!("line {line} is out of range: page {} has {n} lines", page + 1)));
                 }
                 let text = a.str("text")?.to_owned();
-                let mut out = self.apply(&a, Edit::EditTextLine { page, line: line as usize - 1, text })?;
+                let edit = self.keeping_font(&a, Edit::EditTextLine { page, line: line as usize - 1, text })?;
+                let mut out = self.apply(&a, edit)?;
                 let after = self.doc(&a)?.text_lines(page);
                 if let Some(l) = after.get(line as usize - 1) {
                     out["line"] = json!({ "text": l.text, "font": l.base_font });
