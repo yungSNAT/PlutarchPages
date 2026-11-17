@@ -51,7 +51,7 @@ characters, the shading and the Stamp.
 Measured 17 November 2026 (UTC). PyMuPDF 2.1 (MuPDF 1.28.6), `mutool` 1.28.6 and pdf.js
 (pdfjs-dist 6.5.438) each wrote redactions or covers over `SECRET 4417` on a page with the 2 lines
 above ([how](../crates/audit/tests/data/tool-made/README.md)). 'PDFium' is judged as above, with
-the same version. 'Extracts' is whether `mutool draw -F txt` and PyMuPDF's `get_text()` still give
+the same version, from the pixels inside the text's box inset by 2 pt. 'Extracts' is whether `mutool draw -F txt` and PyMuPDF's `get_text()` still give
 `SECRET 4417`; both ran on every file and agree. 'In the file' is whether any object in the file,
 its stream decoded, still holds `SECRET 4417`, whether or not the page refers to it. Unsafe: a
 cover over text that extracts, a mark left unapplied, or a redaction applied with the text still in
@@ -73,11 +73,12 @@ the file.
 | `pdfjs-ink` (one black stroke) | hidden | yes | yes | **missed** | missed |
 
 Of the 9 unsafe files, main flags 6 and 0.18.2 flags 5. Both pass the 2 redactions applied and
-saved with garbage collection. Both miss pdf.js's ink stroke: the audit reads filled boxes, images
-and shadings, in page content or annotation appearances, as covers, not stroked paths, so a line
+saved with garbage collection. Both miss pdf.js's ink stroke: the audit reads filled boxes, images,
+shadings and words of block characters, in page content or annotation appearances, as covers,
+not stroked paths, so a line
 drawn thick enough hides text the audit still treats as on show. Both also miss the 2 redactions
 applied and saved without garbage collection: the page's original content stream, with the text,
-stays in the file with nothing referring to it, and the audit reads only what the pages draw.
+stays in the file with nothing referring to it, and the audit reads what the pages draw, not objects nothing refers to.
 [`tool_made.rs`](../crates/audit/tests/it/tool_made.rs) holds main's column, with the 3 misses in
 ignored tests until the audit reads strokes and unreferenced objects. The 0.18.2 CLI ran from its
 release archive, as above. pdf.js saves both its files as an incremental update, and both CLIs also
