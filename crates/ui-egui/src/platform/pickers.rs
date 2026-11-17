@@ -503,8 +503,11 @@ mod tests {
         assert!(app.optimize_run.is_none() && app.progress_notice.is_none(), "nothing runs until the answer is in");
         assert!(app.pickers.pending(), "the question is out");
         app.process_picked();
-        let run = app.optimize_run.as_ref().expect("the answer starts it");
-        assert_eq!(run.destination.as_deref(), out.to_str());
+        // run_optimize polls once as it starts, so a worker that has already finished leaves no run.
+        match app.optimize_run.as_ref() {
+            Some(run) => assert_eq!(run.destination.as_deref(), out.to_str()),
+            None => assert!(out.exists(), "the answer starts it"),
+        }
         // Nothing more is asked at the end: the copy is simply there.
         app.pick_override = Some(vec![dir.join("not asked.pdf").to_string_lossy().into_owned()]);
         let start = std::time::Instant::now();
