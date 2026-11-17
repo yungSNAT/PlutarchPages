@@ -19,10 +19,12 @@ Layer L4. Create a PDF (Acrobat's Create a PDF tool), execution plan M10.2:
   for one point per pixel, or `ImageResolution::Embedded` for the same behavior as
   `from_images`. The largest page side is still capped at 14,400 points;
 - `from_text(text, …)`: plain text set in Helvetica, wrapped and paginated. Text Helvetica
-  can't draw is refused, naming the line and the character, never set as `?`.
+  can't draw is set in the bundled Inter face instead (Latin, Greek and Cyrillic letters), with
+  the same page, margins, wrapping and form feeds; text Inter can't draw either is refused,
+  naming the line and the character, never set as `?`.
 - `from_text_escaped(text, …)`: the same for reports PdfCraft generates from documents
-  (comment summaries, compare reports): such characters are written as `[U+XXXX]` and the first
-  line says so (`ESCAPED_NOTE`).
+  (comment summaries, compare reports): text Inter draws is set in it; otherwise the characters
+  Helvetica can't draw are written as `[U+XXXX]` and the first line says so (`ESCAPED_NOTE`).
 - `from_markdown(title, text, page)`: CommonMark (tables, strikethrough, task lists) through
   pulldown-cmark, laid out by `flow`: headings, emphasis, inline and block code, quotes, nested
   lists, rules, tables and link annotations (http, https and mailto only). Images are never
@@ -38,6 +40,16 @@ Layer L4. Create a PDF (Acrobat's Create a PDF tool), execution plan M10.2:
 as `?`; every flow-based function reports how many, so callers can say so.
 
 Every function returns a `pdfcraft_cos::Document`; the caller writes it.
+
+Office documents (`office.rs`) are the exception: PdfCraft doesn't read Word, Excel, PowerPoint,
+OpenDocument or RTF itself. `is_office(name, bytes)` recognises them (an `OFFICE_EXTENSIONS`
+name and an OLE, ZIP or RTF signature), and `source_kind` reports `SourceKind::Office` for those
+of `OFFICE_FILES` (no macro-enabled or template formats). PlutarchPages converts them through
+`pdfcraft-external` (`crates/external/README.md`): an installed LibreOffice 26.2.5 or later, run
+only once the user turns on External converters.
+
+`IMAGE_EXTENSIONS`, `TEXT_EXTENSIONS` and `OFFICE_EXTENSIONS` are what the app's file pickers
+offer, so detection and pickers agree.
 
 Image export and Save Image As apply each lossless image's Decode pair before converting its color components.
 JBIG2 images and masks are decoded through `pdfcraft_cos::ImageBudget` (`pdfcraft_filters::decode_jbig2_within`), behind

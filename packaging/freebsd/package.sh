@@ -43,7 +43,7 @@ esac
 # Only binaries for this machine run here (the --version check at the end); a FreeBSD target built
 # on another OS never does.
 HOST_ARCH="$(release_arch "$(uname -m)" 2>/dev/null)" || HOST_ARCH="$(uname -m)"
-if [[ -n "${CARGO_BUILD_TARGET:-}" && "$(uname -s)" != FreeBSD ]]; then
+if [[ -n "${CARGO_BUILD_TARGET:-}" ]] && [[ "$(uname -s)" != FreeBSD ]]; then
   HOST_ARCH="$(uname -s) $HOST_ARCH"
 fi
 BASENAME="pdfcraft-$VERSION-freebsd-$ARCH"
@@ -74,7 +74,7 @@ copy_docs "$STAGE/share/doc/pdfcraft"
 # which has to run here: build it for this machine, not for CARGO_BUILD_TARGET.
 (unset CARGO_BUILD_TARGET; stage_models "$STAGE/share/pdfcraft/models")
 
-if [[ -z "${CARGO_BUILD_TARGET:-}" && "$ARCH" = "$HOST_ARCH" ]]; then
+if [[ -z "${CARGO_BUILD_TARGET:-}" ]] && [[ "$ARCH" = "$HOST_ARCH" ]]; then
   "$STAGE/bin/pdfcraft" --version
 else
   # They cannot run here, so check what they are instead: executables, not libraries or objects.

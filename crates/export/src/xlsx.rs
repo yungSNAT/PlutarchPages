@@ -266,7 +266,7 @@ mod tests {
                 blocks.push(b(cell, 72.0 + 120.0 * j as f64, 680.0 - 18.0 * i as f64));
             }
         }
-        let page = Page { width: 612.0, height: 792.0, background: None, blocks, images: vec![] };
+        let page = Page { width: 612.0, height: 792.0, background: None, blocks, images: vec![], rules: vec![] };
         let xml = sheet_for(&page).xml();
         assert!(xml.contains("Quarterly report"), "{xml}");
         assert!(xml.contains("<v>12</v>") && xml.contains("<v>1200</v>"), "numbers are numbers: {xml}");

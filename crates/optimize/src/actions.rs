@@ -1,8 +1,9 @@
 // Copyright 2026 Ryan Duguid
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Discard Objects ▸ form submit, import and reset actions, and external cross-references (links
-//! that open another file or launch a program): ISO 32000-2 §12.6.4.
+//! Discard external cross-references outside links and bookmarks: actions that open another file
+//! or launch a program, wherever they are (ISO 32000-2 §12.6.4). Upstream's `external_refs` takes
+//! them out of links and bookmarks first; form actions are upstream's `form_actions`.
 
 use std::collections::HashSet;
 
@@ -13,8 +14,6 @@ use crate::OptimizeError;
 /// How deep `/Next` chains are followed.
 const MAX_CHAIN: usize = 32;
 
-/// Form actions: send, load or clear field values.
-pub(crate) const FORM_ACTIONS: &[&[u8]] = &[b"SubmitForm", b"ImportData", b"ResetForm"];
 /// External cross-references: go to another file, or launch an application or file.
 pub(crate) const EXTERNAL_ACTIONS: &[&[u8]] = &[b"GoToR", b"Launch"];
 
@@ -129,6 +128,9 @@ pub(crate) fn discard(doc: &mut Document, kinds: &[&[u8]]) -> Result<usize, Opti
 mod tests {
     use super::*;
     use pdfcraft_cos::PdfString;
+
+    /// Form actions: send, load or clear field values. The sweep takes any list of kinds.
+    const FORM_ACTIONS: &[&[u8]] = &[b"SubmitForm", b"ImportData", b"ResetForm"];
 
     fn action(kind: &str) -> Dict {
         let mut a = Dict::new();

@@ -35,12 +35,15 @@ pub(crate) enum Nav {
     Page(usize),
     /// A bookmark's destination: its page and where on it.
     Dest(usize, pdfcraft_render::DestView),
+    /// A bookmark's action that goes nowhere in this document, run as a link's is.
+    Action(pdfcraft_render::LinkTarget),
     Flash(usize, [f32; 4]),
 }
 
 pub fn human_size(n: usize) -> String {
     match n {
-        n if n >= 1 << 20 => format!("{:.1} MB", n as f64 / (1u64 << 20) as f64),
+        // A size that rounds to "1024.0 KB" reads as the next unit.
+        n if n as f64 / 1024.0 >= 1023.95 => format!("{:.1} MB", n as f64 / (1u64 << 20) as f64),
         n if n >= 1 << 10 => format!("{:.1} KB", n as f64 / (1u64 << 10) as f64),
         n => byte_count(n),
     }
@@ -56,7 +59,17 @@ mod tests {
     use super::*;
 
     fn item(title: &str, page: Option<usize>, children: Vec<OutlineItem>) -> OutlineItem {
-        OutlineItem { title: title.into(), page, view: pdfcraft_render::DestView::Top, children, open: true, color: None, bold: false, italic: false }
+        OutlineItem {
+            title: title.into(),
+            page,
+            view: pdfcraft_render::DestView::Top,
+            action: None,
+            children,
+            open: true,
+            color: None,
+            bold: false,
+            italic: false,
+        }
     }
 
     #[test]
@@ -73,5 +86,18 @@ mod tests {
         assert_eq!(current_bookmark(&outline, 99), Some(vec![2]));
         assert_eq!(current_bookmark(&[item("Late", Some(5), vec![])], 1), None);
         assert_eq!(current_bookmark(&[], 3), None);
+    }
+}
+
+#[cfg(test)]
+mod human_size_tests {
+    use super::human_size;
+
+    #[test]
+    fn rounds_up_into_next_unit() {
+        assert_eq!(human_size(1_048_524), "1023.9 KB");
+        assert_eq!(human_size(1_048_525), "1.0 MB");
+        assert_eq!(human_size(1_048_575), "1.0 MB");
+        assert_eq!(human_size(1_048_576), "1.0 MB");
     }
 }
