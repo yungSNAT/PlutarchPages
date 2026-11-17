@@ -43,10 +43,9 @@ fn files_other_tools_wrote() {
     }
 }
 
-/// pdf.js's ink stroke hides the text (PDFium renders the box one colour), but the audit doesn't
-/// read a stroked path as a cover yet.
+/// pdf.js's ink stroke hides the text (PDFium renders the box one colour), and the audit reads the
+/// band its stroke paints as a cover.
 #[test]
-#[ignore = "stroked paths are not read as covers yet; remove once they are (docs/redaction-head-to-head.md)"]
 fn a_pdfjs_ink_stroke_over_text_is_flagged() {
     let want = vec![(FindingKind::CoveredText, "SECRET 4417".to_owned())];
     assert_eq!(findings(include_bytes!("../data/tool-made/pdfjs-ink.pdf")), want);

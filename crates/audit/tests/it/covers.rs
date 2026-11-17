@@ -351,3 +351,42 @@ fn a_squares_appearance_is_painted_instead_of_its_interior_colour() {
     assert_eq!(covered(&doc("")), ["SECRET"]);
     assert_eq!(covered(&doc("/AP << /N << /On 7 0 R >> >>")), ["SECRET"]);
 }
+
+/// A straight stroke, horizontal or vertical on the page and solid, hides what lies under the band
+/// its line width paints, as a filled rectangle over that band does: a pen drawn across text, as
+/// pdf.js's ink editor saves it (a curve whose control points lie on the line). Its stroking colour
+/// and opacity (`G`, `RG`, `K`, `CS` with `SC`, `/CA`) decide, not the fill's; its width is in
+/// user space, set with `w` or an ExtGState's `/LW`. A dashed one, a thin one through the text,
+/// and one drawn before the text hide nothing. A stroke leaves what lies under the text unread, so
+/// a translucent one is judged by its colour against the text's.
+#[test]
+fn a_stroke_over_text_hides_it() {
+    let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Clear << /ca 0 >> /PenHalf << /CA 0.5 >> /Thick << /LW 33 >> \
+                     /Dash << /D [[4 4] 0] >> /Mult << /BM /Multiply >> >> >>";
+    let pen = "100 704 m 320 704 l S";
+    for (paint, hidden) in [
+        (format!("0 G 33 w {pen}"), true),
+        ("0 G 33 w 1 J 100 704 m 100 704 320 704 320 704 c S".to_owned(), true),
+        ("0 G 220 w 210 690 m 210 722 l S".to_owned(), true),
+        ("q 2 0 0 2 0 0 cm 0 G 16.5 w 50 352 m 160 352 l S Q".to_owned(), true),
+        (format!("1 g 0 G 33 w {pen}"), true),
+        (format!("0 g 1 G 33 w {pen}"), true),
+        (format!("q /Clear gs 0 G 33 w {pen} Q"), true),
+        (format!("/Thick gs 0 G {pen}"), true),
+        (format!("q /Mult gs 0 g 1 1 0 RG 33 w {pen} Q"), false),
+        (format!("q /Mult gs 1 1 0 rg 0 G 33 w {pen} Q"), true),
+        (format!("q /Mult gs 0 0 0 1 K 33 w {pen} Q"), true),
+        (format!("q /Mult gs /DeviceGray CS 1 SC 33 w {pen} Q"), false),
+        (format!("q /Mult gs 1 G /DeviceGray CS 33 w {pen} Q"), true),
+        (format!("q /PenHalf gs 0 G 33 w {pen} Q"), true),
+        (format!("q /PenHalf gs 1 1 0 RG 33 w {pen} Q"), false),
+        (format!("0 G 33 w [4 4] 0 d {pen}"), false),
+        (format!("/Dash gs 0 G 33 w {pen}"), false),
+        ("0 G 2 w 100 708 m 320 708 l S".to_owned(), false),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &[])), want, "{paint}");
+    }
+    let before = page(resources, &format!("0 G 33 w {pen} {TWO_LINES}"), &[]);
+    assert!(covered(&before).is_empty(), "text painted after the stroke is on it");
+}
