@@ -120,8 +120,10 @@ fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
 
 /// Streams nothing refers to that show text are counted as `unreferenced-text`, a stream or a form
 /// alike: a redaction applied and saved without garbage collection leaves the page's old content
-/// so. One that shows no text, and an image, however its data reads, are not; nor is any once the
-/// next save must write the document in full, which keeps only what it refers to.
+/// so. So is one of a type that can be content, or one the audit doesn't know, a tiling pattern or
+/// a mistyped stream. One that shows no text, and an image or metadata, however its data reads,
+/// are not; nor is any once the next save must write the document in full, which keeps only what
+/// it refers to.
 #[test]
 fn unreferenced_streams_that_show_text_are_counted() {
     let mut b = Builder::new();
@@ -134,13 +136,16 @@ fn unreferenced_streams_that_show_text_are_counted() {
     b.add_stream_with(b"BT /F1 24 Tf 100 700 Td [(SECRET)] TJ ET", "/Type /XObject /Subtype /Form /BBox [0 0 612 792]");
     b.add_stream(b"0 g 100 688 220 32 re f");
     b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /XObject /Subtype /Image /Width 17 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8");
+    b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /Metadata /Subtype /XML");
+    b.add_stream_with(b"BT /F1 24 Tf (SECRET) Tj ET", "/Type /Pattern /PatternType 1 /BBox [0 0 10 10]");
+    b.add_stream_with(b"BT /F1 24 Tf (SECRET) Tj ET", "/Type /Foo /Subtype /Bar");
     let mut doc = open(b.build());
     let kinds = |doc: &Document| -> Vec<(&'static str, usize)> {
         let report = crate::audit_document(doc).unwrap();
         assert!(report.page_findings.is_empty());
         report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
     };
-    assert_eq!(kinds(&doc), [("unreferenced-text", 2)]);
+    assert_eq!(kinds(&doc), [("unreferenced-text", 4)]);
     doc.require_full_save();
     assert!(kinds(&doc).is_empty());
 }

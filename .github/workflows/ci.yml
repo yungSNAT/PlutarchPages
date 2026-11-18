@@ -196,13 +196,17 @@ jobs:
           # Pull requests read main's cache and never write their own.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # The tests `cargo xtask test` runs under nextest. vendor/ is left out, as in
-      # sonar-project.properties. The sign test left out asserts a 20 s bound that instrumentation
-      # breaks (73 s here, 8 s uninstrumented); the gate runs it.
+      # sonar-project.properties. The 2 tests left out assert time bounds that instrumentation
+      # breaks; the gate runs them. The sign test's bound is 20 s: 73 s here, 8 s uninstrumented.
+      # The XFA prototype budget test's is 10 s: 10.2 and 10.6 s here, 0.9 s in the gate. XFA's
+      # XML tree is its own code since the craft-pdf sync, so its accessors are instrumented, about
+      # 128 million calls in that test; on main they were roxmltree's, which is not.
       - name: Run the tests with line coverage
         run: >
           cargo llvm-cov nextest --locked --workspace --lib --bins --tests --no-fail-fast
           --lcov --output-path coverage-rust.lcov --ignore-filename-regex '(^|/)vendor/'
-          -E 'not (package(pdfcraft-sign) & test(=pdf::revision_classification_tests::shared_annotation_arrays_are_judged_in_bounded_time))'
+          -E 'not (package(pdfcraft-sign) & test(=pdf::revision_classification_tests::shared_annotation_arrays_are_judged_in_bounded_time))
+          and not (package(pdfcraft-xfa) & test(=proto::tests::prototype_children_that_write_nothing_still_count_against_a_budget))'
       - name: Keep the coverage report for the Codecov upload
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

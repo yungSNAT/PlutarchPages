@@ -501,6 +501,7 @@ pub(super) struct Shown {
     /// `/PCSoft` with no `/N` (a file saved before this was tracked, or by another writer),
     /// matching the single space a rejoin always used before #2529.
     pub(super) soft_gap: usize,
+    pub(super) edited: Option<usize>,
 }
 
 impl Shown {
@@ -760,6 +761,8 @@ struct MarkedContent {
     ocr: Vec<bool>,
     oc: Vec<usize>,
     layer_scopes: Vec<LayerScope>,
+    // The `/PCEdLine` sequences around the text (a replacement mixing fonts), innermost last.
+    edited: Vec<Option<usize>>,
     actual_text: Vec<Option<(usize, usize, String)>>,
 }
 
@@ -798,6 +801,7 @@ impl MarkedContent {
         } else {
             self.oc.push(parent);
         }
+        self.edited.push(if op.name(0) == Some(b"PCEdLine") { Some(index) } else { self.edited.last().copied().flatten() });
         // The property list is inline or named in the resources' /Properties (§14.6.2).
         let list = logical_text.and_then(|properties| match op.operands.get(1) {
             Some(Object::Name(name)) => properties.get(name).and_then(|object| doc.dict(object)),
@@ -817,6 +821,7 @@ impl MarkedContent {
         }
         self.ocr.pop();
         self.oc.pop();
+        self.edited.pop();
         if let Some(Some((start, open, logical))) = self.actual_text.pop() {
             let tail = shown.split_off(start.min(shown.len()));
             if tail.iter().any(|s| s.glyph_count > 0) {
@@ -1102,6 +1107,7 @@ fn show_text(op: &Op, i: usize, state: &mut TextRunState<'_>) -> Result<(), Edit
         soft_break: state.soft_break,
         hard_break: state.hard_break,
         soft_gap: state.soft_gap,
+        edited: marked.edited.last().copied().flatten(),
     });
     carry.gap_space = gap_space;
     Ok(())

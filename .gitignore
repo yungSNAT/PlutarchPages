@@ -9,4 +9,6 @@ plan/
 /assets/models
 # A craft-fonts checkout used as the optional CRAFT_FONTS_DIR build input (CI and releases put it here).
 /craft-fonts
+# Made when vendor/craft-pdf's unit tests run on their own (vendor/craft-pdf/PATCHES.md).
+/vendor/craft-pdf/Cargo.lock
 .claude/

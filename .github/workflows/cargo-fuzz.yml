@@ -22,8 +22,9 @@ on:
       - 'crates/fonts/**'
       - 'crates/js/**'
       - 'crates/model/**'
-      - 'crates/prc/**'
+      - 'crates/prc-render/fuzz/**'
       - 'crates/xfa/**'
+      - 'vendor/craft-pdf/**'
       - 'vendor/hayro-jbig2/**'
       - 'vendor/hayro-syntax/**'
 
@@ -48,7 +49,7 @@ jobs:
           - { crate: content, target: round_trip }
           - { crate: js, target: formcalc }
           - { crate: xfa, target: packet }
-          - { crate: prc, target: model }
+          - { crate: prc-render, target: model }
           - { crate: audit, target: content }
     runs-on: ubuntu-latest
     steps:

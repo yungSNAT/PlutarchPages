@@ -446,7 +446,7 @@ impl PrintDraft {
             m => m,
         });
         let paper = self.paper_size();
-        let raster = self.as_image.then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale });
+        let raster = self.raster();
         // A selected area prints alone, its one page sized like a page of its own: Size is its
         // only handling (the dialog offers no other while it is chosen).
         if self.which == Which::Area {
@@ -460,7 +460,7 @@ impl PrintDraft {
                 layout: size,
                 content: self.content,
                 raster,
-                type3_raster: self.type3_as_image().then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale }),
+                type3_raster: self.type3_as_image().then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale, colour: None }),
                 crops: Vec::new(),
                 area: Some(area),
             });
@@ -508,7 +508,7 @@ impl PrintDraft {
             layout,
             content: self.content,
             raster: self.raster(),
-            type3_raster: self.type3_as_image().then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale }),
+            type3_raster: self.type3_as_image().then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale, colour: None }),
             crops: self.crops.clone(),
             area: None,
         })
@@ -523,7 +523,7 @@ impl PrintDraft {
 
     /// Print as image: pictures at the chosen resolution, grey when grayscale is asked for.
     fn raster(&self) -> Option<print::Raster> {
-        self.as_image.then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale })
+        self.as_image.then_some(print::Raster { dpi: self.dpi, grayscale: self.grayscale, colour: None })
     }
 
     /// Whether multiple pages per sheet should be cut and stacked into sorted piles.
@@ -570,7 +570,7 @@ impl PrintDraft {
                 self.chosen_duplex()
             },
             scaling: spool::Scaling::Exact,
-            grayscale: print::driver_needs_grayscale(self.grayscale, self.raster()),
+            grayscale: print::driver_needs_grayscale(self.grayscale, self.raster().as_ref()),
             // Set when the copy sent is made grey (`spooler_copy`, #5806).
             grey_pages: false,
             title: title.to_string(),
@@ -584,6 +584,7 @@ impl PrintDraft {
             // A user's custom label is not a keyword from the driver's media catalog.
             .chain(Some(print::paper_media_option((!self.paper_is_custom()).then(|| self.paper_name()).as_deref(), self.paper_size())))
             .collect(),
+            driver_settings: None,
         }
     }
 }
