@@ -13,6 +13,8 @@
 //! - a workspace crate lacks `publish = false`;
 //! - a weak-hash line in `vendor/craft-pdf/src/crypt.rs` or `crates/sign/src/keys.rs` lacks `NOSONAR`;
 //! - the craft-pdf revision `Cargo.toml` names isn't the one `vendor/craft-pdf` was copied from;
+//! - a detached workspace (a fuzz crate) that repeats the root `[patch.crates-io]` lacks the root's
+//!   craft-libs patch to `vendor/craft-pdf`, so its fuzzer would build upstream's craft-pdf;
 //! - packaging grants `xdg-data/ArtCraft`, or a Flatpak manifest named `ai.storyteller.*` is back;
 //! - once a build script reads `CRAFT_I18N_DIR`, a place in `release.yml` or `ci.yml` that sets
 //!   `CRAFT_FONTS_DIR` doesn't also set `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1`, or a job there
@@ -36,6 +38,8 @@ const CHECKOUT_I18N: &str = "storytold/craft-common-actions/actions/checkout-cra
 const WEAK_HASH_FILES: [&str; 2] = ["vendor/craft-pdf/src/crypt.rs", "crates/sign/src/keys.rs"];
 /// Names the craft-libs commit `vendor/craft-pdf` was copied from, on its `Base:` line.
 const CRAFT_PDF_PATCHES: &str = "vendor/craft-pdf/PATCHES.md";
+/// The source the root `[patch]` replaces craft-pdf in.
+const CRAFT_LIBS: &str = "https://github.com/storytold/craft-libs";
 const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
 /// The value `UPDATE_APP` gives its `repo` field.
 const FORK_REPO: &str = "\"yungSNAT/PlutarchPages\"";
@@ -50,7 +54,7 @@ const THIS_FILE: &str = "xtask/src/fork_check.rs";
 
 type Rule = fn(&Tree) -> Vec<String>;
 
-const RULES: [(&str, Rule); 11] = [
+const RULES: [(&str, Rule); 12] = [
     ("ArtCraft name", artcraft_names),
     ("upstream link", upstream_links),
     ("update source", update_source),
@@ -59,6 +63,7 @@ const RULES: [(&str, Rule); 11] = [
     ("publish", unpublished_crates),
     ("NOSONAR", weak_hash_markers),
     ("craft-pdf base", vendored_craft_pdf_base),
+    ("detached craft-pdf", detached_craft_pdf),
     ("Flatpak grant", flatpak_grant),
     ("Flatpak manifest", upstream_flatpak_manifests),
     ("release i18n", release_i18n),
@@ -715,6 +720,28 @@ fn vendored_craft_pdf_base(tree: &Tree) -> Vec<String> {
     }
 }
 
+/// A detached workspace skips the root `[patch]` sections, so each one that reaches craft-pdf must
+/// repeat the craft-libs patch, or it builds upstream's craft-pdf without the fork's fixes.
+// shortcut: repeating `[patch.crates-io]` stands for reaching craft-pdf (true of every fuzz crate
+// today); a detached workspace that reaches it without vendored crates.io crates is missed. Walking
+// its path dependencies to a manifest that names craft-pdf would catch that too.
+fn detached_craft_pdf(tree: &Tree) -> Vec<String> {
+    let mut out = Vec::new();
+    for (path, text) in tree.text.iter().filter(|(p, _)| p.ends_with("/Cargo.toml")) {
+        let Ok(manifest) = text.parse::<toml::Table>() else { continue };
+        let Some(patch) = manifest.get("patch") else { continue };
+        if !manifest.contains_key("workspace") || patch.get("crates-io").is_none() {
+            continue;
+        }
+        let vendored = format!("{}vendor/craft-pdf", "../".repeat(path.matches('/').count()));
+        let patched = patch.get(CRAFT_LIBS).and_then(|p| p.get("craft-pdf")?.get("path")?.as_str().map(|p| p == vendored));
+        if patched != Some(true) {
+            out.push(format!("{path}: add [patch.\"{CRAFT_LIBS}\"] craft-pdf = {{ path = \"{vendored}\" }}, as the root has"));
+        }
+    }
+    out
+}
+
 fn weak_hash_markers(tree: &Tree) -> Vec<String> {
     let mut out = Vec::new();
     for path in WEAK_HASH_FILES {
@@ -1029,7 +1056,7 @@ mod tests {
     }
 
     #[test]
-    fn the_vendored_craft_pdf_is_the_revision_cargo_toml_names() {
+    fn the_vendored_base_is_the_revision_cargo_toml_names() {
         let root =
             |rev: &str| format!("[workspace.dependencies]\ncraft-pdf = {{ git = \"https://github.com/storytold/craft-libs\", rev = \"{rev}\" }}\n");
         let patches = "# craft-pdf\n\nBase: `8e03cd01` (storytold/craft-libs `crates/pdf`).\n";
@@ -1037,6 +1064,29 @@ mod tests {
         fails(vendored_craft_pdf_base, &[("Cargo.toml", &root("9f00aa11")), (CRAFT_PDF_PATCHES, patches)], "\"9f00aa11\"");
         fails(vendored_craft_pdf_base, &[("Cargo.toml", &root("8e03cd01"))], "None");
         fails(vendored_craft_pdf_base, &[("Cargo.toml", "[workspace]\n"), (CRAFT_PDF_PATCHES, patches)], "None");
+    }
+
+    #[test]
+    fn a_detached_workspace_builds_the_vendored_craft_pdf() {
+        let detached = "[workspace]
+
+[patch.crates-io]
+hayro-jbig2 = { path = \"../../../vendor/hayro-jbig2\" }
+";
+        let patched = format!("{detached}
+[patch.\"https://github.com/storytold/craft-libs\"]
+craft-pdf = {{ path = \"../../../vendor/craft-pdf\" }}
+");
+        passes(detached_craft_pdf, &[("crates/cos/fuzz/Cargo.toml", &patched), ("crates/js/fuzz/Cargo.toml", "[workspace]
+
+[dependencies]
+")]);
+        passes(detached_craft_pdf, &[("Cargo.toml", "[patch.crates-io]
+x = { path = \"vendor/x\" }
+"), ("crates/cos/Cargo.toml", "[package]
+")]);
+        fails(detached_craft_pdf, &[("crates/xfa/fuzz/Cargo.toml", detached)], "crates/xfa/fuzz/Cargo.toml: add [patch.");
+        fails(detached_craft_pdf, &[("crates/cos/fuzz/Cargo.toml", &patched.replace("../../../vendor/craft-pdf", "../../vendor/craft-pdf"))], "crates/cos/fuzz");
     }
 
     #[test]
