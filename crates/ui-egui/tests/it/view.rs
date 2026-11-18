@@ -2725,7 +2725,10 @@ fn switching_modes_keeps_the_current_page_at_fixed_zoom() {
 #[test]
 fn long_view_menu_fits_a_short_window() {
     use egui_kittest::kittest::Queryable;
-    let mut h = Harness::builder().with_size(egui::vec2(1000.0, 400.0)).build_eframe(|_cc| {
+    // Short, and wide enough that View is a title of the in-window bar on every platform: on macOS
+    // the bar starts with the app menu, titled with this fork's longer name, and at 1000 pt View
+    // moved into the bar's "…" (the row keeps 720 pt for the tabs, search and buttons).
+    let mut h = Harness::builder().with_size(egui::vec2(1100.0, 400.0)).build_eframe(|_cc| {
         let mut app = PdfCraftApp::new();
         app.set_option("language", "en").unwrap();
         app.open_bytes("pages.pdf", None, PAGES.to_vec()).unwrap();

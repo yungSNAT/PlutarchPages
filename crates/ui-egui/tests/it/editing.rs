@@ -39,7 +39,11 @@ fn fixture(n: usize) -> Vec<u8> {
 }
 
 fn harness(pages: usize, setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
-    let mut builder = Harness::builder().with_size(egui::vec2(1400.0, 900.0));
+    harness_sized(egui::vec2(1400.0, 900.0), pages, setup)
+}
+
+fn harness_sized(size: egui::Vec2, pages: usize, setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
+    let mut builder = Harness::builder().with_size(size);
     if std::env::var_os("PDFCRAFT_ORGANIZE_SNAPSHOT").is_some() {
         builder = builder.wgpu();
     }
@@ -10124,6 +10128,12 @@ fn mode_tab_cursors(h: &mut Harness<'static, PdfCraftApp>, text: egui::Rect) -> 
 const HAND_ON_EVERY_TAB: [(&str, egui::CursorIcon); 3] =
     [("Edit", egui::CursorIcon::PointingHand), ("Convert", egui::CursorIcon::PointingHand), ("E-Sign", egui::CursorIcon::PointingHand)];
 
+/// Wide enough that page 1's text ("Page 1", x 20 to 96 of 200 pt, the page fitted to the width)
+/// reaches under E-Sign. The in-window menu bar shares the row and pushes the tabs right; on macOS
+/// it starts with the app menu, titled with this fork's longer name, and at 1400 pt E-Sign's
+/// centre (x 671) passed the text's end (x 652). At 1600 pt the text ends near x 748.
+const MODE_TAB_WINDOW: egui::Vec2 = egui::vec2(1600.0, 900.0);
+
 /// Page 1's text block on screen, relative to the page's top edge, in the window as it is now.
 fn page_text(h: &Harness<'static, PdfCraftApp>) -> egui::Rect {
     let id = h.state().views[0].id;
@@ -10138,7 +10148,7 @@ fn page_text(h: &Harness<'static, PdfCraftApp>) -> egui::Rect {
 /// text layer showed its I-beam there, over chrome that hides the page.
 #[test]
 fn mode_tabs_keep_the_hand_over_page_text_scrolled_under_them() {
-    let mut h = harness(2, |app| app.set_option("left", "closed").unwrap());
+    let mut h = harness_sized(MODE_TAB_WINDOW, 2, |app| app.set_option("left", "closed").unwrap());
     let text = page_text(&h);
     // Where the page shows, its text takes the I-beam, once the page's text has arrived.
     h.state_mut().views[0].goto = Some((0, 0.3));
@@ -10160,7 +10170,7 @@ fn mode_tabs_keep_the_hand_over_page_text_scrolled_under_them() {
 /// The open paragraph's editor also covered the tabs and took their clicks.
 #[test]
 fn mode_tabs_keep_the_hand_over_a_paragraph_scrolled_under_them() {
-    let mut h = harness(2, |_| {});
+    let mut h = harness_sized(MODE_TAB_WINDOW, 2, |_| {});
     assert!(h.state_mut().execute("edit.edit_text"));
     h.state_mut().set_option("left", "closed").unwrap();
     h.run_steps(4);
@@ -11696,36 +11706,5 @@ fn a_modified_click_away_from_a_cropped_picture_applies_its_crop() {
         assert!(h.state().views[0].image_selection.is_none(), "{mods:?}: the picture is let go");
         let visible = h.state().session.get(doc_id).unwrap().page_images(0)[0].visible_rect.unwrap();
         assert!(keep.iter().zip(visible).all(|(a, b)| (a - b).abs() < 0.5), "{mods:?}: the crop is applied: {visible:?}");
-    }
-}
-
-// TEMPORARY diagnostic for the macOS nightly (removed before the PR): prints the mode bar's geometry.
-#[test]
-fn zz_diag_mode_bar_geometry() {
-    let dump = |h: &Harness<'static, PdfCraftApp>, what: &str| {
-        for n in h.get_all_by_role(Role::MenuItem) {
-            eprintln!("DIAG {what} menu {:?} {:?}", n.accesskit_node().label(), n.rect());
-        }
-        for label in ["All tools", "Edit", "Convert", "E-Sign"] {
-            for n in h.get_all_by_role_and_label(Role::Button, label) {
-                eprintln!("DIAG {what} button {label} {:?}", n.rect());
-            }
-        }
-    };
-    for width in [1000.0, 1100.0, 1400.0] {
-        let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).build_eframe(move |_cc| {
-            let mut app = PdfCraftApp::new();
-            app.set_option("language", "en").unwrap();
-            app.open_bytes("doc.pdf", None, fixture(2)).expect("fixture opens");
-            app.set_option("left", "closed").unwrap();
-            app
-        });
-        h.run_steps(4);
-        let text = page_text(&h);
-        h.state_mut().views[0].goto = Some((0, 0.5));
-        h.run_steps(4);
-        let page = h.state().views[0].page_screen_rect(0).expect("on screen");
-        eprintln!("DIAG w{width} text {text:?} page {page:?}");
-        dump(&h, &format!("w{width}"));
     }
 }
