@@ -3,7 +3,8 @@
 //! [`audit_redactions`] finds *faux redactions* — opaque filled rectangles drawn over text
 //! that is still extractable underneath — and redaction annotations that were marked but
 //! never applied. [`audit_document`] also reports covered numeric text gaps, earlier
-//! revisions and retained metadata. Those signals do not establish that text survived.
+//! revisions and retained metadata, signals that do not establish that text survived, and streams
+//! nothing refers to that still show text, which do.
 //!
 //! A rectangle counts as a cover only when it was painted strictly *after* the text it
 //! overlaps. One painted fully opaque in the Normal blend mode, without a soft mask, hides the text
@@ -23,8 +24,10 @@
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
 //! considered when closed by a fill operator, and so is a shading painted with `sh`, over the box
 //! that holds its clip and within its `/BBox`, an image without a mask of its own, over the box the
-//! CTM places it in, and a word of block characters (`█`, `■` and the like) drawn filled; other
-//! filled paths and glyphs are not. An image doesn't hide invisible text (rendering mode 3 or 7):
+//! CTM places it in, a word of block characters (`█`, `■` and the like) drawn filled, and a
+//! straight solid stroke along one horizontal or vertical line, over the band its width paints
+//! between its ends, under a CTM that keeps the axes; other filled paths, strokes and glyphs are
+//! not. An image doesn't hide invisible text (rendering mode 3 or 7):
 //! an OCR tool draws a scan over the text it read from it. A cover in a color the audit doesn't
 //! read (a pattern's, a spot color's, an image's) counts as dark as the text, and a block is judged
 //! by its colour against the text's. Filled `/Square` annotations count as covers too, by their
@@ -176,6 +179,10 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
     if earlier > 0 {
         document_findings.push(DocumentFinding { kind: "earlier-revisions", count: earlier });
     }
+    let unreferenced = unreferenced_text(doc)?;
+    if unreferenced > 0 {
+        document_findings.push(DocumentFinding { kind: "unreferenced-text", count: unreferenced });
+    }
     // A metadata entry of the wrong type is reported, not an error, so the pages are still audited.
     match metadata_entry(doc, doc.trailer(), b"Info")?.as_deref() {
         Some(Object::Dict(info)) if !info.is_empty() => document_findings.push(DocumentFinding { kind: "document-info", count: info.len() }),
@@ -191,6 +198,69 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
         Some(_) => document_findings.push(DocumentFinding { kind: "malformed-xmp-metadata", count: 1 }),
     }
     Ok(AuditReport { page_findings: audit_pages(doc, Limits::DEFAULT, true)?, document_findings })
+}
+
+/// How many streams nothing in the file refers to show text (`Tj`, `TJ`, `'` or `"`): text no viewer
+/// draws that any reader of the file's objects recovers, as a redaction applied and saved without
+/// garbage collection leaves the page's old content. Only a stream that can be content is read: a
+/// form, or one without a `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or
+/// `/FontFile2`; images, fonts, metadata and object streams are not. When an edit has marked the
+/// document for a full rewrite ([`Document::full_save_required`], as applying a redaction does),
+/// its next save keeps only what is referred to, and none are counted. One that can't be read or decoded within
+/// one page's [`DecodeBudget`](pdfcraft_cos::DecodeBudget) in all fails the audit.
+fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
+    if doc.full_save_required() {
+        return Ok(0);
+    }
+    let reachable = pdfcraft_cos::reachable_objects(doc)?;
+    let unreferenced = doc.object_numbers().into_iter().filter(|n| !reachable.contains(n)).collect();
+    // The streams that can be content, and the font programs: what a descriptor names as one. A
+    // descriptor something refers to names only streams something refers to, so these are all
+    // among the unreferenced objects, or written out in place within one.
+    let mut candidates = Vec::new();
+    let mut programs = std::collections::HashSet::new();
+    for (reference, object) in doc.scan_objects_subset(unreferenced) {
+        let object = object?;
+        font_files(&object, &mut programs);
+        let Object::Stream(stream) = &*object else { continue };
+        let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
+        if matches!(name(b"Type").as_deref(), None | Some(b"XObject")) && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form")) {
+            candidates.push(reference);
+        }
+    }
+    // A reference names one object by number and generation: a stale one names none.
+    candidates.retain(|r| !programs.contains(r));
+    let mut budget = pdfcraft_cos::DecodeBudget::page();
+    let mut count = 0;
+    for (_, object) in doc.scan_objects_subset(candidates.into_iter().map(|r| r.num).collect()) {
+        let Object::Stream(stream) = &*object? else { continue };
+        if pdfcraft_content::ops(&budget.decode_strict(doc, stream)?).any(|op| matches!(op.op.as_slice(), b"Tj" | b"TJ" | b"'" | b"\"")) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Add to `programs` what the font descriptors written in `object` name as font programs
+/// (`/FontFile`, `/FontFile2`): `object` itself, or any written out in place within it, such as a
+/// font's own `/FontDescriptor`. A font descriptor is a dictionary of `/Type /FontDescriptor`, as
+/// the standard requires; the same keys elsewhere, such as a form's resource names, name none.
+fn font_files(object: &Object, programs: &mut std::collections::HashSet<pdfcraft_cos::ObjRef>) {
+    let mut stack = vec![object];
+    while let Some(object) = stack.pop() {
+        match object {
+            Object::Dict(dict) | Object::Stream(pdfcraft_cos::Stream { dict, .. }) => {
+                // A `/Type` written as a reference is not resolved: such a descriptor names nothing,
+                // so its program is read as a candidate, which can over-report, never hide text.
+                if dict.get(b"Type").and_then(Object::as_name) == Some(&b"FontDescriptor"[..]) {
+                    programs.extend([&b"FontFile"[..], b"FontFile2"].into_iter().filter_map(|key| dict.get(key)?.as_ref()));
+                }
+                stack.extend(dict.iter().map(|(_, value)| value));
+            }
+            Object::Array(items) => stack.extend(items),
+            _ => {}
+        }
+    }
 }
 
 fn metadata_entry(doc: &Document, dict: &Dict, key: &[u8]) -> Result<Option<std::sync::Arc<Object>>, AuditError> {

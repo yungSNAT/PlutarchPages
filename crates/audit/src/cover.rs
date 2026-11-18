@@ -5,21 +5,29 @@
 //! whose four corners form an axis-aligned rectangle in user space is the same shape and counts
 //! too (#1510), and so does a shading painted with `sh`, over the box that holds its clip and
 //! within its `/BBox`, and an image without a mask of its own, over the unit square the CTM places
-//! it on, within that box. Graphics state tracked here is deliberately small: the CTM stack
-//! (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the page's crop box),
-//! the non-stroking color (`g`/`rg`/`k`, and
+//! it on, within that box. A straight stroke counts too: one subpath whose points, control points
+//! included, lie on one horizontal or vertical line on the page, stroked solid (no dashes) under a
+//! CTM that keeps the axes, covers the band its line width paints between its ends, its caps not
+//! counted, painted in the stroking color and alpha, whether stroked alone (`S`, `s`) or over a
+//! fill (`B`, `B*`, `b`, `b*`). It counts only under a clip that is a box on the page: a triangle
+//! or a sheared box may clip the band away from what it seems to cover. Graphics state tracked
+//! here is deliberately small: the CTM stack (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the
+//! page's crop box), the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
-//! one the audit can't read and counts as dark as the text), and from ExtGState (`gs`) the
-//! non-stroking alpha (`/ca`), the blend mode (`/BM`) and whether a soft mask (`/SMask`) is set. A
-//! fully transparent fill paints no cover. One painted fully opaque in the Normal blend mode without
+//! one the audit can't read and counts as dark as the text) and the stroking one likewise
+//! (`G`/`RG`/`K`, `CS` with `SC`/`SCN`), the line width (`w`) and whether a dash pattern is set
+//! (`d`), and from ExtGState (`gs`) the non-stroking and stroking alpha (`/ca`, `/CA`), the line
+//! width (`/LW`), the dash pattern (`/D`), the blend mode (`/BM`) and whether a soft mask (`/SMask`)
+//! is set. A fully transparent fill paints no cover. One painted fully opaque in the Normal blend mode without
 //! a soft mask is opaque, and hides text whatever its colour. A translucent one in the Normal blend
 //! mode keeps its alpha, so the audit can mix it with the text and what lies around the text. A
 //! blended one, or one painted through a soft mask, counts as a cover as dark as it is: how much it
 //! hides depends on colours and a mask the audit doesn't read, and so does one in a transparency
 //! group (a form with `/Group`) drawn translucent, blended or masked, whatever its own opacity. A
 //! plain form's content is painted as the page's own. Form XObjects are followed read-only with a depth cap, and so
-//! are the appearances a viewer paints for the page's annotations. Other filled paths are out of
-//! scope and documented as such; the layers whose content fills one are reported.
+//! are the appearances a viewer paints for the page's annotations. Other filled paths and other
+//! strokes are out of scope and documented as such; the layers whose content fills one are
+//! reported.
 //!
 //! The walk also reads the glyph procedures of the Type 3 fonts the content selects (with `Tf`,
 //! or an ExtGState's `/Font`) and the cells of the tiling patterns it paints with, once for each
@@ -113,6 +121,15 @@ struct Gs {
     /// (RGB) or 4 (CMYK), else 0.
     space: usize,
     alpha: f64,
+    /// The stroking color, its color space's components and alpha (`/CA`), as `fill`, `space` and
+    /// `alpha` give the non-stroking ones.
+    stroke: Option<[f64; 3]>,
+    stroke_space: usize,
+    stroke_alpha: f64,
+    /// The line width (`w`, `/LW`), in user space.
+    line_width: f64,
+    /// A dash pattern (`d`, `/D`) other than a solid line is in force.
+    dashed: bool,
     /// A blend mode other than Normal (`/BM`) is in force: what lies under a fill can show through.
     blended: bool,
     /// A soft mask (`/SMask`) is in force: the fill can show what lies under it.
@@ -124,19 +141,39 @@ struct Gs {
     grouped: bool,
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
+    /// The clip is that box exactly: every clip set was a box on the page (a path of one `re` or one
+    /// four-cornered subpath, or a `/BBox`, whose corners land on a box). Only then can a stroke's
+    /// band within `clip` be taken as what it paints.
+    clip_exact: bool,
 }
 
 impl Gs {
     fn new(clip: [f64; 4]) -> Self {
-        Gs { ctm: Matrix::IDENTITY, fill: Some([0.0; 3]), space: 1, alpha: 1.0, blended: false, masked: false, grouped: false, clip }
+        Gs {
+            ctm: Matrix::IDENTITY,
+            fill: Some([0.0; 3]),
+            space: 1,
+            alpha: 1.0,
+            stroke: Some([0.0; 3]),
+            stroke_space: 1,
+            stroke_alpha: 1.0,
+            line_width: 1.0,
+            dashed: false,
+            blended: false,
+            masked: false,
+            grouped: false,
+            clip,
+            clip_exact: true,
+        }
     }
 }
 
 /// The path under construction, as far as the audit cares about it.
 enum Path {
     Empty,
-    /// A `re` rectangle, in user space.
-    Rect([f64; 4]),
+    /// A `re` rectangle's box in user space, and whether the rectangle lands on that box: the CTM
+    /// keeps its edges horizontal and vertical.
+    Rect([f64; 4], bool),
     /// One `m`/`l` subpath, corners already mapped to user space; `true` once closed by `h`.
     Lines(Vec<[f64; 2]>, bool),
     /// Anything else: curves, a second subpath, a CTM change mid-path.
@@ -147,24 +184,106 @@ impl Path {
     /// The rectangle a fill of this path paints, if the path is one.
     fn rect(self) -> Option<[f64; 4]> {
         match self {
-            Path::Rect(r) => Some(r),
-            Path::Lines(pts, _) => lines_rect(pts),
+            Path::Rect(r, _) => Some(r),
+            Path::Lines(pts, _) => lines_rect(&pts),
             Path::Empty | Path::Other => None,
         }
     }
 }
 
+/// The path under construction as a stroke paints it, as far as the audit reads it: one subpath
+/// along one horizontal or vertical line on the page.
+enum Line {
+    Empty,
+    /// The box of the points where its segments start and end, and the box of all its points,
+    /// control points included, in user space.
+    Straight {
+        ends: [f64; 4],
+        all: [f64; 4],
+    },
+    /// Anything else: a second subpath, a rectangle, a point that isn't a number.
+    Other,
+}
+
+impl Line {
+    /// `self` after the path operator `op`, its points mapped by `ctm`. Other operators leave it.
+    fn then(self, op: &Op, ctm: &Matrix) -> Line {
+        let points = match op.op.as_slice() {
+            b"m" | b"l" => 1,
+            b"v" | b"y" => 2,
+            b"c" => 3,
+            b"re" => return Line::Other,
+            _ => return self,
+        };
+        let mapped: Option<Vec<[f64; 4]>> = op.operands[op.operands.len().saturating_sub(2 * points)..]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|[x, y]| {
+                let (x, y) = (x.as_f64().filter(|v| v.is_finite())?, y.as_f64().filter(|v| v.is_finite())?);
+                let (x, y) = ctm.apply(x, y);
+                Some([x, y, x, y])
+            })
+            .collect();
+        // The last point ends the segment; those before it are control points.
+        let Some((&end, _)) = mapped.as_deref().filter(|m| m.len() == points).and_then(<[_]>::split_last) else { return Line::Other };
+        match (self, op.op.as_slice()) {
+            (Line::Empty, b"m") => Line::Straight { ends: end, all: end },
+            (Line::Straight { ends, all }, b"l" | b"c" | b"v" | b"y") => {
+                Line::Straight { ends: join(Some(ends), end), all: mapped.into_iter().flatten().fold(all, |a, p| join(Some(a), p)) }
+            }
+            _ => Line::Other,
+        }
+    }
+
+    /// The band a stroke of this path paints in `gs` without counting its caps: between its ends,
+    /// as wide as the line, when its points all lie on one horizontal or vertical line and the CTM
+    /// keeps the axes, so the band is a box on the page. A curve whose control points lie on that
+    /// line too stays on it, and passes every point between its ends. `None` for a dashed line, a
+    /// line of width 0 (the thinnest a device draws), or any other path.
+    fn band(&self, gs: &Gs) -> Option<[f64; 4]> {
+        // CTM products leave rounding noise, so points compare with a tolerance (in points).
+        const EPS: f64 = 1e-6;
+        let Line::Straight { ends, all } = self else { return None };
+        let [a, b, c, d, ..] = gs.ctm.0;
+        let keeps_axes = (b.abs() <= EPS && c.abs() <= EPS) || (a.abs() <= EPS && d.abs() <= EPS);
+        if !keeps_axes || gs.dashed || gs.line_width <= 0.0 {
+            return None;
+        }
+        // The pen is a circle of the line's width in user space; the CTM stretches it by the
+        // length of the image of a unit step across the line.
+        let half = gs.line_width / 2.0;
+        if all[3] - all[1] <= EPS && ends[2] - ends[0] > EPS {
+            let h = half * b.hypot(d);
+            Some([ends[0], ends[1] - h, ends[2], ends[1] + h])
+        } else if all[2] - all[0] <= EPS && ends[3] - ends[1] > EPS {
+            let w = half * a.hypot(c);
+            Some([ends[0] - w, ends[1], ends[0] + w, ends[3]])
+        } else {
+            None
+        }
+    }
+}
+
+/// Whether the box `r` (`[x0, y0, x1, y1]`) lands on a box on the page under `ctm`: its corners,
+/// mapped, are those of an axis-aligned rectangle.
+fn box_on_page(ctm: &Matrix, r: [f64; 4]) -> bool {
+    let corner = |x, y| {
+        let (x, y) = ctm.apply(x, y);
+        [x, y]
+    };
+    lines_rect(&[corner(r[0], r[1]), corner(r[2], r[1]), corner(r[2], r[3]), corner(r[0], r[3])]).is_some()
+}
+
 /// The bounding box of a closed polygon that is an axis-aligned rectangle, or `None`. A repeated
 /// start point is dropped first; the remaining four corners must alternate horizontal and
 /// vertical edges.
-fn lines_rect(mut pts: Vec<[f64; 2]>) -> Option<[f64; 4]> {
+fn lines_rect(pts: &[[f64; 2]]) -> Option<[f64; 4]> {
     // CTM products leave rounding noise, so corners compare with a tolerance (in points).
     const EPS: f64 = 1e-6;
     let same = |a: f64, b: f64| (a - b).abs() <= EPS;
-    if pts.len() == 5 && same(pts[0][0], pts[4][0]) && same(pts[0][1], pts[4][1]) {
-        pts.pop();
-    }
-    let [a, b, c, d] = <[[f64; 2]; 4]>::try_from(pts).ok()?;
+    let pts = if pts.len() == 5 && same(pts[0][0], pts[4][0]) && same(pts[0][1], pts[4][1]) { &pts[..4] } else { pts };
+    let [a, b, c, d] = *<&[[f64; 2]; 4]>::try_from(pts).ok()?;
     let fits = |first_horizontal: bool| {
         [(a, b), (b, c), (c, d), (d, a)]
             .iter()
@@ -262,13 +381,20 @@ impl<'a> Walker<'a> {
     ) -> Result<(), AuditError> {
         let resources = res.dict;
         let mut path = Path::Empty;
+        let mut line = Line::Empty;
         // The box holding every point of the path, in user space (a curve lies within its control
-        // points), and whether `W` makes the path the clip once it is painted.
+        // points), how many subpaths it has, and, once `W` makes the path the clip when it is
+        // painted, whether that path is the box.
         let mut path_box: Option<[f64; 4]> = None;
-        let mut clipping = false;
+        let mut subpaths = 0;
+        let mut clipping: Option<bool> = None;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
+            line = line.then(op, &gs.ctm);
+            if matches!(op.op.as_slice(), b"m" | b"re") {
+                subpaths += 1;
+            }
             match op.op.as_slice() {
                 b"m" | b"l" | b"c" | b"v" | b"y" => {
                     for p in op.operands.as_chunks::<2>().0 {
@@ -313,44 +439,24 @@ impl<'a> Walker<'a> {
                     if gs.ctm != before && !matches!(path, Path::Empty) {
                         path = Path::Other;
                     }
-                }
-                name @ (b"g" | b"rg" | b"k") => {
-                    let n = match name {
-                        b"g" => 1,
-                        b"rg" => 3,
-                        _ => 4,
-                    };
-                    if let Some(fill) = op.operands.len().checked_sub(n).and_then(|k| numbers(&op.operands[k..])).and_then(|v| rgb(&v)) {
-                        (gs.fill, gs.space) = (Some(fill), n);
+                    if gs.ctm != before && !matches!(line, Line::Empty) {
+                        line = Line::Other;
                     }
                 }
-                b"cs" => (gs.space, gs.fill) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
-                b"sc" | b"scn" => {
-                    gs.fill = numbers(&op.operands).filter(|v| v.len() == gs.space).and_then(|v| rgb(&v));
-                    if let Some(name) = op.operands.last().and_then(Object::as_name) {
-                        self.walk_pattern(name, i, res, calls)?;
-                    }
-                }
-                b"gs" => {
-                    if let Some(name) = op.name(0) {
-                        // A state leaves what it doesn't set as it was (ISO 32000-2 §8.4.5).
-                        let (alpha, blended, masked) = ext_state(self.doc, resources, name);
-                        gs.alpha = alpha.unwrap_or(gs.alpha);
-                        gs.blended = blended.unwrap_or(gs.blended);
-                        gs.masked = masked.unwrap_or(gs.masked);
-                        self.walk_state_font(name, i, res, calls)?;
-                    }
+                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"d" | b"gs" => {
+                    self.set_state(op, gs, res, calls, i)?;
                 }
                 b"re" => {
                     let rect = op.nums::<4>().and_then(|[x, y, w, h]| {
                         if [x, y, w, h].iter().all(|v| v.is_finite()) && w != 0.0 && h != 0.0 {
-                            let r = gs.ctm.bbox([x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)]);
-                            (r[2] > r[0] && r[3] > r[1]).then_some(r)
+                            let user = [x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)];
+                            let r = gs.ctm.bbox(user);
+                            (r[2] > r[0] && r[3] > r[1]).then(|| Path::Rect(r, box_on_page(&gs.ctm, user)))
                         } else {
                             None
                         }
                     });
-                    path = rect.map_or(Path::Other, Path::Rect);
+                    path = rect.unwrap_or(Path::Other);
                 }
                 b"m" => {
                     path = match (path, user_point(gs, op)) {
@@ -372,15 +478,17 @@ impl<'a> Walker<'a> {
                     path = match path {
                         Path::Lines(pts, _) => Path::Lines(pts, true),
                         // `re` already closed its subpath, so a further `h` changes nothing.
-                        Path::Rect(r) => Path::Rect(r),
+                        Path::Rect(r, boxed) => Path::Rect(r, boxed),
                         _ => Path::Other,
                     };
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
-                    // `B` and `b` stroke the path too.
-                    self.unread |= matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") && self.inside.is_none();
                     self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i);
+                    // `B` and `b` stroke the path over the fill.
+                    if matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") {
+                        self.stroke(std::mem::replace(&mut line, Line::Empty), gs, calls, i);
+                    }
                 }
                 // A shading paints everywhere the clip lets it, within its own `/BBox` if it has one.
                 b"sh" => {
@@ -403,18 +511,20 @@ impl<'a> Walker<'a> {
                         self.walk_type3(entry, i, res, calls)?;
                     }
                 }
-                b"SCN" => {
-                    if let Some(name) = op.operands.last().and_then(Object::as_name) {
-                        self.walk_pattern(name, i, res, calls)?;
-                    }
-                }
                 b"S" | b"s" => {
-                    self.unread |= self.inside.is_none();
                     path = Path::Empty;
+                    self.stroke(std::mem::replace(&mut line, Line::Empty), gs, calls, i);
                 }
                 b"n" => path = Path::Empty,
                 b"W" | b"W*" => {
-                    clipping = true;
+                    // The clip is the box exactly when the path is one subpath that is a box on the
+                    // page: a second could cut a hole in it.
+                    let boxed = match &path {
+                        Path::Rect(_, boxed) => *boxed,
+                        Path::Lines(pts, _) => lines_rect(pts).is_some(),
+                        Path::Empty | Path::Other => false,
+                    };
+                    clipping = Some(boxed && subpaths == 1);
                     path = Path::Other;
                 }
                 b"c" | b"v" | b"y" => path = Path::Other,
@@ -423,6 +533,7 @@ impl<'a> Walker<'a> {
                         self.walk_xobject(name, gs, res, calls, i)?;
                     }
                     path = Path::Empty;
+                    line = Line::Empty;
                 }
                 b"BI" => {
                     if let Some((image, _)) = &op.inline {
@@ -433,13 +544,75 @@ impl<'a> Walker<'a> {
             }
             // A path ends where it is painted, and after `W` it is the clip from then on.
             if matches!(op.op.as_slice(), b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" | b"S" | b"s" | b"n") {
-                if std::mem::take(&mut clipping)
+                if let Some(exact) = clipping.take()
                     && let Some(b) = path_box
                 {
                     gs.clip = meet(gs.clip, b);
+                    gs.clip_exact &= exact;
                 }
                 path_box = None;
+                subpaths = 0;
+                line = Line::Empty;
             }
+        }
+        Ok(())
+    }
+
+    /// Apply the graphics state operator `op` (index `i`): colours, colour spaces, line width,
+    /// dash and `gs`, walking any pattern or `gs` font it names.
+    fn set_state(&mut self, op: &Op, gs: &mut Gs, res: Res<'_>, calls: &mut Vec<usize>, i: usize) -> Result<(), AuditError> {
+        let resources = res.dict;
+        match op.op.as_slice() {
+            name @ (b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K") => {
+                let n = match name {
+                    b"g" | b"G" => 1,
+                    b"rg" | b"RG" => 3,
+                    _ => 4,
+                };
+                if let Some(color) = op.operands.len().checked_sub(n).and_then(|k| numbers(&op.operands[k..])).and_then(|v| rgb(&v)) {
+                    if name[0].is_ascii_lowercase() {
+                        (gs.fill, gs.space) = (Some(color), n);
+                    } else {
+                        (gs.stroke, gs.stroke_space) = (Some(color), n);
+                    }
+                }
+            }
+            b"cs" => (gs.space, gs.fill) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
+            b"CS" => (gs.stroke_space, gs.stroke) = color_space(self.doc, resources, op.name(0).unwrap_or_default()),
+            name @ (b"sc" | b"scn" | b"SC" | b"SCN") => {
+                if name[0] == b's' {
+                    gs.fill = numbers(&op.operands).filter(|v| v.len() == gs.space).and_then(|v| rgb(&v));
+                } else {
+                    gs.stroke = numbers(&op.operands).filter(|v| v.len() == gs.stroke_space).and_then(|v| rgb(&v));
+                }
+                if let Some(name) = op.operands.last().and_then(Object::as_name) {
+                    self.walk_pattern(name, i, res, calls)?;
+                }
+            }
+            b"w" => {
+                if let Some([w]) = op.nums::<1>().filter(|[w]| w.is_finite() && *w >= 0.0) {
+                    gs.line_width = w;
+                }
+            }
+            b"d" => {
+                if let Some(dashes) = op.operands.first().and_then(Object::as_array) {
+                    gs.dashed = !dashes.is_empty();
+                }
+            }
+            b"gs" => {
+                if let Some(name) = op.name(0) {
+                    // A state leaves what it doesn't set as it was (ISO 32000-2 §8.4.5).
+                    let set = ext_state(self.doc, resources, name);
+                    gs.alpha = set.alpha.unwrap_or(gs.alpha);
+                    gs.stroke_alpha = set.stroke_alpha.unwrap_or(gs.stroke_alpha);
+                    gs.line_width = set.line_width.unwrap_or(gs.line_width);
+                    gs.dashed = set.dashed.unwrap_or(gs.dashed);
+                    gs.blended = set.blended.unwrap_or(gs.blended);
+                    gs.masked = set.masked.unwrap_or(gs.masked);
+                    self.walk_state_font(name, i, res, calls)?;
+                }
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -456,6 +629,20 @@ impl<'a> Walker<'a> {
                 }
                 None => {}
             }
+        }
+    }
+
+    /// Record the cover the stroke at index `at` paints along `line`: the band [`Line::band`] gives,
+    /// within the clip, as a fill in the stroking colour and alpha would paint it. Under a clip that
+    /// is not a box ([`Gs::clip_exact`]) the band may be clipped away from what it seems to cover, so
+    /// none is read.
+    fn stroke(&mut self, line: Line, gs: &Gs, calls: &[usize], at: usize) {
+        self.unread |= self.inside.is_none();
+        let Some(band) = line.band(gs).filter(|_| gs.clip_exact) else { return };
+        let area = meet(gs.clip, band);
+        if gs.stroke_alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
+            let pen = Gs { alpha: gs.stroke_alpha, ..gs.clone() };
+            self.paint(area, gs.stroke, &pen, false, calls, at);
         }
     }
 
@@ -527,6 +714,7 @@ impl<'a> Walker<'a> {
         sub_gs.grouped |= group && (gs.alpha < 1.0 || gs.blended || gs.masked);
         if let Some(bbox) = form_bbox(self.doc, dict) {
             sub_gs.clip = meet(sub_gs.clip, sub_gs.ctm.bbox(bbox));
+            sub_gs.clip_exact &= box_on_page(&sub_gs.ctm, bbox);
         }
         calls.push(at);
         self.walk_nested(ops(&data), &mut sub_gs, sub, calls)?;
@@ -727,18 +915,41 @@ fn user_point(gs: &Gs, op: &Op) -> Option<[f64; 2]> {
     Some([x, y])
 }
 
-/// What a named ExtGState sets of what decides whether a fill hides what lies under it: the
-/// non-stroking alpha (`/ca`), whether its blend mode lets that show through ([`shows_through`])
-/// and whether it sets a soft mask (`/SMask` a dictionary, not `/None`). `None` for each it
-/// doesn't set.
-fn ext_state(doc: &Document, resources: &Dict, name: &[u8]) -> (Option<f64>, Option<bool>, Option<bool>) {
+/// What a named ExtGState sets of what decides whether a fill or a stroke hides what lies under it.
+/// `None` for each it doesn't set.
+#[derive(Default)]
+struct StateSets {
+    /// The non-stroking and stroking alpha (`/ca`, `/CA`).
+    alpha: Option<f64>,
+    stroke_alpha: Option<f64>,
+    /// The line width (`/LW`).
+    line_width: Option<f64>,
+    /// Whether its dash pattern (`/D`) has dashes.
+    dashed: Option<bool>,
+    /// Whether its blend mode lets what lies under show through ([`shows_through`]).
+    blended: Option<bool>,
+    /// Whether it sets a soft mask (`/SMask` a dictionary, not `/None`).
+    masked: Option<bool>,
+}
+
+/// What the ExtGState `name` sets ([`StateSets`]).
+fn ext_state(doc: &Document, resources: &Dict, name: &[u8]) -> StateSets {
     // Borrowed, not copied: a `gs` must not cost the size of the whole ExtGState table.
     let states = resources.get(b"ExtGState").map(|o| doc.resolve(o));
     let state = states.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| doc.resolve(o));
-    let Some(state) = state.as_deref().and_then(Object::as_dict) else { return (None, None, None) };
+    let Some(state) = state.as_deref().and_then(Object::as_dict) else { return StateSets::default() };
     let get = |key: &[u8]| state.get(key).map(|o| doc.resolve(o));
-    let alpha = get(b"ca").and_then(|o| o.as_f64()).filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0));
-    (alpha, get(b"BM").map(|bm| shows_through(doc, &bm)), get(b"SMask").map(|m| m.as_dict().is_some()))
+    let alpha = |key: &[u8]| get(key).and_then(|o| o.as_f64()).filter(|a| a.is_finite()).map(|a| a.clamp(0.0, 1.0));
+    // `/D` is `[dash array, phase]`; an empty dash array is a solid line.
+    let dashes = get(b"D").and_then(|d| d.as_array().and_then(|d| d.first()).map(|a| doc.resolve(a)));
+    StateSets {
+        alpha: alpha(b"ca"),
+        stroke_alpha: alpha(b"CA"),
+        line_width: get(b"LW").and_then(|o| o.as_f64()).filter(|w| w.is_finite() && *w >= 0.0),
+        dashed: dashes.as_deref().and_then(Object::as_array).map(|a| !a.is_empty()),
+        blended: get(b"BM").map(|bm| shows_through(doc, &bm)),
+        masked: get(b"SMask").map(|m| m.as_dict().is_some()),
+    }
 }
 
 /// The blend modes ISO 32000-2 defines (§11.3.5).
@@ -831,8 +1042,9 @@ pub fn filled_rects(
         let own = form.dict.get(b"Resources").map(|o| (o, doc.resolve(o)));
         w.layer = a.layer;
         // A viewer clips the appearance to its box, as a form's.
-        let clip = form_bbox(doc, &form.dict).map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
-        let mut gs = Gs { ctm: a.ctm, ..Gs::new(clip) };
+        let bbox = form_bbox(doc, &form.dict);
+        let clip = bbox.map_or(crop, |bbox| meet(crop, a.ctm.bbox(bbox)));
+        let mut gs = Gs { ctm: a.ctm, clip_exact: bbox.is_none_or(|bbox| box_on_page(&a.ctm, bbox)), ..Gs::new(clip) };
         w.walk_nested(ops(&data), &mut gs, own_resources(own.as_ref(), a.contents.as_ref()).unwrap_or(page), &mut Vec::new())?;
     }
     Ok((w.out, w.shaped, w.unread))

@@ -138,3 +138,19 @@ fn an_unreadable_page_fails_the_cli_audit_and_is_numbered_from_1() {
     assert!(stderr.contains("unreadable.pdf: page 1: "), "{stderr}");
     std::fs::remove_file(path).unwrap();
 }
+
+/// Text in a stream nothing refers to is still in the file, so it fails the audit as covered text
+/// does: a redaction mutool applied and saved without garbage collection leaves the page's old
+/// content streams so. Saved with garbage collection, the file audits clean.
+#[test]
+fn unreferenced_text_fails_the_cli_audit() {
+    let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/audit/tests/data/tool-made");
+    let out = Command::new(BIN).arg("audit").arg(format!("{data}/mutool-applied-no-garbage.pdf")).output().unwrap();
+    assert!(!out.status.success(), "text left in an unreferenced stream must fail the audit");
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["count"], 0, "{report}");
+    assert_eq!(report["document_findings"], serde_json::json!([{ "kind": "unreferenced-text", "count": 2 }]), "{report}");
+
+    let out = Command::new(BIN).arg("audit").arg(format!("{data}/mutool-applied.pdf")).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
