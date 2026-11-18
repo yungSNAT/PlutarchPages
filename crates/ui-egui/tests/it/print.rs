@@ -1834,7 +1834,7 @@ fn type3_pages_go_to_windows_printers_as_images_and_the_dialog_says_so() {
     let note = "Pages that use Type 3 fonts print as images";
     let type3 = |h: &Harness<'_, PdfCraftApp>| h.state().print_draft.settings(2, &[]).unwrap().type3_raster;
     assert_eq!(h.state().print_draft.type3_pages, if windows { vec![0] } else { Vec::new() });
-    assert_eq!(type3(&h), windows.then_some(Raster { dpi: 300.0, grayscale: false }));
+    assert_eq!(type3(&h), windows.then_some(Raster { dpi: 300.0, grayscale: false, colour: None }));
     assert_eq!(h.query_by_label_contains(note).is_some(), windows);
     // The second page alone has no Type 3 font: nothing to say.
     h.state_mut().print_draft.which = PrintWhich::Range;

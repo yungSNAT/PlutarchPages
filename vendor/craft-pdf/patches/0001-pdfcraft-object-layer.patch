@@ -1,0 +1,909 @@
+diff --git a/src/cos/content/tests.rs b/src/cos/content/tests.rs
+index 6a44d51..77b7d65 100644
+--- a/src/cos/content/tests.rs
++++ b/src/cos/content/tests.rs
+@@ -57,6 +57,22 @@ fn a_long_unreadable_number_is_read_once() {
+     assert_eq!(p.ops[0].nums::<2>(), Some([5.0, 0.0]));
+ }
+ 
++/// Dictionaries and arrays that never close each read to the end of the stream before failing,
++/// and each retry from the next byte starts another: the bytes read again stay a small multiple of
++/// the stream, not its square. A few damaged operands still recover byte by byte.
++#[test]
++fn unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times() {
++    for unit in ["<< /A 1 /B 2 ", "<<", "[ ", "<< /A 1 ) "] {
++        let src = unit.repeat(20_000);
++        RESCANNED.with(|c| c.set(0));
++        parse(src.as_bytes());
++        let rescanned = RESCANNED.with(|c| c.get());
++        assert!(rescanned <= 10 * src.len(), "{unit:?}: {rescanned} bytes read for a {}-byte stream", src.len());
++    }
++    let p = parse(b"<< /A 1 [ 0 0 1 rg");
++    assert!(p.ops.iter().any(|o| o.is("rg")), "{:?}", p.ops);
++}
++
+ #[test]
+ fn operators_keep_operands_and_spans() {
+     let src = b"q 1 0 0 1 72 720 cm BT /F1 12 Tf (Hello \\(world\\)) Tj [(A) -120 (B)] TJ ET Q";
+@@ -252,8 +268,109 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
+         let names: Vec<&[u8]> = parsed.ops.iter().map(|o| o.op.as_slice()).collect();
+         assert_eq!(names, [&b"q"[..], b"cm", b"BI", b"Q", b"BT", b"Tf", b"Td", b"Tj", b"ET"], "{label}");
+         assert_eq!(parsed.skipped, 0, "{label}");
+-        assert_eq!(parse(&serialize_ops(&parsed.ops)).ops[2].inline, parsed.ops[2].inline, "{label}");
++        // Its data holds an `EI`, so it is written ASCIIHex-encoded: the renderer reads the same
++        // samples from it, followed by the same operators.
++        let written = serialize_ops(&parsed.ops);
++        assert_eq!(parse(&written).ops.iter().map(|o| o.op.as_slice()).collect::<Vec<_>>(), names, "{label}");
++        assert_eq!(rendered_samples(&written).map(|samples| samples.len()), Some(64), "{label}");
++        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
++    }
++}
++
++/// The samples the renderer decodes for the first inline image in `content`.
++fn rendered_samples(content: &[u8]) -> Option<Vec<u8>> {
++    use hayro_syntax::content::TypedIter;
++    use hayro_syntax::content::ops::{InlineImage, TypedInstruction};
++    let mut iter = TypedIter::new(content);
++    while let Some(op) = iter.next() {
++        if let TypedInstruction::InlineImage(InlineImage(stream)) = op {
++            return stream.decoded().ok().map(|samples| samples.into_owned());
++        }
++    }
++    None
++}
++
++/// Written ASCIIHex-encoded, an image keeps each filter's parameters, in either spelling, and its
++/// declared length becomes the written data's.
++#[test]
++fn an_inline_image_written_as_hex_keeps_its_parameters_and_a_true_length() {
++    let flate: Vec<u8> = (0..FLATE_WITH_EI.len()).step_by(2).map(|i| u8::from_str_radix(&FLATE_WITH_EI[i..i + 2], 16).unwrap()).collect();
++    let image = |parameters: &[u8]| {
++        let mut src = b"BI ".to_vec();
++        src.extend_from_slice(parameters);
++        src.extend_from_slice(b" ID ");
++        src.extend_from_slice(&flate);
++        src.extend_from_slice(b"\nEI Q");
++        src
++    };
++    // The predictor changes the samples, so parameters given to the wrong filter would show.
++    let unpredicted = rendered_samples(&image(b"/F /Fl"));
++    for (parameters, length) in [
++        (b"/F [/Fl] /DP << /Predictor 2 /Columns 64 >> /L 75".as_slice(), b"L".as_slice()),
++        (b"/Filter /FlateDecode /DecodeParms [<< /Predictor 2 /Columns 64 >>] /Length 75", b"Length"),
++        // Both spellings at once: whichever a reader takes, its filters and parameters still agree.
++        (b"/F /Fl /Filter /FlateDecode /DP << /Predictor 2 /Columns 64 >> /DecodeParms [<< /Predictor 2 /Columns 64 >>] /L 75", b"L"),
++    ] {
++        let label = String::from_utf8_lossy(parameters);
++        let src = image(parameters);
++        let written = serialize_ops(&parse(&src).ops);
++        let (dict, data) = parse(&written).ops[0].inline.clone().unwrap();
++        assert_eq!(data.len(), 151, "{label}");
++        assert_eq!(dict.int(length), Some(151), "{label}");
++        assert!(rendered_samples(&src).is_some_and(|samples| samples.len() == 64), "{label}");
++        assert_ne!(rendered_samples(&src), unpredicted, "{label}");
++        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
++    }
++}
++
++/// From the scheduled `round_trip` fuzz job (16 November 2026). An image of unknown length holds
++/// an `EI` that the renderer's end heuristic rejects only because 20 operators, fewer than the
++/// 21 it needs, follow it to the end of the stream. The real end is glued to a trailing `E`
++/// (`EEI`); written back, the newline before the terminator splits that into `E` and `EI`, the
++/// 21st operator, so the rewritten image ends at the earlier `EI` and its data reads as operators.
++#[test]
++fn a_written_inline_image_keeps_its_end_through_later_round_trips() {
++    let mut src = b"BI ID \0EI .0 w".to_vec();
++    src.extend_from_slice(&b" n".repeat(18));
++    src.extend_from_slice(b" EEI\n");
++    let first = parse(&src);
++    assert_eq!(first.ambiguous_images, 0);
++    let written = serialize_ops(&first.ops);
++    assert_eq!(rendered_samples(&written), rendered_samples(&src));
++    let second = parse(&written);
++    let third = parse(&serialize_ops(&second.ops));
++    assert_eq!(
++        second.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>(),
++        third.ops.iter().map(|o| (&o.op, &o.operands, &o.inline)).collect::<Vec<_>>()
++    );
++}
++
++/// A name or string spelt with escapes in the source holds no `EI` there. Written out plainly it
++/// would: with fewer than 21 operators after the image and no text shown, the renderer then takes
++/// that `EI` as the image's end, and the operators before it become image data.
++#[test]
++fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
++    for tail in [&b" Q /A#45I gs"[..], b" Q [/N#45I] 0 d", b" Q /Span << /ActualText (\\105I) >> BDC EMC", b" Q /Span << /A#45I 1 >> BDC EMC"] {
++        // ASCIIHex, so the samples end at `>` and not with the spacing before the terminator.
++        let mut src = b"q BI /F /AHx ID 7F> EI".to_vec();
++        src.extend_from_slice(tail);
++        let label = String::from_utf8_lossy(tail);
++        let first = parse(&src);
++        assert_eq!(first.ambiguous_images, 0, "{label}");
++        let written = serialize_ops(&first.ops);
++        assert_eq!(renderer_operators(&written), renderer_operators(&src), "{label}");
++        assert_eq!(rendered_samples(&written), rendered_samples(&src), "{label}");
++        assert_eq!(
++            parse(&written).ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
++            first.ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
++            "{label}"
++        );
+     }
++    // A byte written as an escape that ends in `E`, then an `I`: the `I` is respelt too.
++    let op = Op::new("gs", vec![Object::Name(vec![0x0E, b'I'])]);
++    let written = serialize_ops(std::slice::from_ref(&op));
++    assert_eq!(written, b"/#0E#49 gs\n");
++    assert_eq!(parse(&written).ops[0].operands, op.operands);
+ }
+ 
+ fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
+diff --git a/src/cos/content.rs b/src/cos/content.rs
+index a308797..0228289 100644
+--- a/src/cos/content.rs
++++ b/src/cos/content.rs
+@@ -107,6 +107,12 @@ fn is_delim(b: u8) -> bool {
+ /// Longest unreadable number token retried from its next byte. Real numbers are far shorter.
+ const MAX_RETRIED_TOKEN: usize = 64;
+ 
++/// How many times over the stream failed operands may be read before a failed one is skipped
++/// whole instead of retried from its next byte. A dictionary or array that never closes reads to
++/// the end of the stream, and each retry can start another, so without this bound the work grows
++/// with the square of the stream.
++const MAX_RESCANS: usize = 8;
++
+ /// Parse a (decoded) content stream.
+ pub fn parse(data: &[u8]) -> Parsed {
+     parse_pieces(data, &[])
+@@ -133,6 +139,8 @@ pub struct Ops<'a> {
+     operands: Vec<Object>,
+     start: Option<usize>,
+     skipped: usize,
++    /// Bytes read by operands that failed, towards [`MAX_RESCANS`].
++    rescanned: usize,
+     ambiguous_images: usize,
+     ends: &'a [usize],
+     boundary: usize,
+@@ -147,6 +155,7 @@ impl<'a> Ops<'a> {
+             operands: Vec::new(),
+             start: None,
+             skipped: 0,
++            rescanned: 0,
+             ambiguous_images: 0,
+             ends,
+             boundary: 0,
+@@ -170,7 +179,7 @@ impl Iterator for Ops<'_> {
+     type Item = Op;
+ 
+     fn next(&mut self) -> Option<Op> {
+-        let Ops { data, lx, operands, start, skipped, ambiguous_images, ends, boundary, comment_edges: edges } = self;
++        let Ops { data, lx, operands, start, skipped, rescanned, ambiguous_images, ends, boundary, comment_edges: edges } = self;
+         let (data, ends): (&[u8], &[usize]) = (data, ends);
+         loop {
+             let trivia = lx.pos;
+@@ -203,11 +212,14 @@ impl Iterator for Ops<'_> {
+                         let read = lx.pos.saturating_sub(at);
+                         #[cfg(test)]
+                         tests::RESCANNED.with(|c| c.set(c.get() + read));
++                        *rescanned = rescanned.saturating_add(read);
+                         let number = matches!(b, b'+' | b'-' | b'.') || b.is_ascii_digit();
+-                        if number && read > MAX_RETRIED_TOKEN {
+-                            // A long unreadable number is skipped whole: retrying from each of its
+-                            // bytes would read the rest of it again every time.
+-                            *skipped += read;
++                        if (number && read > MAX_RETRIED_TOKEN) || *rescanned > data.len().saturating_mul(MAX_RESCANS) {
++                            // A long unreadable number, or any operand once failed ones have read
++                            // the stream MAX_RESCANS times, is skipped whole: retrying from each of
++                            // its bytes would read the rest of it again every time.
++                            lx.pos = lx.pos.max(at + 1);
++                            *skipped += lx.pos - at;
+                         } else {
+                             // Skip the offending byte and carry on.
+                             lx.pos = at + 1;
+@@ -431,6 +443,20 @@ fn filter_eod(dict: &Dict) -> &'static [u8] {
+ /// Binary samples may themselves contain whitespace + `EI` + whitespace, so use the known
+ /// length when the actual terminator follows it. Unknown or damaged layouts keep the heuristic.
+ fn unfiltered_image_end(data: &[u8], begin: usize, dict: &Dict) -> Option<(usize, usize)> {
++    let end_data = begin.checked_add(unfiltered_image_len(dict)?)?;
++    let after = data.get(end_data..)?;
++    let separator = after.iter().position(|b| !is_ws(*b))?;
++    if separator == 0 && data.get(end_data.checked_sub(1)?).is_some_and(|b| is_ws(*b)) {
++        return None;
++    }
++    let ei = end_data.checked_add(separator)?;
++    let end = ei.checked_add(2)?;
++    if data.get(ei..end) == Some(b"EI") && data.get(end).is_none_or(|b| is_ws(*b) || is_delim(*b)) { Some((end_data, end)) } else { None }
++}
++
++/// The byte length of an unfiltered image's samples, as its parameters give it (`None` when it is
++/// filtered or they don't give one).
++fn unfiltered_image_len(dict: &Dict) -> Option<usize> {
+     for key in [b"Filter".as_slice(), b"F"] {
+         if let Some(filter) = dict.get(key)
+             && !matches!(filter, Object::Null)
+@@ -486,15 +512,7 @@ fn unfiltered_image_end(data: &[u8], begin: usize, dict: &Dict) -> Option<(usize
+         (components, bits)
+     };
+     let row = width.checked_mul(components)?.checked_mul(bits)?.div_ceil(8);
+-    let end_data = begin.checked_add(row.checked_mul(height)?)?;
+-    let after = data.get(end_data..)?;
+-    let separator = after.iter().position(|b| !is_ws(*b))?;
+-    if separator == 0 && data.get(end_data.checked_sub(1)?).is_some_and(|b| is_ws(*b)) {
+-        return None;
+-    }
+-    let ei = end_data.checked_add(separator)?;
+-    let end = ei.checked_add(2)?;
+-    if data.get(ei..end) == Some(b"EI") && data.get(end).is_none_or(|b| is_ws(*b) || is_delim(*b)) { Some((end_data, end)) } else { None }
++    row.checked_mul(height)
+ }
+ 
+ /// The length declared by `/L` (or `/Length`, ISO 32000-2 §8.9.7), used when `EI` follows the
+@@ -553,14 +571,28 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
+ }
+ 
+ /// Write one operator (with a trailing newline).
++///
++/// An inline image whose data holds `EI` is written ASCIIHex-encoded, unless its parameters give
++/// its length (the renderer then ends it there). Otherwise the renderer would choose among that
++/// `EI` and the one written after the data by looking at what follows each, and what this writer
++/// puts after the image (spacing, the terminator, normalised operators) can change that choice,
++/// so the data read back would end elsewhere. For the same reason no operand is written with an
++/// `EI` in it (see [`write_operand`]).
+ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
+     if let Some((dict, img)) = &op.inline {
++        let hex;
++        let (dict, img) = if img.windows(2).any(|pair| pair == b"EI") && unfiltered_image_len(dict) != Some(img.len()) {
++            hex = hex_encoded(dict, img);
++            (&hex.0, &hex.1)
++        } else {
++            (dict, img)
++        };
+         out.extend_from_slice(b"BI");
+         for (k, v) in dict.iter() {
+             out.push(b' ');
+-            serialize(&Object::Name(k.clone()), out);
++            write_operand(&Object::Name(k.clone()), out);
+             out.push(b' ');
+-            serialize(v, out);
++            write_operand(v, out);
+         }
+         out.extend_from_slice(b" ID ");
+         out.extend_from_slice(img);
+@@ -568,13 +600,109 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
+         return;
+     }
+     for o in &op.operands {
+-        serialize(o, out);
++        write_operand(o, out);
+         out.push(b' ');
+     }
+     out.extend_from_slice(&op.op);
+     out.push(b'\n');
+ }
+ 
++/// Write an operand as [`serialize`] does, but with an `I` that follows an `E` in a name written
++/// `#49` and in a literal string `\111`. A source may spell those bytes so (`/A#45I`), and written
++/// plainly they would put an `EI` after an inline image, which the renderer can take as the
++/// image's end (see `write_op`). Tokens are separated, so `EI` can only arise inside one.
++fn write_operand(o: &Object, out: &mut Vec<u8>) {
++    match o {
++        Object::Array(items) => {
++            out.push(b'[');
++            for (i, item) in items.iter().enumerate() {
++                if i > 0 {
++                    out.push(b' ');
++                }
++                write_operand(item, out);
++            }
++            out.push(b']');
++        }
++        Object::Dict(dict) => {
++            out.extend_from_slice(b"<<");
++            for (k, v) in dict.iter() {
++                write_operand(&Object::Name(k.clone()), out);
++                out.push(b' ');
++                write_operand(v, out);
++            }
++            out.extend_from_slice(b">>");
++        }
++        _ => {
++            let start = out.len();
++            serialize(o, out);
++            // The `E` may be a literal or end a name's escape (`#0E`), but `I` is no hex digit and no
++            // string escape ends in it, so the `I` of each `EI` is a literal: only it is respelt.
++            let escape: &[u8] = match o {
++                Object::Name(_) => b"#49",
++                Object::String(_) => b"\\111",
++                _ => return,
++            };
++            if out.get(start..).is_some_and(|token| token.windows(2).any(|pair| pair == b"EI")) {
++                let mut after_e = false;
++                for b in out.split_off(start) {
++                    if after_e && b == b'I' {
++                        out.extend_from_slice(escape);
++                    } else {
++                        out.push(b);
++                    }
++                    after_e = b == b'E';
++                }
++            }
++        }
++    }
++}
++
++/// An inline image's parameters and data with ASCIIHex in front of its filters. The hex digits and
++/// the `>` that ends them hold no `EI`. Each filter keeps its parameters (the lone dictionary form
++/// belongs to the first filter), and a declared length becomes the new data's.
++fn hex_encoded(dict: &Dict, data: &[u8]) -> (Dict, Vec<u8>) {
++    const DIGITS: &[u8; 16] = b"0123456789ABCDEF";
++    let mut hex = Vec::with_capacity(data.len().saturating_mul(2).saturating_add(1));
++    for b in data {
++        hex.extend_from_slice(&[DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 0x0F)]]);
++    }
++    hex.push(b'>');
++    let ahx = || Object::name("AHx");
++    let mut dict = dict.clone();
++    let mut filtered = false;
++    for key in [b"Filter".as_slice(), b"F"] {
++        if let Some(filter) = dict.get_mut(key) {
++            filtered = true;
++            *filter = match std::mem::replace(filter, Object::Null) {
++                Object::Null => ahx(),
++                Object::Array(mut chain) => {
++                    chain.insert(0, ahx());
++                    Object::Array(chain)
++                }
++                other => Object::Array(vec![ahx(), other]),
++            };
++        }
++    }
++    if !filtered {
++        dict.set(b"F".to_vec(), ahx());
++    }
++    for key in [b"DecodeParms".as_slice(), b"DP"] {
++        if let Some(parms) = dict.get_mut(key) {
++            match parms {
++                Object::Array(chain) => chain.insert(0, Object::Null),
++                Object::Dict(_) => *parms = Object::Array(vec![Object::Null, std::mem::replace(parms, Object::Null)]),
++                _ => {}
++            }
++        }
++    }
++    for key in [b"Length".as_slice(), b"L"] {
++        if let Some(length) = dict.get_mut(key) {
++            *length = Object::Int(i64::try_from(hex.len()).unwrap_or(i64::MAX));
++        }
++    }
++    (dict, hex)
++}
++
+ /// Write operators back to a content stream.
+ pub fn serialize_ops(ops: &[Op]) -> Vec<u8> {
+     let mut out = Vec::new();
+diff --git a/src/cos/document/objects.rs b/src/cos/document/objects.rs
+index 2b8df8e..52d6f5e 100644
+--- a/src/cos/document/objects.rs
++++ b/src/cos/document/objects.rs
+@@ -73,7 +73,8 @@ impl Document {
+         let d = &self.data[..];
+         let mut ends: Vec<usize> = Vec::with_capacity(self.revisions.len());
+         for r in self.revisions.iter() {
+-            let from = (r.xref_offset as usize).saturating_add(self.header_offset).min(d.len());
++            let shift = if r.header_relative { self.header_offset } else { 0 };
++            let from = (r.xref_offset as usize).saturating_add(shift).min(d.len());
+             let Some(at) = d[from..].windows(5).position(|w| w == b"%%EOF") else { continue };
+             let mut end = from + at + 5;
+             while end < d.len() && matches!(d[end], b'\r' | b'\n') && end - (from + at + 5) < 2 {
+@@ -318,13 +319,19 @@ impl Document {
+     /// Follow a reference if `o` is one; otherwise return `o` itself. An object can be nothing but
+     /// a reference to another, which is followed too, up to [`MAX_REFERENCE_HOPS`] of them.
+     pub fn resolve(&self, o: &Object) -> Arc<Object> {
+-        let Object::Ref(r) = o else { return Arc::new(o.clone()) };
+-        let mut held = self.get(*r);
++        self.try_resolve(o).unwrap_or_else(|_| Arc::new(Object::Null))
++    }
++
++    /// Resolve like [`Self::resolve`], preserving errors loading a referenced object.
++    /// Undefined references still resolve to null.
++    pub fn try_resolve(&self, o: &Object) -> Result<Arc<Object>, CosError> {
++        let Object::Ref(r) = o else { return Ok(Arc::new(o.clone())) };
++        let mut held = self.try_get_reference(*r)?;
+         for _ in 0..MAX_REFERENCE_HOPS {
+             let Object::Ref(r) = &*held else { break };
+-            held = self.get(*r);
++            held = self.try_get_reference(*r)?;
+         }
+-        held
++        Ok(held)
+     }
+ 
+     /// `s` with the `/DecodeParms` its filters use made direct, so [`Stream::decoded`] reads them:
+diff --git a/src/cos/document/open.rs b/src/cos/document/open.rs
+index 4991412..cc1fe78 100644
+--- a/src/cos/document/open.rs
++++ b/src/cos/document/open.rs
+@@ -3,9 +3,9 @@ use super::state::{Credentials, Slot};
+ use super::xref::XrefIndex;
+ use super::{Arc, BTreeMap, CosError, Dict, Document, HashSet, ObjRef, Object};
+ 
+-/// More objects than `/Encrypt` and `/ID` refer to in any file, so that one which refers to the page
+-/// tree, say, doesn't have a whole document read to open it.
+-const MAX_ENCRYPT_MEMBERS: usize = 64;
++/// More objects than `/Encrypt` and `/ID` refer to in any file. A file that goes past it doesn't
++/// open: a member left out would be decrypted as data, and each reference to nothing scans the file.
++const MAX_ENCRYPT_MEMBERS: usize = 4_096;
+ 
+ impl Document {
+     /// A new document with an empty page tree (for split / extract / combine). It has no
+@@ -225,13 +225,30 @@ impl Document {
+             self.trailer.remove(b"Encrypt");
+             return Ok(());
+         };
+-        let params = crate::cos::security::encrypt_dict(self, &dict);
++        let params = crate::cos::security::encrypt_dict(self, &dict)?;
+         let id0 = self.first_id();
+         // Read here, while nothing is decrypted yet.
+-        let members = self.encryption_members(enc);
++        let members = self.encryption_members(enc)?;
+         let handler = match credentials {
+             Credentials::Password(password) => match crate::crypt::SecurityHandler::open(params.clone(), &id0, *password) {
+-                Ok(handler) => Arc::new(handler),
++                Ok(mut handler) => {
++                    // §7.6.4.4: a document can carry a non-empty Document Open (user) password while the
++                    // empty password still authenticates as *owner*. Opening owner-first would then reveal
++                    // the content with no prompt (#603). When the caller supplied no password and the empty
++                    // password did not authenticate as the user, the Document Open password is mandatory:
++                    // refuse so the caller prompts, exactly as if the empty password were simply wrong. An
++                    // explicit empty password counts as no password. When the empty password is the user
++                    // password too, open as the user, so the document's restrictions apply rather than being
++                    // lifted silently by an empty owner password.
++                    if password.is_none_or(str::is_empty) && handler.auth() == crate::crypt::Auth::Owner {
++                        if handler.authenticates_empty_user(&id0) {
++                            handler.open_as_user();
++                        } else {
++                            return Err(CosError::NeedsPassword);
++                        }
++                    }
++                    Arc::new(handler)
++                }
+                 // No password, or the empty one: what only the embedded files need isn't asked.
+                 Err(crate::crypt::CryptError::WrongPassword) => match self.without_password(&dict, params) {
+                     Some(handler) if password.is_none_or(str::is_empty) => Arc::new(handler),
+@@ -308,21 +325,25 @@ impl Document {
+     }
+ 
+     /// The objects `/Encrypt`, given as `enc`, and `/ID` refer to, the ones they refer to, and so
+-    /// on, up to [`MAX_ENCRYPT_MEMBERS`]. Their strings aren't encrypted (ISO 32000-2 §7.6.2): the
+-    /// key is made from them, so they have to read as stored, and stay so. A number with no object
+-    /// behind it, and a stream, which those dictionaries never hold, isn't one: an object added
+-    /// under that number later, or a page's content a hostile `/Encrypt` names, is encrypted.
+-    fn encryption_members(&self, enc: &Object) -> HashSet<u32> {
++    /// on. Their strings aren't encrypted (ISO 32000-2 §7.6.2): the key is made from them, so they
++    /// have to read as stored, and stay so. A number with no object behind it, and a stream, which
++    /// those dictionaries never hold, isn't one: an object added under that number later, or a
++    /// page's content a hostile `/Encrypt` names, is encrypted. More than [`MAX_ENCRYPT_MEMBERS`]
++    /// references, followed or not, is an error.
++    fn encryption_members(&self, enc: &Object) -> Result<HashSet<u32>, CosError> {
+         let mut pending = Vec::new();
+         crate::cos::writer::collect_refs(enc, &mut |r| pending.push(r));
+         if let Some(id) = self.trailer.get(b"ID") {
+             crate::cos::writer::collect_refs(id, &mut |r| pending.push(r));
+         }
+-        let mut members = HashSet::new();
++        let (mut seen, mut members) = (HashSet::new(), HashSet::new());
+         while let Some(r) = pending.pop() {
+-            if members.len() >= MAX_ENCRYPT_MEMBERS || members.contains(&r.num) {
++            if !seen.insert(r.num) {
+                 continue;
+             }
++            if seen.len() > MAX_ENCRYPT_MEMBERS {
++                return Err(CosError::Security(format!("/Encrypt and /ID refer to more than {MAX_ENCRYPT_MEMBERS} objects")));
++            }
+             let held = self.get(r);
+             if matches!(&*held, Object::Null | Object::Stream(_)) {
+                 continue;
+@@ -330,7 +351,7 @@ impl Document {
+             members.insert(r.num);
+             crate::cos::writer::collect_refs(&held, &mut |x| pending.push(x));
+         }
+-        members
++        Ok(members)
+     }
+ 
+     /// Whether object `num` is written as it is held, being one of [`Document::encryption_members`],
+diff --git a/src/cos/document/tests.rs b/src/cos/document/tests.rs
+index 836b8a0..a82d2f4 100644
+--- a/src/cos/document/tests.rs
++++ b/src/cos/document/tests.rs
+@@ -205,7 +205,7 @@ fn encrypt_dictionary_entries_read_the_same_by_reference() {
+         d.set(key.as_bytes().to_vec(), value.clone());
+     }
+     let mut doc = Document::new_empty();
+-    let direct = crate::cos::security::encrypt_dict(&doc, &d);
++    let direct = crate::cos::security::encrypt_dict(&doc, &d).unwrap();
+     assert_eq!((direct.stm_f.as_slice(), direct.str_f.as_slice(), direct.ef_f.as_slice()), (&b"StdCF"[..], &b"Other"[..], &b"StdCF"[..]));
+     assert_eq!(direct.length_bits, 40, "the filter's own length, in bytes");
+     assert!(!direct.encrypt_metadata);
+@@ -214,7 +214,7 @@ fn encrypt_dictionary_entries_read_the_same_by_reference() {
+         let mut one = d.clone();
+         let r = doc.add(value.clone());
+         one.set(key.as_bytes().to_vec(), Object::Ref(r));
+-        assert_eq!(crate::cos::security::encrypt_dict(&doc, &one), direct, "/{key}");
++        assert_eq!(crate::cos::security::encrypt_dict(&doc, &one).unwrap(), direct, "/{key}");
+     }
+     for key in ["CFM", "Length"] {
+         let mut by_reference = filter.clone();
+@@ -222,7 +222,7 @@ fn encrypt_dictionary_entries_read_the_same_by_reference() {
+         by_reference.set(key.as_bytes().to_vec(), Object::Ref(r));
+         let mut one = d.clone();
+         one.set(b"CF".to_vec(), cf(by_reference));
+-        assert_eq!(crate::cos::security::encrypt_dict(&doc, &one), direct, "/{key} in the filter");
++        assert_eq!(crate::cos::security::encrypt_dict(&doc, &one).unwrap(), direct, "/{key} in the filter");
+     }
+ }
+ 
+diff --git a/src/cos/security.rs b/src/cos/security.rs
+index 69b59f3..18cbcd4 100644
+--- a/src/cos/security.rs
++++ b/src/cos/security.rs
+@@ -13,7 +13,7 @@ use crate::crypt::{EncryptDict, Method, SecurityHandler, StreamKind};
+ use crate::filters::MAX_CHAIN;
+ 
+ use crate::cos::document::Held;
+-use crate::cos::{Dict, Document, Object, PdfString, Stream};
++use crate::cos::{CosError, Dict, Document, Object, PdfString, Stream};
+ 
+ /// How many references one read or write of an object may follow, with all that it loads on the
+ /// way. How an object is treated can be given by reference, and what that loads can do the same: a
+@@ -27,8 +27,6 @@ std::thread_local! {
+     static SCOPES: Cell<u32> = const { Cell::new(0) };
+     /// The references followed in the outermost of them.
+     static FOLLOWED: Cell<u32> = const { Cell::new(0) };
+-    /// The references refused in the outermost of them, past [`MAX_FOLLOWED`].
+-    static REFUSED: Cell<u32> = const { Cell::new(0) };
+ }
+ 
+ /// One read or write of an object, with everything it loads on the way: what [`MAX_FOLLOWED`] counts.
+@@ -38,7 +36,6 @@ impl FollowScope {
+     pub(crate) fn enter() -> Self {
+         if SCOPES.replace(SCOPES.get().saturating_add(1)) == 0 {
+             FOLLOWED.set(0);
+-            REFUSED.set(0);
+         }
+         FollowScope
+     }
+@@ -54,7 +51,6 @@ impl Drop for FollowScope {
+ /// [`FollowScope`], which is what starts the count again.
+ pub(crate) fn following<T>(spent: T, f: impl FnOnce() -> T) -> T {
+     if FOLLOWED.get() >= MAX_FOLLOWED {
+-        REFUSED.set(REFUSED.get().saturating_add(1));
+         return spent;
+     }
+     FOLLOWED.set(FOLLOWED.get() + 1);
+@@ -74,15 +70,29 @@ fn bytes_of(doc: &Document, d: &Dict, key: &[u8]) -> Vec<u8> {
+     d.get(key).map(|v| doc.resolve(v)).and_then(|v| v.as_string().map(|s| s.bytes.clone())).unwrap_or_default()
+ }
+ 
+-/// Read the handler parameters from an `/Encrypt` dictionary.
+-pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> EncryptDict {
++/// Read the handler parameters from an `/Encrypt` dictionary. From `/V 4` on its crypt filters decide
++/// how data is protected. One given by a reference that can't be read says nothing about that, and
++/// read as absent it would be `/Identity`: ciphertext taken for data, and a file meant to be
++/// encrypted saved in the clear. So that is an error, and the file doesn't open.
++pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> Result<EncryptDict, CosError> {
+     let int = |k: &[u8], default: i64| d.get(k).map(|v| doc.resolve(v)).and_then(|v| v.as_int()).unwrap_or(default);
++    let v = int(b"V", 0);
++    let unreadable = |k: &[u8]| CosError::Security(format!("/Encrypt gives /{} by a reference that can't be read", String::from_utf8_lossy(k)));
++    let by_reference = |o: Option<&Object>| v >= 4 && matches!(o, Some(Object::Ref(_)));
+     let name = |d: &Dict, k: &[u8]| d.get(k).and_then(|v| doc.resolve(v).as_name().map(<[u8]>::to_vec));
+-    let mut crypt_filters = Vec::new();
+-    if let Some(cf) = d.get(b"CF").map(|c| doc.resolve(c)).and_then(|c| c.as_dict().cloned()) {
+-        for (k, v) in cf.iter() {
+-            let Some(f) = doc.resolve(v).as_dict().cloned() else { continue };
+-            let method = match name(&f, b"CFM").as_deref() {
++    let selector = |d: &Dict, k: &[u8]| match name(d, k) {
++        None if by_reference(d.get(k)) => Err(unreadable(k)),
++        n => Ok(n),
++    };
++    let filters = |o: &Object, k: &[u8]| match doc.resolve(o).as_dict().cloned() {
++        None if by_reference(Some(o)) => Err(unreadable(k)),
++        f => Ok(f),
++    };
++    let mut crypt_filters: Vec<(Vec<u8>, Method)> = Vec::new();
++    if let Some(cf) = d.get(b"CF").map(|c| filters(c, b"CF")).transpose()?.flatten() {
++        for (k, f) in cf.iter() {
++            let Some(f) = filters(f, k)? else { continue };
++            let method = match selector(&f, b"CFM")?.as_deref() {
+                 Some(b"V2") => Method::Rc4,
+                 Some(b"AESV2") => Method::Aes128,
+                 Some(b"AESV3") => Method::Aes256,
+@@ -91,7 +101,6 @@ pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> EncryptDict {
+             crypt_filters.push((k.clone(), method));
+         }
+     }
+-    let v = int(b"V", 0);
+     // V4: the key length comes from the standard crypt filter's /Length (bytes, or bits in
+     // some files); /Length on the dictionary is often a stale 40. A length that isn't
+     // positive means nothing and reads as if absent.
+@@ -102,6 +111,17 @@ pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> EncryptDict {
+         .and_then(|f| f.as_dict().and_then(|f| f.get(b"Length").map(|n| doc.resolve(n))))
+         .and_then(|n| n.as_int())
+         .filter(|n| *n > 0);
++    // From /V 4 on a selector names /Identity or an entry of /CF (ISO 32000-2 §7.6.6). Any other
++    // name would be /Identity by default, with the same result as a reference that can't be read.
++    let (stm_f, str_f, ef_f) = (selector(d, b"StmF")?, selector(d, b"StrF")?, selector(d, b"EFF")?);
++    if v >= 4 {
++        for (key, chosen) in [("StmF", &stm_f), ("StrF", &str_f), ("EFF", &ef_f)] {
++            let held = |n: &Vec<u8>| n == b"Identity" || crypt_filters.iter().any(|(f, _)| f == n);
++            if !chosen.as_ref().is_none_or(held) {
++                return Err(CosError::Security(format!("/Encrypt's /{key} names a crypt filter /CF doesn't hold")));
++            }
++        }
++    }
+     let length_bits = match (v, cf_len) {
+         (5.., _) => 256,
+         (4, Some(n)) if n <= 32 => n * 8,
+@@ -109,7 +129,7 @@ pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> EncryptDict {
+         (4, None) => 128,
+         _ => int(b"Length", 40),
+     };
+-    EncryptDict {
++    Ok(EncryptDict {
+         filter: name(d, b"Filter").unwrap_or_default(),
+         v,
+         r: int(b"R", 0),
+@@ -122,10 +142,10 @@ pub(crate) fn encrypt_dict(doc: &Document, d: &Dict) -> EncryptDict {
+         p: int(b"P", -1) as i32,
+         encrypt_metadata: !matches!(d.get(b"EncryptMetadata").map(|v| doc.resolve(v)).as_deref(), Some(Object::Bool(false))),
+         crypt_filters,
+-        stm_f: name(d, b"StmF").unwrap_or_else(|| b"Identity".to_vec()),
+-        str_f: name(d, b"StrF").unwrap_or_else(|| b"Identity".to_vec()),
+-        ef_f: name(d, b"EFF").unwrap_or_default(),
+-    }
++        stm_f: stm_f.unwrap_or_else(|| b"Identity".to_vec()),
++        str_f: str_f.unwrap_or_else(|| b"Identity".to_vec()),
++        ef_f: ef_f.unwrap_or_default(),
++    })
+ }
+ 
+ /// Whether `d`, an `/Encrypt` dictionary, has crypt filters that encrypt (`/CFM` `V2`, `AESV2` or
+@@ -158,7 +178,7 @@ pub(crate) fn stream_reads_as_stored(doc: &Document, h: &SecurityHandler, s: &St
+         return false;
+     }
+     let _scope = FollowScope::enter();
+-    let named = named_crypt_filter(doc, &s.dict);
++    let named = held_crypt_name(doc, h, &s.dict, crypt_place(doc, &s.dict));
+     let ty = s.dict.get(b"Type").map(|t| followed(doc, t));
+     let kind = match (&named, ty.as_deref().and_then(Object::as_name)) {
+         (Some(n), _) => StreamKind::Named(n),
+@@ -173,32 +193,49 @@ fn is_crypt(doc: &Document, f: &Object) -> bool {
+     followed(doc, f).as_name() == Some(b"Crypt")
+ }
+ 
+-/// The crypt filter a stream names in its `/Filter` chain (`/Crypt` + `/DecodeParms /Name`), each
+-/// given directly or by reference, in an array or not. A chain longer than any decoder takes names
+-/// none: nothing can read that stream anyway, and every stream of a file can share one long array.
+-/// A `/Name` that reads as absent means `/Identity`, unless a reference on the way to it was refused
+-/// (see [`MAX_FOLLOWED`]): that says nothing about the stream, so it names none, and the document's
+-/// own filter is used.
+-fn named_crypt_filter(doc: &Document, dict: &Dict) -> Option<Vec<u8>> {
+-    let refused = REFUSED.get();
++/// Where `/Crypt` is in a stream's `/Filter` chain, given directly or by reference, in an array or
++/// not. A chain longer than any decoder takes has none: nothing can read that stream anyway, and
++/// every stream of a file can share one long array.
++fn crypt_place(doc: &Document, dict: &Dict) -> Option<usize> {
+     let filter = followed(doc, dict.get(b"Filter")?);
+-    let i = match &*filter {
+-        Object::Array(a) if a.len() <= MAX_CHAIN + 1 => a.iter().position(|f| is_crypt(doc, f))?,
+-        f if is_crypt(doc, f) => 0,
+-        _ => return None,
+-    };
+-    let parms = dict.get(b"DecodeParms").map(|p| followed(doc, p));
+-    let entry = match parms.as_deref() {
+-        Some(Object::Array(a)) => a.get(i).map(|p| followed(doc, p)),
+-        Some(p) if i == 0 => Some(Held::Direct(p)),
++    match &*filter {
++        Object::Array(a) if a.len() <= MAX_CHAIN + 1 => a.iter().position(|f| is_crypt(doc, f)),
++        f if is_crypt(doc, f) => Some(0),
+         _ => None,
++    }
++}
++
++/// The crypt filter named at `place` in `dict`'s `/Filter` chain ([`crypt_place`]), when it is
++/// `/Identity` or `h`'s `/CF` holds it. A name `/CF` doesn't hold says no more about the stream than
++/// a reference to nothing.
++fn held_crypt_name(doc: &Document, h: &SecurityHandler, dict: &Dict, place: Option<usize>) -> Option<Vec<u8>> {
++    let held = |n: &Vec<u8>| n == b"Identity" || h.dict().crypt_filters.iter().any(|(f, _)| f == n);
++    place.and_then(|i| crypt_name(doc, dict, i)).filter(held)
++}
++
++/// The crypt filter that `/Crypt` at place `i` of a stream's chain names (`/DecodeParms /Name`),
++/// each part given directly or by reference. Only parameters or a `/Name` that aren't there mean
++/// `/Identity` (ISO 32000-2 §7.4.10). Anything else in their place says nothing about the stream,
++/// above all a reference that leads nowhere or goes past [`MAX_FOLLOWED`]: `None`.
++fn crypt_name(doc: &Document, dict: &Dict, i: usize) -> Option<Vec<u8>> {
++    let identity = || Some(b"Identity".to_vec());
++    let parms = match dict.get(b"DecodeParms") {
++        None | Some(Object::Null) => return identity(),
++        Some(p) => followed(doc, p),
+     };
+-    let name = entry.as_deref().and_then(Object::as_dict).and_then(|p| p.get(b"Name")).map(|n| followed(doc, n));
+-    match name.as_deref().and_then(Object::as_name) {
+-        Some(name) => Some(name.to_vec()),
+-        // /Identity here would read ciphertext as data, and write the stream in the clear.
+-        None if REFUSED.get() > refused => None,
+-        None => Some(b"Identity".to_vec()),
++    let entry = match &*parms {
++        Object::Array(a) => match a.get(i) {
++            None | Some(Object::Null) => return identity(),
++            Some(p) => followed(doc, p),
++        },
++        Object::Dict(_) if i == 0 => Held::Direct(&parms),
++        Object::Dict(_) => return identity(),
++        _ => return None,
++    };
++    let Object::Dict(entry) = &*entry else { return None };
++    match entry.get(b"Name") {
++        None | Some(Object::Null) => identity(),
++        Some(name) => followed(doc, name).as_name().map(<[u8]>::to_vec),
+     }
+ }
+ 
+@@ -238,8 +275,8 @@ const MAX_FILTER_NAME: usize = 127;
+ /// The dictionary of `source` without the `/Crypt` entries of its filter chain and their decode
+ /// parameters. The two come out direct when given by reference, which every stream of a file can
+ /// share, so of what was shared only small values are copied: filter names, and the parameters
+-/// decoders read ([`Document::with_direct_parms`]). The chain is short, as [`named_crypt_filter`]
+-/// found a filter in it.
++/// decoders read ([`Document::with_direct_parms`]). The chain is short, as [`crypt_place`] found
++/// a filter in it.
+ fn drop_crypt_filter(doc: &Document, source: &Stream) -> Dict {
+     let entry = |f: &Object| match f {
+         f if is_crypt(doc, f) => Object::name("Crypt"),
+@@ -256,7 +293,7 @@ fn drop_crypt_filter(doc: &Document, source: &Stream) -> Dict {
+     let crypt: Vec<bool> = chain.iter().map(|f| f.as_name() == Some(b"Crypt")).collect();
+     let mut chained = Stream::from_raw(source.dict.clone(), Vec::new());
+     chained.dict.set(b"Filter".to_vec(), Object::Array(chain.clone()));
+-    // A lone parameter dictionary belongs to the first filter (as `named_crypt_filter` reads it).
++    // A lone parameter dictionary belongs to the first filter (as `crypt_name` reads it).
+     let parms = match doc.with_direct_parms(&chained).dict.get(b"DecodeParms") {
+         Some(Object::Array(p)) => Some(Object::Array(p.iter().zip(&crypt).filter(|(_, c)| !**c).map(|(p, _)| p.clone()).collect())),
+         Some(Object::Dict(_)) if crypt.first() == Some(&true) => None,
+@@ -358,10 +395,15 @@ fn stream(
+     if (decrypt && ty == Some(b"XRef")) || (ty == Some(b"Metadata") && !h.encrypts_metadata()) {
+         return Object::Stream(Stream { dict: walked(&s.dict), raw: s.raw.clone() });
+     }
+-    let mut named = named_crypt_filter(doc, &s.dict);
+-    // Before the walk, which then encrypts what is in the dictionary this leaves.
++    let place = crypt_place(doc, &s.dict);
++    let mut named = held_crypt_name(doc, h, &s.dict, place);
++    // `/Crypt` that names nothing readable follows the document's filter: `/Identity` would read
++    // ciphertext as data, and write the stream in the clear. A save takes it out, or the null that
++    // a full save writes for a reference to nothing would make it `/Identity` from then on.
++    let unreadable = !decrypt && place.is_some() && named.is_none();
+     let foreign = pass == Pass::EncryptReplacing && named.as_deref().is_some_and(|n| !h.dict().crypt_filters.iter().any(|(f, _)| f == n));
+-    let dropped = foreign.then(|| drop_crypt_filter(doc, s));
++    // Before the walk, which then encrypts what is in the dictionary this leaves.
++    let dropped = (unreadable || foreign).then(|| drop_crypt_filter(doc, s));
+     if dropped.is_some() {
+         named = None;
+     }
+diff --git a/src/crypt/tests.rs b/src/crypt/tests.rs
+index 08878c8..10c1f7b 100644
+--- a/src/crypt/tests.rs
++++ b/src/crypt/tests.rs
+@@ -138,8 +138,24 @@ fn the_owner_password_upgrades_a_user_session() {
+ fn empty_user_password_opens_without_asking() {
+     for alg in ALL {
+         let d = new(alg, "", "secret", -1).dict().clone();
+-        let h = SecurityHandler::open(d, ID, None).unwrap();
++        let h = SecurityHandler::open(d.clone(), ID, None).unwrap();
+         assert_eq!(h.auth(), Auth::User, "{alg:?}");
++        assert!(h.authenticates_empty_user(ID), "{alg:?}: the empty password is the user password");
++    }
++}
++
++#[test]
++fn a_non_empty_user_password_is_reported_as_mandatory() {
++    // The Document Open prompt rule (#603): with a non-empty user password, the empty password
++    // must NOT authenticate as the user, so a caller that opened the file owner-first can tell
++    // the Document Open password is still required and prompt for it.
++    for alg in ALL {
++        let d = new(alg, "secret", "owner", -1).dict().clone();
++        // `authenticates_empty_user` recomputes from the dict, independent of how it was opened.
++        let owner = SecurityHandler::open(d.clone(), ID, Some("owner")).unwrap();
++        assert!(!owner.authenticates_empty_user(ID), "{alg:?}: empty is not the user password");
++        // The empty password opens neither as user nor as the (non-empty) owner.
++        assert_eq!(SecurityHandler::open(d, ID, None).unwrap_err(), CryptError::WrongPassword, "{alg:?}");
+     }
+ }
+ 
+diff --git a/src/crypt.rs b/src/crypt.rs
+index c516fa8..e1d8c5b 100644
+--- a/src/crypt.rs
++++ b/src/crypt.rs
+@@ -293,6 +293,13 @@ impl SecurityHandler {
+         self.auth
+     }
+ 
++    /// Treat an owner authentication as a user one, so the document's permissions apply. The file
++    /// key is the same either way; only what the reader allows changes. For a document opened
++    /// without a password whose empty password authenticates as both owner and user.
++    pub fn open_as_user(&mut self) {
++        self.auth = Auth::User;
++    }
++
+     /// For R2–R4 documents opened with the owner password: the user password, which owner
+     /// authentication recovers (Algorithm 7). Lets components that only accept user passwords
+     /// open the document too.
+@@ -318,6 +325,23 @@ impl SecurityHandler {
+         (plain.get(9..12) == Some(&b"adb"[..])).then_some(p)
+     }
+ 
++    /// Does the EMPTY password authenticate as the *user* (Document Open) password? `id0` is the
++    /// first element of the trailer `/ID`, as [`SecurityHandler::open`] takes it.
++    ///
++    /// A document can have a non-empty Document Open password yet an owner password the empty
++    /// string authenticates (for R2–R4 any viewer that only checks the user password still
++    /// prompts, but owner-first handlers like ours would open it silently). Callers use this to
++    /// enforce §7.6.4.4: when the empty password opened the file *as owner* and this returns
++    /// `false`, a non-empty user password exists and the viewer must still prompt for it rather
++    /// than show the content (#603).
++    pub fn authenticates_empty_user(&self, id0: &[u8]) -> bool {
++        match self.dict.r {
++            2..=4 => user_key_r4(&self.dict, id0, &legacy_password("")).is_some(),
++            5 | 6 => key_r6(&self.dict, &sasl_password(""), false).ok().flatten().is_some(),
++            _ => false,
++        }
++    }
++
+     pub fn dict(&self) -> &EncryptDict {
+         &self.dict
+     }
+@@ -363,7 +387,7 @@ impl SecurityHandler {
+         if method == Method::Rc4 && self.dict.v == 4 && key.len() < 16 {
+             key.resize(16, 0);
+         }
+-        let mut h = Md5::new();
++        let mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+         h.update(&key);
+         h.update(&num.to_le_bytes()[..3]);
+         h.update(generation.to_le_bytes());
+@@ -504,7 +528,7 @@ fn key_len(d: &EncryptDict) -> usize {
+ /// Algorithm 2: file key from a (user) password.
+ fn file_key_r4(d: &EncryptDict, id0: &[u8], pw: &[u8]) -> Zeroizing<Vec<u8>> {
+     let n = key_len(d);
+-    let mut h = Md5::new();
++    let mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+     h.update(*pad(pw));
+     h.update(&d.o[..d.o.len().min(32)]);
+     h.update(d.p.to_le_bytes());
+@@ -515,7 +539,7 @@ fn file_key_r4(d: &EncryptDict, id0: &[u8], pw: &[u8]) -> Zeroizing<Vec<u8>> {
+     let mut digest = Zeroizing::new(h.finalize().to_vec());
+     if d.r >= 3 {
+         for _ in 0..50 {
+-            digest = Zeroizing::new(Md5::digest(&digest[..n]).to_vec());
++            digest = Zeroizing::new(Md5::digest(&digest[..n]).to_vec()); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+         }
+     }
+     digest.truncate(n);
+@@ -527,7 +551,7 @@ fn u_value_r4(d: &EncryptDict, id0: &[u8], key: &[u8]) -> Vec<u8> {
+     if d.r == 2 {
+         return rc4(key, &PADDING);
+     }
+-    let mut h = Md5::new();
++    let mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+     h.update(PADDING);
+     h.update(id0);
+     let mut x = rc4(key, &h.finalize());
+@@ -563,10 +587,10 @@ fn user_key_r4(d: &EncryptDict, id0: &[u8], pw: &[u8]) -> Option<Zeroizing<Vec<u
+ /// The RC4 key derived from an owner password (Algorithm 3, steps a–d).
+ fn owner_rc4_key(d: &EncryptDict, owner_pw: &[u8]) -> Zeroizing<Vec<u8>> {
+     let n = key_len(d);
+-    let mut digest = Zeroizing::new(Md5::digest(*pad(owner_pw)).to_vec());
++    let mut digest = Zeroizing::new(Md5::digest(*pad(owner_pw)).to_vec()); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+     if d.r >= 3 {
+         for _ in 0..50 {
+-            digest = Zeroizing::new(Md5::digest(&*digest).to_vec());
++            digest = Zeroizing::new(Md5::digest(&*digest).to_vec()); // NOSONAR: ISO 32000 mandates MD5 for this security handler
+         }
+     }
+     digest.truncate(n);

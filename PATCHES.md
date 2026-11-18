@@ -4,8 +4,8 @@ PlutarchPages is upstream [PdfCraft](https://github.com/storytold/pdfcraft) plus
 [Fork changes](README.md#fork-changes) describes them for users; this file is for whoever merges
 upstream next.
 
-Last upstream merge: `1d2af990` (11 November 2026), the `main` commit upstream's v0.21.1 release
-`b503b2e6` merged, with the same tree. Upstream's `main` after it is the next merge.
+Last upstream merge: `271e479c` (17 November 2026), upstream's `main` then. Upstream's `main`
+after it is the next merge.
 
 Upstream drift is checked every Monday at 04:43 UTC, and on demand through the
 **Upstream drift** workflow. It records the exact revisions, ahead/behind counts (every commit, and
@@ -37,14 +37,21 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `/Crypt`; `/StmF`, `/StrF`, `/EFF`, `/CF`
   or `/CFM` from `/V 4` on refuses the file, as does a selector naming a filter `/CF` doesn't hold
   or an `/Encrypt` and `/ID` referring to more than
-  4,096 objects. `crypt_name` and `encrypt_dict` in `crates/cos/src/security.rs` and
-  `encryption_members` in `crates/cos/src/document/open.rs` hold this, with tests in
+  4,096 objects. `crypt_name` and `encrypt_dict` in `vendor/craft-pdf/src/cos/security.rs` and
+  `encryption_members` in `vendor/craft-pdf/src/cos/document/open.rs` hold this, with tests in
   `crates/cos/tests/it/encryption.rs`. The cos
   part of upstream's `9203e4a6b` (#5548) came in ahead of the next merge; its hayro-syntax patch 30
   and renderer tests didn't.
 
 ## Only here
 
+- Upstream's object layer is craft-pdf (storytold/craft-libs), with `crates/cos`, `crypt`, `filters`
+  and `content` as facades over it. The fork's fixes to that code are applied to a vendored copy,
+  `vendor/craft-pdf`, which the root `Cargo.toml` patches in and the workspace tests;
+  `vendor/craft-pdf/PATCHES.md` lists the fixes and how to move to another revision, and
+  `cargo xtask fork-check` fails when the revision `Cargo.toml` names isn't the vendored base. The
+  detached fuzz workspaces of the facades repeat the patch, and the PRC fuzz target moved to
+  `crates/prc-render/fuzz` when the PRC reader became craft-prc.
 - Redaction audit checks text and covers in nested Form XObjects and annotation appearance streams
   in paint order. Keep this path when merging upstream. Text in a tiling pattern or a Type3 glyph
   procedure fails the audit, which does not read it. Both text readings (`glyph_text` and the
@@ -136,7 +143,7 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
   `paths` and FreeBSD's `schedule` when a merge drops them.
 - SonarCloud: `.sonarcloud.properties` excludes `vendor/` for the automatic analysis, and 7 hash lines
-  carry `NOSONAR` for rust:S4790: 6 MD5 lines in `crates/crypt/src/lib.rs` and the RIPEMD-160 line in
+  carry `NOSONAR` for rust:S4790: 6 MD5 lines in `vendor/craft-pdf/src/crypt.rs` and the RIPEMD-160 line in
   `crates/sign/src/keys.rs`. A merge that changes those lines drops the marker, so add it back.
 - Windows printing with Type 3 fonts (upstream #2684, from upstream PR #3021 as it stood at
   `ed6252a6`): those pages go as pictures. Unlike the PR, a printer's job is built on its worker
@@ -225,10 +232,6 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 The fork fixed these before upstream did. Upstream's `main` now has its own fix: at the next merge,
 take upstream's side, keep only the fork's tests that upstream's don't cover, then delete the entry.
 
-- Encryption keys and salts come from the OS generator, and RC4 from RustCrypto's `rc4` crate, with
-  a property test against the code it replaced (`ed0c30c3`, #37). Upstream's Protect draws from
-  `getrandom::fill` too (`crates/engine/src/edit/run.rs`), and its `crates/crypt` now holds only
-  `lib.rs` over `craft-pdf`.
 - Variation selectors stay with their character when text is edited (`fa90fd89`, #51). Upstream's
   `98b47619` (#4899, in v0.21.1) fixes the same in `crates/edit/src/text/fallback.rs`; both
   `is_variation_selector`s are still here, and `linebreak::between` keeps the fork's check.

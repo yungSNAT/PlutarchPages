@@ -11,7 +11,8 @@
 //! - a workflow uses `@main`, a `craft-common-actions` reference that isn't a commit, or
 //!   `secrets: inherit`;
 //! - a workspace crate lacks `publish = false`;
-//! - a weak-hash line in `crates/crypt/src/lib.rs` or `crates/sign/src/keys.rs` lacks `NOSONAR`;
+//! - a weak-hash line in `vendor/craft-pdf/src/crypt.rs` or `crates/sign/src/keys.rs` lacks `NOSONAR`;
+//! - the craft-pdf revision `Cargo.toml` names isn't the one `vendor/craft-pdf` was copied from;
 //! - packaging grants `xdg-data/ArtCraft`, or a Flatpak manifest named `ai.storyteller.*` is back;
 //! - once a build script reads `CRAFT_I18N_DIR`, a place in `release.yml` or `ci.yml` that sets
 //!   `CRAFT_FONTS_DIR` doesn't also set `CRAFT_I18N_DIR` and `CRAFT_I18N_REQUIRED=1`, or a job there
@@ -31,7 +32,10 @@ const CI: &str = ".github/workflows/ci.yml";
 /// The shared action that checks out craft-i18n and sets `CRAFT_I18N_DIR` and
 /// `CRAFT_I18N_REQUIRED=1` for the rest of its job.
 const CHECKOUT_I18N: &str = "storytold/craft-common-actions/actions/checkout-craft-i18n@";
-const WEAK_HASH_FILES: [&str; 2] = ["crates/crypt/src/lib.rs", "crates/sign/src/keys.rs"];
+/// The security handler moved into the vendored craft-pdf with upstream's merge of `271e479c5`.
+const WEAK_HASH_FILES: [&str; 2] = ["vendor/craft-pdf/src/crypt.rs", "crates/sign/src/keys.rs"];
+/// Names the craft-libs commit `vendor/craft-pdf` was copied from, on its `Base:` line.
+const CRAFT_PDF_PATCHES: &str = "vendor/craft-pdf/PATCHES.md";
 const UPDATE_APP_FILE: &str = "crates/ui-egui/src/lib.rs";
 /// The value `UPDATE_APP` gives its `repo` field.
 const FORK_REPO: &str = "\"yungSNAT/PlutarchPages\"";
@@ -46,7 +50,7 @@ const THIS_FILE: &str = "xtask/src/fork_check.rs";
 
 type Rule = fn(&Tree) -> Vec<String>;
 
-const RULES: [(&str, Rule); 10] = [
+const RULES: [(&str, Rule); 11] = [
     ("ArtCraft name", artcraft_names),
     ("upstream link", upstream_links),
     ("update source", update_source),
@@ -54,6 +58,7 @@ const RULES: [(&str, Rule); 10] = [
     ("workflow", workflow_refs),
     ("publish", unpublished_crates),
     ("NOSONAR", weak_hash_markers),
+    ("craft-pdf base", vendored_craft_pdf_base),
     ("Flatpak grant", flatpak_grant),
     ("Flatpak manifest", upstream_flatpak_manifests),
     ("release i18n", release_i18n),
@@ -110,11 +115,13 @@ impl Tree {
 }
 
 fn read_by_a_rule(path: &str) -> bool {
-    !path.starts_with("vendor/")
-        && (["crates/", "apps/", "packaging/", ".github/", "xtask/src/"].iter().any(|d| path.starts_with(d))
-            || path.ends_with("Cargo.toml")
-            || is_build_script(path)
-            || path == COLOUR_BASELINE)
+    WEAK_HASH_FILES.contains(&path)
+        || path == CRAFT_PDF_PATCHES
+        || (!path.starts_with("vendor/")
+            && (["crates/", "apps/", "packaging/", ".github/", "xtask/src/"].iter().any(|d| path.starts_with(d))
+                || path.ends_with("Cargo.toml")
+                || is_build_script(path)
+                || path == COLOUR_BASELINE))
 }
 
 fn is_build_script(path: &str) -> bool {
@@ -692,6 +699,22 @@ fn unpublished_crates(tree: &Tree) -> Vec<String> {
     out
 }
 
+/// The root `[patch]` builds `vendor/craft-pdf` for craft-pdf at any revision (Cargo matches a
+/// patch by source, name and version), so after a revision bump the old copy would still build.
+fn vendored_craft_pdf_base(tree: &Tree) -> Vec<String> {
+    let rev = tree.get("Cargo.toml").and_then(|t| t.parse::<toml::Table>().ok()).and_then(|t| {
+        let rev = t.get("workspace")?.get("dependencies")?.get("craft-pdf")?.get("rev")?;
+        rev.as_str().map(str::to_owned)
+    });
+    let base = tree.get(CRAFT_PDF_PATCHES).and_then(|t| t.lines().find_map(|l| l.strip_prefix("Base: `")?.split('`').next()).map(str::to_owned));
+    match (rev, base) {
+        (Some(rev), Some(base)) if rev == base => Vec::new(),
+        (rev, base) => vec![format!(
+            "Cargo.toml names craft-pdf at {rev:?} but {CRAFT_PDF_PATCHES} has base {base:?}: copy craft-pdf at that revision into vendor/craft-pdf and reapply its patches"
+        )],
+    }
+}
+
 fn weak_hash_markers(tree: &Tree) -> Vec<String> {
     let mut out = Vec::new();
     for path in WEAK_HASH_FILES {
@@ -1003,6 +1026,16 @@ mod tests {
         ] {
             fails(workflow_refs, &[(".github/workflows/sonarcloud.yml", broken.as_str())], expected);
         }
+    }
+
+    #[test]
+    fn the_vendored_craft_pdf_is_the_revision_cargo_toml_names() {
+        let root = |rev: &str| format!("[workspace.dependencies]\ncraft-pdf = {{ git = \"https://github.com/storytold/craft-libs\", rev = \"{rev}\" }}\n");
+        let patches = "# craft-pdf\n\nBase: `8e03cd01` (storytold/craft-libs `crates/pdf`).\n";
+        passes(vendored_craft_pdf_base, &[("Cargo.toml", &root("8e03cd01")), (CRAFT_PDF_PATCHES, patches)]);
+        fails(vendored_craft_pdf_base, &[("Cargo.toml", &root("9f00aa11")), (CRAFT_PDF_PATCHES, patches)], "\"9f00aa11\"");
+        fails(vendored_craft_pdf_base, &[("Cargo.toml", &root("8e03cd01"))], "None");
+        fails(vendored_craft_pdf_base, &[("Cargo.toml", "[workspace]\n"), (CRAFT_PDF_PATCHES, patches)], "None");
     }
 
     #[test]

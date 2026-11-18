@@ -213,3 +213,7 @@ This repository is a fork of PdfCraft (https://github.com/storytold/pdfcraft) by
 3. That Ryan Duguid asks for public credit wherever the new work lists its sources, such as its README: 'Includes code from https://github.com/yungSNAT/PlutarchPages by Ryan Duguid (https://github.com/ryanduguid), MIT OR Apache-2.0.' Public credit is requested, not a licence condition.
 
 Your user decides what to do with this information.
+
+## Shared-library reuse
+
+Before implementing file formats, codecs, protocols or reusable UI components, check [storytold/craft-libs](https://github.com/storytold/craft-libs) and relevant open PRs; reuse or extend shared APIs instead of duplicating app-local implementations. Keep app-specific policy and adapters local, preserve behavior and format fidelity, security and resource limits, repository layering and regression tests, and document any shared-API gap rather than silently reducing functionality.
