@@ -34,8 +34,8 @@
 //! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
 //! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
 //! into a write or removal outside DIST. Root refuses a terminal on standard output or standard
-//! error that the kernel would let builder open for reading, as builder could then read what is
-//! typed there. Root reads Cargo.toml and opens DIST before its first program as
+//! error whose node the kernel would let builder open for reading, or that builder owns, as builder
+//! could then read what is typed there. Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
@@ -182,12 +182,16 @@ fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
 const PARENT_CHECK: &str = r#"[ "$PPID" = "$1" ] || exit 125; shift; exec "$@""#;
 
 /// Fails when standard output or standard error is a terminal whose node builder may open for
-/// reading. The kernel judges it for builder, through the descriptor [`unprivileged`] gives
-/// builder's programs, so the mode bits, ACLs and security modules all count. A check that does not
-/// say no, failed runs included, counts as yes.
+/// reading, or owns and so may make readable. The kernel judges it for builder, through the
+/// descriptor [`unprivileged`] gives builder's programs, so the mode bits, ACLs and security
+/// modules all count. Unless the check finds the node and says no, it counts as yes, so a run that
+/// fails or a node it can't resolve is refused too.
 fn refuse_terminal_builder_reads() -> Result {
     for (fd, name, terminal) in [(1, "output", io::stdout().is_terminal()), (2, "error", io::stderr().is_terminal())] {
-        if terminal && !unprivileged("test", true)?.args(["!", "-r", &format!("/proc/self/fd/{fd}")]).status()?.success() {
+        let node = format!("/proc/self/fd/{fd}");
+        let node = node.as_str();
+        let check = ["-e", node, "-a", "!", "(", "-r", node, "-o", "-O", node, ")"];
+        if terminal && !unprivileged("test", true)?.args(check).status()?.success() {
             return Err(format!("standard {name} is a terminal builder can read: redirect it, or run from a terminal builder can't read").into());
         }
     }
