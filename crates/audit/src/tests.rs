@@ -589,9 +589,12 @@ fn rectangle_drawn_as_a_path_covers_text_like_re() {
     // The same cover as `re`, built from `m`/`l` (closed with `h`, a repeated start point, or
     // only by the fill itself), or in a scaled user space: all are faux redactions (#1510).
     // So are `re` with a redundant `h`, and either path painted with `b`/`b*` (#1817), and a `re`
-    // filled with another drawn the same way round, which can cut no hole in it.
-    let covers: [&[u8]; 11] = [
+    // filled with another drawn the same way round on the page, which can cut no hole in it: a
+    // `re` drawn backwards under a mirroring CTM, which the path keeps past `Q`, runs as one drawn
+    // forwards without it.
+    let covers: [&[u8]; 12] = [
         b"0 g\n100 688 220 32 re 100 400 50 50 re f\n",
+        b"0 g\nq -1 0 0 1 612 0 cm 512 688 -220 32 re Q 100 400 50 50 re f\n",
         b"0 g\n100 688 220 32 re f\n",
         b"0 g\n100 688 220 32 re h f\n",
         b"0 g\n100 688 220 32 re b\n",
@@ -617,7 +620,7 @@ fn rectangle_drawn_as_a_path_covers_text_like_re() {
 #[test]
 fn non_rectangular_path_is_not_a_cover() {
     // Each path's bounding box covers the text, but the shape itself does not hide it all.
-    let covers: [&[u8]; 9] = [
+    let covers: [&[u8]; 10] = [
         // A triangle.
         b"0 g\n100 688 m 320 688 l 320 720 l h f\n",
         // A triangle painted with `b`, and a trapezoid with `b*`.
@@ -634,6 +637,9 @@ fn non_rectangular_path_is_not_a_cover() {
         // The same rotated rectangle drawn with `re`, and the hole drawn as a second `re`.
         b"0 g\nq 0.9962 0.0872 -0.0872 0.9962 62.15 -15.63 cm 100 688 220 32 re f Q\n",
         b"0 g\n90 680 240 50 re 100 688 220 32 re f*\n",
+        // The hole drawn forwards, its frame forwards under a mirroring CTM the path keeps past
+        // `Q`: on the page they run opposite ways, so even the nonzero rule leaves the hole.
+        b"0 g\nq -1 0 0 1 612 0 cm 282 680 240 50 re Q 100 688 220 32 re f\n",
     ];
     for cover in covers {
         let mut content = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n".to_vec();
