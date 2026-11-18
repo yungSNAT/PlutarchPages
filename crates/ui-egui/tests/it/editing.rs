@@ -11704,7 +11704,7 @@ fn a_modified_click_away_from_a_cropped_picture_applies_its_crop() {
 fn zz_diag_mode_bar_geometry() {
     let dump = |h: &Harness<'static, PdfCraftApp>, what: &str| {
         for n in h.get_all_by_role(Role::MenuItem) {
-            eprintln!("DIAG {what} menu {:?} {:?}", n.label(), n.rect());
+            eprintln!("DIAG {what} menu {:?} {:?}", n.accesskit_node().label(), n.rect());
         }
         for label in ["All tools", "Edit", "Convert", "E-Sign"] {
             for n in h.get_all_by_role_and_label(Role::Button, label) {
