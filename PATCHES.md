@@ -47,7 +47,7 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 
 - Upstream's object layer is craft-pdf (storytold/craft-libs), with `crates/cos`, `crypt`, `filters`
   and `content` as facades over it. The fork's fixes to that code are applied to a vendored copy,
-  `vendor/craft-pdf`, which the root `Cargo.toml` patches in and the workspace tests;
+  `vendor/craft-pdf`, which the root `Cargo.toml` patches in;
   `vendor/craft-pdf/PATCHES.md` lists the fixes and how to move to another revision, and
   `cargo xtask fork-check` fails when the revision `Cargo.toml` names isn't the vendored base. The
   detached fuzz workspaces of the facades repeat the patch, and the PRC fuzz target moved to

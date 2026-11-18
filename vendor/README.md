@@ -19,8 +19,7 @@ Review upstream changes before replacing the snapshot and run the lifecycle and 
 ## craft-pdf
 
 The object layer upstream moved into craft-pdf (storytold/craft-libs `crates/pdf`, MIT OR Apache-2.0),
-at the revision the root `Cargo.toml` names, with the fork's object-layer fixes. Unlike the other
-crates here it is a workspace member, so its unit tests run with the workspace's.
+at the revision the root `Cargo.toml` names, with the fork's object-layer fixes.
 [craft-pdf/PATCHES.md](craft-pdf/PATCHES.md) lists the fixes, their tests and how to move to
 another revision.
 

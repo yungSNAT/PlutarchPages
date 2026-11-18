@@ -39,4 +39,16 @@ own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstr
 3. From this folder, `git apply -3 patches/*.patch`; resolve any conflict, then regenerate the
    patch against the new base.
 4. Set the `craft-pdf` revision in the root `Cargo.toml` and the base above to the new commit.
-5. `cargo test -p craft-pdf`, `cargo xtask fork-check` and `cargo xtask ci`.
+5. Run its unit tests, `cargo xtask fork-check` and `cargo xtask ci`.
+
+## Its unit tests
+
+Like the rest of `vendor/`, this crate is outside the workspace: as a member, every optional
+dependency of its other features would join `Cargo.lock` and the licence and source checks. So the
+gate runs only the tests that reach it through the facades (`crates/cos/tests`, `crates/crypt/tests`
+and the others), and its own unit tests, the fixes' among them, run from the repository root with
+the workspace's hayro-syntax:
+
+```sh
+CARGO_TARGET_DIR=target cargo test --manifest-path vendor/craft-pdf/Cargo.toml --features content --lib \n  --config 'patch.crates-io.hayro-syntax.path="vendor/hayro-syntax"'
+```

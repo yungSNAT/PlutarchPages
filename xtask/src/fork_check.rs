@@ -1030,7 +1030,8 @@ mod tests {
 
     #[test]
     fn the_vendored_craft_pdf_is_the_revision_cargo_toml_names() {
-        let root = |rev: &str| format!("[workspace.dependencies]\ncraft-pdf = {{ git = \"https://github.com/storytold/craft-libs\", rev = \"{rev}\" }}\n");
+        let root =
+            |rev: &str| format!("[workspace.dependencies]\ncraft-pdf = {{ git = \"https://github.com/storytold/craft-libs\", rev = \"{rev}\" }}\n");
         let patches = "# craft-pdf\n\nBase: `8e03cd01` (storytold/craft-libs `crates/pdf`).\n";
         passes(vendored_craft_pdf_base, &[("Cargo.toml", &root("8e03cd01")), (CRAFT_PDF_PATCHES, patches)]);
         fails(vendored_craft_pdf_base, &[("Cargo.toml", &root("9f00aa11")), (CRAFT_PDF_PATCHES, patches)], "\"9f00aa11\"");

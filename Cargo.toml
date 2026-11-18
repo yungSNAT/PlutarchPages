@@ -1,8 +1,6 @@
 [workspace]
 resolver = "3"
-# vendor/craft-pdf is a member, unlike the rest of vendor/, so the gate runs its unit tests: the
-# object-layer fixes it carries are tested there (vendor/craft-pdf/PATCHES.md).
-members = ["crates/*", "apps/*", "xtask", "vendor/craft-pdf"]
+members = ["crates/*", "apps/*", "xtask"]
 exclude = ["vendor"]
 default-members = ["crates/*", "apps/pdfcraft", "apps/pdfcraft-cli", "xtask"]
 
@@ -43,7 +41,6 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", version = "0.1.0"
 craft-rtf = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "f29e82f1a7a009e68312bd2e84adab72be23344d" }
 # Shared Base64 encoder; use the existing RTF revision to reuse its codepage dependency.
 craft-mime = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "f29e82f1a7a009e68312bd2e84adab72be23344d" }
-craft-csv = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
 craft-xml = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
 craft-image-codecs = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
 craft-tiff = { git = "https://github.com/storytold/craft-libs", version = "0.1.0", rev = "e2dc681a3" }
