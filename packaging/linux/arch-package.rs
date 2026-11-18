@@ -34,8 +34,8 @@
 //! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
 //! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
 //! into a write or removal outside DIST. Root refuses a terminal on standard output or standard
-//! error that builder could open for reading by its name, as builder could then read what is typed
-//! there. Root reads Cargo.toml and opens DIST before its first program as
+//! error that the kernel would let builder open for reading, as builder could then read what is
+//! typed there. Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
@@ -182,25 +182,12 @@ fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
 const PARENT_CHECK: &str = r#"[ "$PPID" = "$1" ] || exit 125; shift; exec "$@""#;
 
 /// Fails when standard output or standard error is a terminal whose node builder may open for
-/// reading: its owner with the owner's read bit, a member of its group with the group's, or anyone
-/// with the others' bit.
+/// reading. The kernel judges it for builder, through the descriptor [`unprivileged`] gives
+/// builder's programs, so the mode bits, ACLs and security modules all count. A check that does not
+/// say no, failed runs included, counts as yes.
 fn refuse_terminal_builder_reads() -> Result {
-    let ids = |flag: &str| -> Result<Vec<u32>> {
-        let out = capture(Command::new("id").args([flag, "builder"]))?.stdout;
-        String::from_utf8_lossy(&out).split_whitespace().map(|id| id.parse().map_err(|_| format!("id {flag} builder printed {id}").into())).collect()
-    };
-    let (uid, groups) = (ids("-u")?, ids("-G")?);
-    for (name, terminal) in [("output", io::stdout().is_terminal().then_some(1)), ("error", io::stderr().is_terminal().then_some(2))] {
-        let Some(fd) = terminal else { continue };
-        let node = fs::metadata(format!("/proc/self/fd/{fd}"))?;
-        let bit = if uid.contains(&node.uid()) {
-            0o400
-        } else if groups.contains(&node.gid()) {
-            0o040
-        } else {
-            0o004
-        };
-        if node.mode() & bit != 0 {
+    for (fd, name, terminal) in [(1, "output", io::stdout().is_terminal()), (2, "error", io::stderr().is_terminal())] {
+        if terminal && !unprivileged("test", true)?.args(["!", "-r", &format!("/proc/self/fd/{fd}")]).status()?.success() {
             return Err(format!("standard {name} is a terminal builder can read: redirect it, or run from a terminal builder can't read").into());
         }
     }
