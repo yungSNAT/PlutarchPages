@@ -5874,6 +5874,22 @@ fn redact_mark_respects_single_page_and_rejects_conflicting_selectors() {
     assert!(text[0].contains("Private") && text[1].contains("Private"), "nothing was changed");
 }
 
+/// A saved file with each `/ID` array blanked: a save draws the identifier at random, as hex digits
+/// that can spell the ones a test searches for.
+fn without_file_id(mut bytes: Vec<u8>) -> Vec<u8> {
+    let mut from = 0;
+    while let Some(key) = bytes[from..].windows(3).position(|w| w == b"/ID") {
+        from += key + 3;
+        let open = from + bytes[from..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+        if bytes.get(open) == Some(&b'[')
+            && let Some(len) = bytes[open..].iter().position(|&b| b == b']')
+        {
+            bytes[open..open + len].fill(b' ');
+        }
+    }
+    bytes
+}
+
 #[test]
 fn redacting_through_tools() {
     let dir = workdir("redact");
@@ -5891,7 +5907,7 @@ fn redacting_through_tools() {
     assert!(!text.contains("555") && !text.contains("6789") && !text.contains("private"), "{text}");
     assert!(text.contains("Call") && text.contains("today") && text.contains("Public line"), "{text}");
     ok(&mut a, "doc_save", json!({ "doc": doc, "path": "memo.pdf" }));
-    let bytes = std::fs::read(dir.join("memo.pdf")).unwrap();
+    let bytes = without_file_id(std::fs::read(dir.join("memo.pdf")).unwrap());
     assert!(!bytes.windows(4).any(|w| w == b"4567"), "the saved file has no trace of the number");
     assert!(matches!(a.call("redact_apply", &json!({ "doc": doc })), Err(ToolError::Failed(_))));
     assert!(matches!(a.call("redact_mark", &json!({ "doc": doc, "find": "nowhere to be found" })), Err(ToolError::Failed(_))));
@@ -5979,7 +5995,7 @@ fn applying_redactions_proposes_the_name_with_redacted() {
     assert_eq!(r["save_as"], "contract_Redacted.pdf");
     ok(&mut a, "doc_save", json!({ "doc": doc, "path": r["save_as"] }));
     assert_eq!(std::fs::read(dir.join("contract.pdf")).unwrap(), original, "the opened file is left as it was");
-    let bytes = std::fs::read(dir.join("contract_Redacted.pdf")).unwrap();
+    let bytes = without_file_id(std::fs::read(dir.join("contract_Redacted.pdf")).unwrap());
     assert!(!bytes.windows(4).any(|w| w == b"4567"), "the copy has no trace of the number");
     // Redacting the redacted copy again proposes the same name, with one suffix.
     let copy = ok(&mut a, "doc_open", json!({ "path": "contract_Redacted.pdf" }))["doc"].as_u64().unwrap();
