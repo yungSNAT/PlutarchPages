@@ -837,7 +837,8 @@ fn covered_text_leaves_out_the_words_beside_the_cover() {
 #[test]
 fn covered_text_across_findings_is_bounded() {
     let text = "X".repeat(60_000);
-    let mut content = format!("BT /F1 1 Tf 0 700 Td ({text}) Tj ET\n0 g\n").into_bytes();
+    // Squeezed across, so the 40,000 pt line lies on the page, where the clip leaves the covers.
+    let mut content = format!("0.01 0 0 1 0 0 cm BT /F1 1 Tf 0 700 Td ({text}) Tj ET\n0 g\n").into_bytes();
     for i in 0..1_200 {
         content.extend_from_slice(format!("-{i} 690 50000 20 re f\n").as_bytes());
     }
@@ -991,8 +992,9 @@ fn form_entries_past_the_page_allowance_fail_the_audit() {
 /// many covers costs its bytes once per cover, not one run per cover (CodeRabbit).
 #[test]
 fn covered_text_bytes_count_against_the_comparison_bound() {
-    // One run: 20 KiB of spaces around a word, which trims to the word alone.
-    let mut content = b"BT /F1 24 Tf 100 700 Td (".to_vec();
+    // One run: 20 KiB of spaces around a word, which trims to the word alone, squeezed across so
+    // that it lies on the page, where the clip leaves the covers.
+    let mut content = b"0.004 0 0 1 0 0 cm BT /F1 24 Tf 100 700 Td (".to_vec();
     content.extend_from_slice(&[b' '; 10_000]);
     content.extend_from_slice(b"SECRET");
     content.extend_from_slice(&[b' '; 10_000]);
