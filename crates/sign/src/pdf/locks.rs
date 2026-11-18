@@ -127,7 +127,9 @@ pub(super) fn check_signable(doc: &Document, field: &Field, reason: Option<&str>
 }
 
 /// Make every field `lock` covers read-only. One that already is stays as it was, so a signature
-/// whose lock repeats an earlier one changes nothing that one locked.
+/// whose lock repeats an earlier one changes nothing that one locked, and so does a signature field
+/// that already holds a signature: its signature protects it, and a later change to a signed
+/// widget reads as a change to the page.
 pub(super) fn lock_fields(doc: &mut Document, lock: &FieldLock) -> Result<(), SignError> {
     let (fields, whole) = walk_fields(doc, false);
     if !whole {
@@ -137,7 +139,7 @@ pub(super) fn lock_fields(doc: &mut Document, lock: &FieldLock) -> Result<(), Si
     }
     for f in fields.iter().filter(|f| lock.covers(&f.name)) {
         let ff = flags(doc, &f.dict);
-        if ff & READ_ONLY != 0 {
+        if ff & READ_ONLY != 0 || f.dict.get(b"V").is_some_and(|v| doc.resolve(v).as_dict().is_some()) {
             continue;
         }
         let r = f.r.ok_or_else(|| SignError::Pdf(format!("the field {:?} can't be locked: it is not an object of its own", f.name)))?;
