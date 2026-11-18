@@ -391,6 +391,17 @@ impl Automation {
         self.text_replace_with(a, &mut extract_parallel)
     }
 
+    /// `edit`, an Edit text line or paragraph rewrite, as it is; or, with `keep_font`, refused
+    /// when the text's own font can't show the new text, rather than another font standing in.
+    pub(crate) fn keeping_font(&self, a: &Args, edit: pdfcraft_engine::Edit) -> Result<pdfcraft_engine::Edit> {
+        if a.opt_bool("keep_font")?.unwrap_or(false)
+            && let Some(font) = self.doc(a)?.stand_in_font(&edit).map_err(failed)?
+        {
+            return Err(failed(format!("keep_font: the text's own font can't show the new text, and {font} would stand in for it")));
+        }
+        Ok(edit)
+    }
+
     pub(crate) fn text_replace_with(
         &mut self,
         a: &Args,

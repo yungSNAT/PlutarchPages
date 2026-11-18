@@ -15077,3 +15077,58 @@ fn grouped_existing_thai_body_edits_saves_reopens_and_undo_restores_original_gly
     assert_eq!(page_text(&mut a, reopened), [new, old]);
     assert_eq!(ok(&mut a, "content_list", json!({"doc":reopened}))["count"], 0, "editing existing text must not create Add Text objects");
 }
+
+/// `text_edit` with `keep_font` refuses, and leaves the page as it was, where the text's own font
+/// can't show the new text and another would stand in; text the font can show still goes in, and
+/// without `keep_font` the other font stands in as before. `F3` is a subset with glyphs for `a`
+/// and `b` only, of a face no computer has.
+#[test]
+fn text_edit_keep_font_refuses_a_stand_in_font() {
+    let dir = workdir("keep-font");
+    let content = "BT /F3 12 Tf 72 700 Td (ab ba) Tj ET";
+    std::fs::write(
+        dir.join("subset.pdf"),
+        pdf_of(&[
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F3 5 0 R >> >> >>",
+            &format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            "<< /Type /Font /Subtype /TrueType /BaseFont /ABCDEF+NoSuchFace /FirstChar 97 /LastChar 99 /Widths [500 520 0] /Encoding /WinAnsiEncoding >>",
+        ]),
+    )
+    .unwrap();
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_open", json!({ "path": "subset.pdf" }))["doc"].as_u64().unwrap();
+    for target in [json!({ "line": 1 }), json!({ "paragraph": 1 })] {
+        let args = |text: &str, keep: bool| {
+            let mut args = json!({ "doc": doc, "page": 1, "text": text, "keep_font": keep });
+            args.as_object_mut().unwrap().extend(target.as_object().unwrap().clone());
+            args
+        };
+        let refused = err(&mut a, "text_edit", args("cab", true));
+        assert!(matches!(&refused, ToolError::Failed(m) if m.contains("keep_font")), "{target}: {refused}");
+        assert_eq!(page_text(&mut a, doc), ["ab ba"], "{target}");
+        ok(&mut a, "text_edit", args("ba ab", true));
+        assert_eq!(page_text(&mut a, doc), ["ba ab"], "{target}");
+        ok(&mut a, "text_edit", args("cab", false));
+        assert_eq!(page_text(&mut a, doc), ["cab"], "{target}");
+        ok(&mut a, "edit_undo", json!({ "doc": doc }));
+        ok(&mut a, "edit_undo", json!({ "doc": doc }));
+        assert_eq!(page_text(&mut a, doc), ["ab ba"], "{target}");
+    }
+    // A paragraph's formatting alone keeps its words and font. A font asked for is no stand-in,
+    // but the fallback outlines drawn where the font asked for can't show the text are.
+    let paragraph = |extra: Value| {
+        let mut args = json!({ "doc": doc, "page": 1, "paragraph": 1, "keep_font": true });
+        args.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        args
+    };
+    ok(&mut a, "text_edit", paragraph(json!({ "color": "#336699" })));
+    assert_eq!(page_text(&mut a, doc), ["ab ba"]);
+    ok(&mut a, "text_edit", paragraph(json!({ "text": "cab", "font": "helvetica" })));
+    assert_eq!(page_text(&mut a, doc), ["cab"]);
+    let refused = err(&mut a, "text_edit", paragraph(json!({ "text": "αβ", "font": "helvetica" })));
+    assert!(matches!(&refused, ToolError::Failed(m) if m.contains("keep_font") && m.contains("Type3")), "{refused}");
+    assert_eq!(page_text(&mut a, doc), ["cab"]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
