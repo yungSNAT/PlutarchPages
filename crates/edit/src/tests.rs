@@ -2432,6 +2432,22 @@ fn a_variation_selector_survives_line_and_block_edits() {
     }
 }
 
+/// The supplementary selectors (U+E0100 to U+E01EF, used for CJK ideograph variants) take no
+/// room under character spacing either, as upstream's test checks for U+FE0F.
+#[test]
+fn a_supplementary_variation_selector_does_not_shift_centred_text_with_character_spacing() {
+    for resource in ["F1", "F2"] {
+        let mut plain = text_page(&format!("BT /{resource} 12 Tf 72 700 Td (ab) Tj ET"));
+        let mut selected = plain.clone();
+        let style = text::BlockStyle { width: Some(100.0), align: Some(added::Align::Center), char_spacing: Some(2.0), ..Default::default() };
+        text::rewrite_block(&mut plain, 0, 0, Some("1қ"), &style).unwrap();
+        text::rewrite_block(&mut selected, 0, 0, Some("1\u{E0100}қ"), &style).unwrap();
+        let a = text::text_lines(&reopen(&plain), 0).unwrap();
+        let b = text::text_lines(&reopen(&selected), 0).unwrap();
+        assert!(close(a[0].rect, b[0].rect), "{resource}: plain {:?}, selector {:?}", a[0].rect, b[0].rect);
+    }
+}
+
 /// The Japanese faces keep first refusal for the Cyrillic they do carry, so Russian text keeps the
 /// face it was drawn with before the bundled Latin face was added.
 #[test]
