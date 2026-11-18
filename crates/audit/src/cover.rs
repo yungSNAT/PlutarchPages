@@ -157,10 +157,12 @@ struct Gs {
 /// What a font's glyphs add to the clip in a clipping render mode (ISO 32000-1 §9.3.6).
 #[derive(Clone, Copy)]
 enum FontKind {
-    /// A simple font whose encoding leaves code 20h the space, which has no outline.
+    /// A simple font (`Type1`, `MMType1` or `TrueType`) whose encoding leaves code 20h the space,
+    /// which has no outline.
     Spaced,
-    /// Any byte may draw a glyph: a Type 0 font, a simple font that gives 20h another glyph, or one
-    /// not selected or found, which a viewer replaces with one of its own.
+    /// Any byte may draw a glyph: a Type 0 font, a simple font that gives 20h another glyph, a font
+    /// of another or no subtype, or one not selected or found, which a viewer replaces with one of
+    /// its own.
     Drawn,
     /// A Type 3 font: only mode 3 affects its glyphs, so it adds nothing.
     Type3,
@@ -855,9 +857,8 @@ impl<'a> Walker<'a> {
         let Some(font) = font.as_dict() else { return Ok(FontKind::Drawn) };
         let kind = match crate::subtype(self.doc, font)?.as_deref() {
             Some(b"Type3") => FontKind::Type3,
-            Some(b"Type0") => FontKind::Drawn,
-            _ if space_remapped(self.doc, font) => FontKind::Drawn,
-            _ => FontKind::Spaced,
+            Some(b"Type1" | b"MMType1" | b"TrueType") if !space_remapped(self.doc, font) => FontKind::Spaced,
+            _ => FontKind::Drawn,
         };
         // A font without `/Resources` reads those where it is selected (PDF 1.1), as its glyphs
         // are drawn there: a glyph drawing a form that only some of them name shows its text there
