@@ -147,7 +147,8 @@ fn unreferenced_streams_that_show_text_are_counted() {
 
 /// A font program is not content, however its bytes read: an unreferenced stream that a font
 /// descriptor names as its `/FontFile` or `/FontFile2` is skipped, the descriptor an object of its
-/// own or written out in place in a font. A reference names one object by number and generation,
+/// own or written out in place in a font; the same key in another dictionary names none. A
+/// reference names one object by number and generation,
 /// so a stale one to an earlier generation skips nothing. `/Length1` alone, which any stream can
 /// carry, does not make one a font program, so a stream with it that shows text and that no
 /// descriptor names is counted, and one that can't be decoded fails the audit.
@@ -185,6 +186,11 @@ fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
     assert_eq!(count(&[(&in_place, b""), ("/Length1 11", program)]), 0);
     let stale = format!("<< {DESCRIPTOR} /FontFile 7 1 R >>");
     assert_eq!(count(&[(&stale, b""), ("/Length1 38", text)]), 1);
+    // A `/FontFile2` key in a dictionary that is no font descriptor, here a form's resource name
+    // for the text-bearing form it draws, names no font program.
+    let form = "/Type /XObject /Subtype /Form /BBox [0 0 612 792]";
+    let caller = format!("{form} /Resources << /XObject << /FontFile2 7 0 R >> >>");
+    assert_eq!(count(&[(&caller, b"/FontFile2 Do"), (form, text)]), 1);
     assert!(audit(&[("/Length1 5 /Filter /FlateDecode", b"xxxxx")]).is_err(), "an undecodable stream must fail the audit");
 }
 
