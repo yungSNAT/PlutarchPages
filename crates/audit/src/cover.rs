@@ -3,14 +3,17 @@
 //! This is the geometric half of the faux-redaction audit: a rectangle filled with an opaque
 //! color (`re` + `f`) is the classic way a "redaction" is faked. A single closed `m`/`l` subpath
 //! whose four corners form an axis-aligned rectangle in user space is the same shape and counts
-//! too (#1510), and so does a shading painted with `sh`, over the box that holds its clip and
-//! within its `/BBox`, and an image without a mask of its own, over the unit square the CTM places
-//! it on, within that box. A straight stroke counts too: one subpath whose points, control points
-//! included, lie on one horizontal or vertical line on the page, stroked solid (no dashes) under a
-//! CTM that keeps the axes, covers the band its line width paints between its ends, its caps not
-//! counted, painted in the stroking color and alpha, whether stroked alone (`S`, `s`) or over a
-//! fill (`B`, `B*`, `b`, `b*`). It counts only under a clip that is a box on the page: a triangle
-//! or a sheared box may clip the band away from what it seems to cover. Graphics state tracked
+//! too (#1510), as do several `re` rectangles filled together by the nonzero rule when all run one
+//! way, each a box of its own; and so does a shading painted with `sh`, over the box that holds its
+//! clip and within its `/BBox`, and an image without a mask of its own, over the unit square the
+//! CTM places it on, within that box. A straight stroke counts too: one subpath whose points,
+//! control points included, lie on one horizontal or vertical line on the page, stroked solid (no
+//! dashes) under a CTM that keeps the axes, covers the band its line width paints between its
+//! ends, its caps not counted, painted in the stroking color and alpha, whether stroked alone
+//! (`S`, `s`) or over a fill (`B`, `B*`, `b`, `b*`). Each counts only where what it paints lands
+//! on a box on the page, as a rectangle, a `/BBox` or an image's square sheared by the CTM does
+//! not, and only under a clip that is a box on the page: a triangle or a sheared box may clip it
+//! away from what it seems to cover. Graphics state tracked
 //! here is deliberately small: the CTM stack (`q`/`Q`/`cm`), the box holding the clip (`W` paths, a form's `/BBox`, the
 //! page's crop box), the non-stroking color (`g`/`rg`/`k`, and
 //! `cs` with `sc`/`scn` in gray, RGB and CMYK spaces; any other, a pattern's or a spot color's, is
@@ -171,22 +174,37 @@ impl Gs {
 /// The path under construction, as far as the audit cares about it.
 enum Path {
     Empty,
-    /// A `re` rectangle's box in user space, and whether the rectangle lands on that box: the CTM
-    /// keeps its edges horizontal and vertical.
-    Rect([f64; 4], bool),
+    /// `re` rectangles, a subpath each: each one's box in user space, whether it lands on that box
+    /// (the CTM keeps its edges horizontal and vertical), and whether it runs anticlockwise there.
+    Rects(Vec<Rect>),
     /// One `m`/`l` subpath, corners already mapped to user space; `true` once closed by `h`.
     Lines(Vec<[f64; 2]>, bool),
-    /// Anything else: curves, a second subpath, a CTM change mid-path.
+    /// Anything else: curves, a second subpath that is not a `re`, a CTM change mid-path.
     Other,
 }
 
+/// A `re` rectangle as [`Path::Rects`] holds it.
+#[derive(Clone, Copy)]
+struct Rect {
+    area: [f64; 4],
+    boxed: bool,
+    anticlockwise: bool,
+}
+
 impl Path {
-    /// The rectangle a fill of this path paints, if the path is one.
-    fn rect(self) -> Option<[f64; 4]> {
+    /// The boxes a fill of this path paints whole, by the even-odd rule or the nonzero one, if it
+    /// paints nothing else. Rectangles that each land on a box and that all run one way, filled by
+    /// the nonzero rule, paint each box whole; otherwise one can cut a hole in another.
+    fn boxes(self, even_odd: bool) -> Option<Vec<[f64; 4]>> {
         match self {
-            Path::Rect(r, _) => Some(r),
-            Path::Lines(pts, _) => lines_rect(&pts),
-            Path::Empty | Path::Other => None,
+            Path::Rects(rects)
+                if rects.iter().all(|r| r.boxed)
+                    && (rects.len() == 1 || (!even_odd && rects.iter().all(|r| r.anticlockwise == rects[0].anticlockwise))) =>
+            {
+                Some(rects.iter().map(|r| r.area).collect())
+            }
+            Path::Lines(pts, _) => lines_rect(&pts).map(|r| vec![r]),
+            Path::Rects(_) | Path::Empty | Path::Other => None,
         }
     }
 }
@@ -350,8 +368,8 @@ struct Walker<'a> {
     walked: HashSet<(ObjRef, Owner)>,
     /// Graphics states saved and not yet restored, in every stack being walked.
     saved: usize,
-    /// The layers that fill a shape other than a box (a cloudy border drawn with curves): the audit
-    /// reads no cover from it.
+    /// The layers that fill a shape other than a box (a cloudy border drawn with curves), or paint
+    /// under a clip that is no box: the audit reads no cover from it.
     shaped: HashSet<usize>,
     /// Something was painted on the page whose colours the audit doesn't read as what lies under
     /// text: a stroke, or an image with a mask of its own.
@@ -451,12 +469,23 @@ impl<'a> Walker<'a> {
                         if [x, y, w, h].iter().all(|v| v.is_finite()) && w != 0.0 && h != 0.0 {
                             let user = [x.min(x + w), y.min(y + h), x.max(x + w), y.max(y + h)];
                             let r = gs.ctm.bbox(user);
-                            (r[2] > r[0] && r[3] > r[1]).then(|| Path::Rect(r, box_on_page(&gs.ctm, user)))
+                            // `re` runs anticlockwise when w and h share a sign; a CTM that mirrors
+                            // turns it the other way.
+                            let [a, b, c, d, ..] = gs.ctm.0;
+                            let anticlockwise = (w * h > 0.0) == (a * d - b * c > 0.0);
+                            (r[2] > r[0] && r[3] > r[1]).then(|| Rect { area: r, boxed: box_on_page(&gs.ctm, user), anticlockwise })
                         } else {
                             None
                         }
                     });
-                    path = rect.unwrap_or(Path::Other);
+                    path = match (path, rect) {
+                        (Path::Empty, Some(rect)) => Path::Rects(vec![rect]),
+                        (Path::Rects(mut rects), Some(rect)) => {
+                            rects.push(rect);
+                            Path::Rects(rects)
+                        }
+                        _ => Path::Other,
+                    };
                 }
                 b"m" => {
                     path = match (path, user_point(gs, op)) {
@@ -478,13 +507,13 @@ impl<'a> Walker<'a> {
                     path = match path {
                         Path::Lines(pts, _) => Path::Lines(pts, true),
                         // `re` already closed its subpath, so a further `h` changes nothing.
-                        Path::Rect(r, boxed) => Path::Rect(r, boxed),
+                        rects @ Path::Rects(_) => rects,
                         _ => Path::Other,
                     };
                 }
                 // `b`/`b*` close the path before filling it, which the fill does anyway.
                 b"f" | b"F" | b"f*" | b"B" | b"B*" | b"b" | b"b*" => {
-                    self.fill(std::mem::replace(&mut path, Path::Empty), gs, calls, i);
+                    self.fill(std::mem::replace(&mut path, Path::Empty), op.op.ends_with(b"*"), gs, calls, i);
                     // `B` and `b` stroke the path over the fill.
                     if matches!(op.op.as_slice(), b"B" | b"B*" | b"b" | b"b*") {
                         self.stroke(std::mem::replace(&mut line, Line::Empty), gs, calls, i);
@@ -496,7 +525,7 @@ impl<'a> Walker<'a> {
                     let shading = op.name(0).and_then(|name| shadings.as_deref().and_then(Object::as_dict)?.get(name)).map(|o| self.doc.resolve(o));
                     let bbox = shading.as_deref().and_then(Object::as_dict).and_then(|d| form_bbox(self.doc, d));
                     let area = bbox.map_or(gs.clip, |b| meet(gs.clip, gs.ctm.bbox(b)));
-                    if gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
+                    if self.covers_box(area, bbox.is_none_or(|b| box_on_page(&gs.ctm, b)), gs) {
                         self.paint(area, None, gs, false, calls, i);
                     }
                 }
@@ -520,7 +549,7 @@ impl<'a> Walker<'a> {
                     // The clip is the box exactly when the path is one subpath that is a box on the
                     // page: a second could cut a hole in it.
                     let boxed = match &path {
-                        Path::Rect(_, boxed) => *boxed,
+                        Path::Rects(rects) => rects.iter().all(|r| r.boxed),
                         Path::Lines(pts, _) => lines_rect(pts).is_some(),
                         Path::Empty | Path::Other => false,
                     };
@@ -617,19 +646,42 @@ impl<'a> Walker<'a> {
         Ok(())
     }
 
-    /// Record the cover the fill at index `at` paints with `path`, or, for a shape the audit reads no
-    /// box from, that this layer fills one.
-    fn fill(&mut self, path: Path, gs: &Gs, calls: &[usize], at: usize) {
-        if gs.alpha > 0.0 && self.inside.is_none() {
-            let shape = !matches!(path, Path::Empty);
-            match path.rect() {
-                Some(r) => self.paint(r, gs.fill, gs, false, calls, at),
-                None if shape => {
-                    self.shaped.insert(self.layer);
-                }
-                None => {}
-            }
+    /// Record the covers the fill at index `at` paints with `path` (by the even-odd rule or the
+    /// nonzero one), within the clip, as [`Walker::paint_box`] does, or, for a shape the audit reads
+    /// no box from, that this layer fills one.
+    fn fill(&mut self, path: Path, even_odd: bool, gs: &Gs, calls: &[usize], at: usize) {
+        if matches!(path, Path::Empty) {
+            return;
         }
+        match path.boxes(even_odd) {
+            Some(boxes) => {
+                for r in boxes {
+                    let area = meet(gs.clip, r);
+                    if self.covers_box(area, true, gs) {
+                        self.paint(area, gs.fill, gs, false, calls, at);
+                    }
+                }
+            }
+            None if gs.alpha > 0.0 && self.inside.is_none() => {
+                self.shaped.insert(self.layer);
+            }
+            None => {}
+        }
+    }
+
+    /// Whether what is painted over `area`, within the box holding the clip, is a cover of all of
+    /// it: what it paints lands on a box (`boxed`) and so does the clip ([`Gs::clip_exact`]). Under a
+    /// triangle, a box with a hole or a sheared box, or for a sheared shading or image, it may paint
+    /// only part of `area`, so it is no cover and this layer fills a shape the audit reads no box
+    /// from.
+    fn covers_box(&mut self, area: [f64; 4], boxed: bool, gs: &Gs) -> bool {
+        if gs.alpha <= 0.0 || self.inside.is_some() || area[2] <= area[0] || area[3] <= area[1] {
+            return false;
+        }
+        if !(boxed && gs.clip_exact) {
+            self.shaped.insert(self.layer);
+        }
+        boxed && gs.clip_exact
     }
 
     /// Record the cover the stroke at index `at` paints along `line`: the band [`Line::band`] gives,
@@ -668,10 +720,13 @@ impl<'a> Walker<'a> {
         // An entry that is null is no mask (ISO 32000-2 §7.3.9).
         let mask = |key: &[u8]| image.get(key).is_some_and(|o| !matches!(*self.doc.resolve(o), Object::Null));
         let own_mask = mask(b"SMask") || mask(b"Mask") || alpha_in_data;
-        let area = meet(gs.clip, gs.ctm.bbox([0.0, 0.0, 1.0, 1.0]));
+        const UNIT: [f64; 4] = [0.0, 0.0, 1.0, 1.0];
         self.unread |= own_mask && self.inside.is_none();
-        if !own_mask && gs.alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
-            self.paint(area, if stencil { gs.fill } else { None }, gs, true, calls, at);
+        if !own_mask {
+            let area = meet(gs.clip, gs.ctm.bbox(UNIT));
+            if self.covers_box(area, box_on_page(&gs.ctm, UNIT), gs) {
+                self.paint(area, if stencil { gs.fill } else { None }, gs, true, calls, at);
+            }
         }
     }
 
