@@ -540,11 +540,7 @@ impl<'a> Walker<'a> {
                     }
                     glyph_clip |= gs.text_clip;
                 }
-                b"Tr" => {
-                    if let Some([mode]) = op.nums::<1>() {
-                        gs.text_clip = (4.0..=7.0).contains(&mode);
-                    }
-                }
+                b"Tr" => gs.text_clip = op.nums::<1>().map_or(gs.text_clip, |[mode]| (4.0..=7.0).contains(&mode)),
                 b"BT" => glyph_clip = false,
                 // The glyphs' outlines are no box; with none shown the clip may be empty (ISO 32000-2
                 // §9.3.6). Either way what is painted after may not show where its box says.
