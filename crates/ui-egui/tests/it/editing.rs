@@ -11698,3 +11698,34 @@ fn a_modified_click_away_from_a_cropped_picture_applies_its_crop() {
         assert!(keep.iter().zip(visible).all(|(a, b)| (a - b).abs() < 0.5), "{mods:?}: the crop is applied: {visible:?}");
     }
 }
+
+// TEMPORARY diagnostic for the macOS nightly (removed before the PR): prints the mode bar's geometry.
+#[test]
+fn zz_diag_mode_bar_geometry() {
+    let dump = |h: &Harness<'static, PdfCraftApp>, what: &str| {
+        for n in h.get_all_by_role(Role::MenuItem) {
+            eprintln!("DIAG {what} menu {:?} {:?}", n.label(), n.rect());
+        }
+        for label in ["All tools", "Edit", "Convert", "E-Sign"] {
+            for n in h.get_all_by_role_and_label(Role::Button, label) {
+                eprintln!("DIAG {what} button {label} {:?}", n.rect());
+            }
+        }
+    };
+    for width in [1000.0, 1100.0, 1400.0] {
+        let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.open_bytes("doc.pdf", None, fixture(2)).expect("fixture opens");
+            app.set_option("left", "closed").unwrap();
+            app
+        });
+        h.run_steps(4);
+        let text = page_text(&h);
+        h.state_mut().views[0].goto = Some((0, 0.5));
+        h.run_steps(4);
+        let page = h.state().views[0].page_screen_rect(0).expect("on screen");
+        eprintln!("DIAG w{width} text {text:?} page {page:?}");
+        dump(&h, &format!("w{width}"));
+    }
+}
