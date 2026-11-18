@@ -735,16 +735,19 @@ jobs:
         run: |
           unzip -q "dist/release/pdfcraft-web-$VERSION.zip" -d "$RUNNER_TEMP/web"
           cd "$RUNNER_TEMP/web/pdfcraft-web-$VERSION"
-          wasm=(*.wasm)
-          if [ ! -f "${wasm[0]}" ] || [ "${#wasm[@]}" != 1 ]; then echo "::error::expected 1 wasm file: ${wasm[*]}"; exit 1; fi
+          # The app's wasm; the OCR worker's (pdfcraft-ocr-worker-*) is fetched below.
+          wasm=(pdfcraft-web-*_bg.wasm)
+          if [ ! -f "${wasm[0]}" ] || [ "${#wasm[@]}" != 1 ]; then echo "::error::expected 1 app wasm file: $(echo *.wasm)"; exit 1; fi
           python3 -m http.server 8766 --bind 127.0.0.1 &
           server=$!
           trap 'kill "$server"' EXIT
           base=http://127.0.0.1:8766
           curl -fsS --retry 5 --retry-connrefused --retry-delay 1 -o "$RUNNER_TEMP/index.html" "$base/index.html"
           grep -F "${wasm[0]}" "$RUNNER_TEMP/index.html"
-          curl -fsS -o "$RUNNER_TEMP/app.wasm" "$base/${wasm[0]}"
-          cmp <(head -c 4 "$RUNNER_TEMP/app.wasm") <(printf '\0asm')
+          for file in *.wasm; do
+            curl -fsS -o "$RUNNER_TEMP/app.wasm" "$base/$file"
+            cmp <(head -c 4 "$RUNNER_TEMP/app.wasm") <(printf '\0asm')
+          done
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-web

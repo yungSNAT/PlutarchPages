@@ -104,14 +104,15 @@ Limits, by design and documented rather than hidden:
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
-- the unreferenced-text check reads only streams that can be content (a form, or one without
-  `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or `/FontFile2`) and
-  counts each that shows text with `Tj`,
-  `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
+- the unreferenced-text check reads only streams that can be content: not those typed as an
+  image, a `/FontFile3` font program, XMP metadata, a cross-reference or object stream, an
+  embedded file, a CMap, 3D artwork or a halftone, nor one without `/Type` or `/Subtype` that a
+  font descriptor names as its `/FontFile` or `/FontFile2`. It counts each that shows text with
+  `Tj`, `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
   counted there: the earlier-revisions count covers it. So a file built to hide text can still
-  get past it: an unreferenced stream with any other `/Type` or `/Subtype` is not read, nor is
-  one that a dictionary typed `/FontDescriptor` names as its font program, even when that
-  dictionary is no real descriptor;
+  get past it: an unreferenced stream typed as one of those is not read, nor is one with neither
+  key, as a font program has none, that a dictionary typed `/FontDescriptor` names as its font
+  program, even when that dictionary is no real descriptor;
 - annotation rectangles are compared in unrotated user space, so `/Rotate` pages may misalign;
 - a cover that hides less than half of every word it touches, less than 40% of a line's box and
   less than 40% of its words (a sliver of a long value) is not flagged.

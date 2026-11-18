@@ -1,0 +1,7 @@
+# This Cargo.lock is the one upstream keeps for craft-pdf's read-only contract check, a crate of its
+# own that PlutarchPages never builds: every crate the fork builds resolves from the root
+# Cargo.lock, so these findings describe versions PlutarchPages does not build.
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2026-0386"
+reason = "upstream's unused lockfile; the root Cargo.lock has tokio 1.54.1"

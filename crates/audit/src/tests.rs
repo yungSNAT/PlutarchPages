@@ -120,8 +120,10 @@ fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
 
 /// Streams nothing refers to that show text are counted as `unreferenced-text`, a stream or a form
 /// alike: a redaction applied and saved without garbage collection leaves the page's old content
-/// so. One that shows no text, and an image, however its data reads, are not; nor is any once the
-/// next save must write the document in full, which keeps only what it refers to.
+/// so. So is one of a type that can be content, or one the audit doesn't know, a tiling pattern or
+/// a mistyped stream. One that shows no text, and an image or metadata, however its data reads,
+/// are not; nor is any once the next save must write the document in full, which keeps only what
+/// it refers to.
 #[test]
 fn unreferenced_streams_that_show_text_are_counted() {
     let mut b = Builder::new();
@@ -134,13 +136,16 @@ fn unreferenced_streams_that_show_text_are_counted() {
     b.add_stream_with(b"BT /F1 24 Tf 100 700 Td [(SECRET)] TJ ET", "/Type /XObject /Subtype /Form /BBox [0 0 612 792]");
     b.add_stream(b"0 g 100 688 220 32 re f");
     b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /XObject /Subtype /Image /Width 17 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8");
+    b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /Metadata /Subtype /XML");
+    b.add_stream_with(b"BT /F1 24 Tf (SECRET) Tj ET", "/Type /Pattern /PatternType 1 /BBox [0 0 10 10]");
+    b.add_stream_with(b"BT /F1 24 Tf (SECRET) Tj ET", "/Type /Foo /Subtype /Bar");
     let mut doc = open(b.build());
     let kinds = |doc: &Document| -> Vec<(&'static str, usize)> {
         let report = crate::audit_document(doc).unwrap();
         assert!(report.page_findings.is_empty());
         report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
     };
-    assert_eq!(kinds(&doc), [("unreferenced-text", 2)]);
+    assert_eq!(kinds(&doc), [("unreferenced-text", 4)]);
     doc.require_full_save();
     assert!(kinds(&doc).is_empty());
 }
@@ -191,6 +196,14 @@ fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
     let form = "/Type /XObject /Subtype /Form /BBox [0 0 612 792]";
     let caller = format!("{form} /Resources << /XObject << /FontFile2 7 0 R >> >>");
     assert_eq!(count(&[(&caller, b"/FontFile2 Do"), (form, text)]), 1);
+    // A font program has neither `/Type` nor `/Subtype`, so a stream with either is read even when
+    // a descriptor names it, here a forged one that names a text form, 2 partly typed streams and
+    // one whose `/Type` is null, which is still a `/Type` key.
+    let forged = format!("<< {DESCRIPTOR} /FontFile 7 0 R /FontFile2 8 0 R >>");
+    let forged_more = format!("<< {DESCRIPTOR} /FontFile 10 0 R /FontFile2 11 0 R >>");
+    let typed =
+        [(&forged[..], b"" as &[u8]), (form, text), ("/Type /XObject", text), (&forged_more, b""), ("/Subtype /Form", text), ("/Type null", text)];
+    assert_eq!(count(&typed), 4);
     assert!(audit(&[("/Length1 5 /Filter /FlateDecode", b"xxxxx")]).is_err(), "an undecodable stream must fail the audit");
 }
 
@@ -581,9 +594,12 @@ fn rectangle_drawn_as_a_path_covers_text_like_re() {
     // The same cover as `re`, built from `m`/`l` (closed with `h`, a repeated start point, or
     // only by the fill itself), or in a scaled user space: all are faux redactions (#1510).
     // So are `re` with a redundant `h`, and either path painted with `b`/`b*` (#1817), and a `re`
-    // filled with another drawn the same way round, which can cut no hole in it.
-    let covers: [&[u8]; 11] = [
+    // filled with another drawn the same way round on the page, which can cut no hole in it: a
+    // `re` drawn backwards under a mirroring CTM, which the path keeps past `Q`, runs as one drawn
+    // forwards without it.
+    let covers: [&[u8]; 12] = [
         b"0 g\n100 688 220 32 re 100 400 50 50 re f\n",
+        b"0 g\nq -1 0 0 1 612 0 cm 512 688 -220 32 re Q 100 400 50 50 re f\n",
         b"0 g\n100 688 220 32 re f\n",
         b"0 g\n100 688 220 32 re h f\n",
         b"0 g\n100 688 220 32 re b\n",
@@ -609,7 +625,7 @@ fn rectangle_drawn_as_a_path_covers_text_like_re() {
 #[test]
 fn non_rectangular_path_is_not_a_cover() {
     // Each path's bounding box covers the text, but the shape itself does not hide it all.
-    let covers: [&[u8]; 9] = [
+    let covers: [&[u8]; 10] = [
         // A triangle.
         b"0 g\n100 688 m 320 688 l 320 720 l h f\n",
         // A triangle painted with `b`, and a trapezoid with `b*`.
@@ -626,6 +642,9 @@ fn non_rectangular_path_is_not_a_cover() {
         // The same rotated rectangle drawn with `re`, and the hole drawn as a second `re`.
         b"0 g\nq 0.9962 0.0872 -0.0872 0.9962 62.15 -15.63 cm 100 688 220 32 re f Q\n",
         b"0 g\n90 680 240 50 re 100 688 220 32 re f*\n",
+        // The hole drawn forwards, its frame forwards under a mirroring CTM the path keeps past
+        // `Q`: on the page they run opposite ways, so even the nonzero rule leaves the hole.
+        b"0 g\nq -1 0 0 1 612 0 cm 282 680 240 50 re Q 100 688 220 32 re f\n",
     ];
     for cover in covers {
         let mut content = b"BT /F1 24 Tf 100 700 Td (SECRET DATA 123) Tj ET\n".to_vec();
@@ -837,7 +856,8 @@ fn covered_text_leaves_out_the_words_beside_the_cover() {
 #[test]
 fn covered_text_across_findings_is_bounded() {
     let text = "X".repeat(60_000);
-    let mut content = format!("BT /F1 1 Tf 0 700 Td ({text}) Tj ET\n0 g\n").into_bytes();
+    // Squeezed across, so the 40,000 pt line lies on the page, where the clip leaves the covers.
+    let mut content = format!("0.01 0 0 1 0 0 cm BT /F1 1 Tf 0 700 Td ({text}) Tj ET\n0 g\n").into_bytes();
     for i in 0..1_200 {
         content.extend_from_slice(format!("-{i} 690 50000 20 re f\n").as_bytes());
     }
@@ -991,8 +1011,9 @@ fn form_entries_past_the_page_allowance_fail_the_audit() {
 /// many covers costs its bytes once per cover, not one run per cover (CodeRabbit).
 #[test]
 fn covered_text_bytes_count_against_the_comparison_bound() {
-    // One run: 20 KiB of spaces around a word, which trims to the word alone.
-    let mut content = b"BT /F1 24 Tf 100 700 Td (".to_vec();
+    // One run: 20 KiB of spaces around a word, which trims to the word alone, squeezed across so
+    // that it lies on the page, where the clip leaves the covers.
+    let mut content = b"0.004 0 0 1 0 0 cm BT /F1 24 Tf 100 700 Td (".to_vec();
     content.extend_from_slice(&[b' '; 10_000]);
     content.extend_from_slice(b"SECRET");
     content.extend_from_slice(&[b' '; 10_000]);

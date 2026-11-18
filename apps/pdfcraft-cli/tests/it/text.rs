@@ -288,7 +288,7 @@ fn owner_password_extracts_text_from_copy_restricted_rc4_and_aes128_files() {
     use std::sync::Arc;
     for (i, algorithm) in [pdfcraft_cos::Algorithm::Rc4_128, pdfcraft_cos::Algorithm::Aes128].into_iter().enumerate() {
         let mut doc = pdfcraft_cos::Document::open(Arc::new(fixture(1))).unwrap();
-        doc.set_encryption(&pdfcraft_cos::NewEncryption {
+        doc.set_encryption_legacy(&pdfcraft_cos::NewEncryption {
             algorithm,
             user_password: "user",
             owner_password: "owner",
