@@ -191,6 +191,11 @@ fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
     let form = "/Type /XObject /Subtype /Form /BBox [0 0 612 792]";
     let caller = format!("{form} /Resources << /XObject << /FontFile2 7 0 R >> >>");
     assert_eq!(count(&[(&caller, b"/FontFile2 Do"), (form, text)]), 1);
+    // A font program has neither `/Type` nor `/Subtype`, so a stream with either is read even when
+    // a descriptor names it, here a forged one that names a text form and 2 partly typed streams.
+    let forged = format!("<< {DESCRIPTOR} /FontFile 7 0 R /FontFile2 8 0 R >>");
+    let forged_more = format!("<< {DESCRIPTOR} /FontFile 10 0 R >>");
+    assert_eq!(count(&[(&forged, b""), (form, text), ("/Type /XObject", text), (&forged_more, b""), ("/Subtype /Form", text)]), 3);
     assert!(audit(&[("/Length1 5 /Filter /FlateDecode", b"xxxxx")]).is_err(), "an undecodable stream must fail the audit");
 }
 
