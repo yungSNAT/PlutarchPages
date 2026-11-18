@@ -470,7 +470,7 @@ fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
 
 /// Text shown in a render mode that clips (4 to 7) adds its glyphs to the clip at `ET`, so a stroke
 /// or a fill painted after it, here one far from the glyphs, is no cover. A text object in such a
-/// mode that shows nothing clips nothing (ISO 32000-2 §9.3.6), nor does invisible text (mode 3),
+/// mode that shows nothing clips nothing, nor does invisible text (mode 3),
 /// and a restore brings the clip back.
 #[test]
 fn a_cover_under_a_text_clip_is_not_read() {

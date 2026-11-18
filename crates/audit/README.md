@@ -83,7 +83,8 @@ Limits, by design and documented rather than hidden:
   `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
   Each of these counts only under a clip that is a box on the page (a path of one `re` or one
   four-cornered subpath, or a form's or appearance's `/BBox`, whose corners land on a box, and
-  no text object in a render mode that clips, 4 to 7), and only where what it paints lands on a box there (not a rectangle, `/BBox` or image the CTM
+  no text shown in a render mode that clips, 4 to 7, even glyphs a viewer may clip nothing with,
+  such as spaces or Type 3 glyphs), and only where what it paints lands on a box there (not a rectangle, `/BBox` or image the CTM
   shears), since otherwise the clip or the shape may leave the text showing. Other strokes, such as a stroked rectangle's border or a curved pen
   line, are not covers. Other glyphs,
   such as a Type 3 box that maps to a letter, are not covers, and a run whose text doesn't split

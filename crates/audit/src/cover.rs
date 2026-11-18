@@ -542,9 +542,9 @@ impl<'a> Walker<'a> {
                 }
                 b"Tr" => gs.text_clip = op.nums::<1>().map_or(gs.text_clip, |[mode]| (4.0..=7.0).contains(&mode)),
                 b"BT" => glyph_clip = false,
-                // The glyphs' outlines are no box; with none shown the clip may be empty (ISO 32000-2
-                // §9.3.6). Either way what is painted after may not show where its box says.
-                b"ET" => gs.clip_exact &= !(glyph_clip || gs.text_clip),
+                // The glyphs' outlines are no box, so what is painted after may not show where its box
+                // says. With none shown nothing is clipped.
+                b"ET" => gs.clip_exact &= !glyph_clip,
                 b"Tf" => {
                     let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
                     if let Some(entry) = op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
