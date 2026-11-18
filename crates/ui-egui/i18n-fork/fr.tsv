@@ -6,10 +6,7 @@
 	PlutarchPages works offline. No telemetry, no account, and no cloud processing unless you add a provider.	PlutarchPages fonctionne hors ligne. Pas de télémétrie, pas de compte, et aucun traitement dans le cloud sauf si vous ajoutez un fournisseur.
 	PlutarchPages on GitHub	PlutarchPages sur GitHub
 	About PlutarchPages	À propos de PlutarchPages
-	Checking for a newer version…	Recherche d'une version plus récente…
 	PlutarchPages {c} is up to date.	PlutarchPages {c} est à jour.
-	Couldn't check for updates: {e}	Impossible de rechercher les mises à jour : {e}
-	You have version {c}. All releases are listed at {page}.	Vous avez la version {c}. Toutes les versions sont listées sur {page}.
 	The key is in the macOS Keychain, which may ask to allow PlutarchPages to use it.	La clé est dans le Trousseau de macOS, qui peut demander l'autorisation d'utilisation par PlutarchPages.
 	The key is in the Windows certificate store, which may ask to allow PlutarchPages to use it.	La clé est dans le magasin de certificats Windows, qui peut demander l'autorisation d'utilisation par PlutarchPages.
 	Text recognition isn't installed: its model files are missing. Reinstall PlutarchPages, or set PDFCRAFT_MODELS to the folder that holds them.	La reconnaissance de texte n'est pas installée : ses fichiers de modèles sont absents. Réinstallez PlutarchPages, ou définissez PDFCRAFT_MODELS sur le dossier qui les contient.
@@ -25,7 +22,6 @@
 	{who} in this document tried to open an address PlutarchPages won't open: {e}.	{who} dans ce document a tenté d'ouvrir une adresse que PlutarchPages n'ouvre pas : {e}.
 	{who} in this document tried to open an address PlutarchPages won't open: {e}. Only web (http, https) and email (mailto) links open from documents.	{who} dans ce document a tenté d'ouvrir une adresse que PlutarchPages n'ouvre pas : {e}. Seuls les liens web (http, https) et e-mail (mailto) s'ouvrent depuis les documents.
 	Sign a sheet of white paper and take a photo of it in bright, even light (use the flash). Choose the photo or drop it here: PlutarchPages finds the signature and removes the paper.	Signez une feuille de papier blanc et prenez-la en photo sous une lumière vive et uniforme (utilisez le flash). Choisissez la photo ou déposez-la ici : PlutarchPages trouve la signature et retire le papier.
-	Remove this leaf tag from reading order and mark its direct content as an artifact	Retirez cette balise feuille de l’ordre de lecture et marquez son contenu direct comme artefact
 	Pages that use Type 3 fonts print as images, because Windows can close PlutarchPages while printing them. The other pages print as usual.	Les pages qui utilisent des polices Type 3 s'impriment comme des images, car Windows peut fermer PlutarchPages pendant leur impression. Les autres pages s'impriment normalement.
 	PlutarchPages can't check this signature yet: {}.	PlutarchPages ne peut pas encore contrôler cette signature : {}.
 	The signer's certificate has critical extensions PlutarchPages does not recognize ({}).	Le certificat du signataire comporte des extensions critiques que PlutarchPages ne reconnaît pas ({}).

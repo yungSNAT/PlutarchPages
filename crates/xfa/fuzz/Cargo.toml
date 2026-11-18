@@ -15,6 +15,11 @@ cargo-fuzz = true
 [patch.crates-io]
 hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
 
+# The root [patch] that swaps in the vendored, patched craft-pdf does not reach a detached
+# workspace either (vendor/craft-pdf/PATCHES.md).
+[patch."https://github.com/storytold/craft-libs"]
+craft-pdf = { path = "../../../vendor/craft-pdf" }
+
 [dependencies]
 libfuzzer-sys = "0.4"
 pdfcraft-xfa = { path = ".." }

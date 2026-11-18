@@ -1,0 +1,25 @@
+[package]
+name = "pdfcraft-prc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+libfuzzer-sys = "0.4"
+# The PRC reader moved to craft-libs as craft-prc; this target fuzzes the revision PdfCraft
+# builds (root Cargo.toml), from beside the crate that draws its models.
+pdfcraft-prc = { package = "craft-prc", git = "https://github.com/storytold/craft-libs", rev = "e2dc681a3ad8a47038da2f11ddd2c5e1c0454991" }
+
+[[bin]]
+name = "model"
+path = "fuzz_targets/model.rs"
+test = false
+doc = false
+bench = false

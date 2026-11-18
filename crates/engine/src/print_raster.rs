@@ -3,7 +3,8 @@
 //! shading or transparency. The pages are rendered the way the viewer shows them (reading
 //! colours off, the print's own colours) with only what the print's content choice keeps, made
 //! into an image-only document, and that document is imposed on the paper like any other. The
-//! print is no longer searchable text.
+//! print is no longer searchable text. With app-managed colour the pictures are converted into
+//! the printer's ICC profile ([`pdfcraft_print::colour`]).
 //!
 //! [`pictures`] renders only some pages, the same way, for the pages that must not reach the
 //! Windows print component as they are (Type 3 text, #2684); the others stay vector.
@@ -30,10 +31,15 @@ pub fn rasterize(src: &ExportSource, layers: &[Layer], pages: &[usize], raster: 
     let mut images: Vec<(String, Vec<u8>)> = Vec::with_capacity(pages.len());
     let mut used: Option<f64> = None;
     for &page in pages {
-        let picture = render(&mut renderer, src, page, dpi, raster.grayscale)?;
+        let mut picture = render(&mut renderer, src, page, dpi, raster.grayscale)?;
         // Every page of the image document shares one resolution, so its pages keep the
         // source's sizes; the lowest a page needed is used for all.
         used = Some(used.map_or(picture.dpi, |u: f64| u.min(picture.dpi)));
+        // App-managed colour: the picture's values become the printer's, so it is placed as
+        // device colour the driver passes on unconverted.
+        if let Some(colour) = &raster.colour {
+            colour.convert(&mut picture.rgba).map_err(|e| format!("page {}: {e}", page.saturating_add(1)))?;
+        }
         images.push((format!("page-{}.png", page.saturating_add(1)), encode_png(picture.width, picture.height, &picture.rgba)?));
     }
     let dpi = used.unwrap_or(dpi);

@@ -905,7 +905,6 @@ fn printer_options_are_read_off_the_gui_thread_and_a_dead_read_offers_nothing() 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn a_dead_options_read_wakes_an_idle_dialog() {
-    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     let mut h = harness();
     // A real default printer starts paper and duplex workers that can wake this dialog
@@ -915,11 +914,8 @@ fn a_dead_options_read_wakes_an_idle_dialog() {
     let gate = Arc::new(Mutex::new(()));
     let hold = gate.lock().unwrap();
     let wait = gate.clone();
-    let dying = Arc::new(AtomicBool::new(false));
-    let flag = dying.clone();
     h.state_mut().options_source = Some(Arc::new(move |_: &str| {
         let _open = wait.lock();
-        flag.store(true, Ordering::SeqCst);
         panic!("the read died");
     }));
     assert!(h.state_mut().execute("print.dialog"));
@@ -931,8 +927,7 @@ fn a_dead_options_read_wakes_an_idle_dialog() {
     d.show_driver_options = true;
     // The preview's page rasters render on the pool and ask for frames until they arrive; on a
     // loaded machine that outlasts `run`'s step budget, so the dialog is idle only after them.
-    // Windows' Type 3 note wakes the dialog as its read ends; it has to end first, or its frame
-    // passes for the dead read's whilst that thread is still unwinding.
+    // Windows' Type 3 note is read on a thread too: its result is taken first.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while (h.state().render_pending() || h.state().type3_read_pending() || h.state().print_draft.printers_loading)
         && std::time::Instant::now() < deadline
@@ -945,13 +940,19 @@ fn a_dead_options_read_wakes_an_idle_dialog() {
     h.run();
     assert!(!h.ctx.has_requested_repaint(), "the dialog is idle while the read waits");
     drop(hold);
+    // A frame for each one asked for, until the dead read's empty options show. Another thread's
+    // wake can come first: the Type 3 read wakes the dialog after its result was taken, and the
+    // dead read's thread is still unwinding then. Without the dead read's own wake no frame runs
+    // once its thread ends, and the options never show.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !(dying.load(Ordering::SeqCst) && h.ctx.has_requested_repaint()) && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    while h.state().print_draft.driver_options.is_none() && std::time::Instant::now() < deadline {
+        if h.ctx.has_requested_repaint() {
+            h.run();
+        } else {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
-    assert!(h.ctx.has_requested_repaint(), "the dead read asked for a frame");
-    h.run();
-    assert_eq!(h.state().print_draft.driver_options, Some(("Office".into(), Vec::new())));
+    assert_eq!(h.state().print_draft.driver_options, Some(("Office".into(), Vec::new())), "the dead read asked for a frame");
 }
 
 /// A document whose security forbids printing (#2669) says so before the dialog opens, and the
@@ -1834,7 +1835,7 @@ fn type3_pages_go_to_windows_printers_as_images_and_the_dialog_says_so() {
     let note = "Pages that use Type 3 fonts print as images";
     let type3 = |h: &Harness<'_, PdfCraftApp>| h.state().print_draft.settings(2, &[]).unwrap().type3_raster;
     assert_eq!(h.state().print_draft.type3_pages, if windows { vec![0] } else { Vec::new() });
-    assert_eq!(type3(&h), windows.then_some(Raster { dpi: 300.0, grayscale: false }));
+    assert_eq!(type3(&h), windows.then_some(Raster { dpi: 300.0, grayscale: false, colour: None }));
     assert_eq!(h.query_by_label_contains(note).is_some(), windows);
     // The second page alone has no Type 3 font: nothing to say.
     h.state_mut().print_draft.which = PrintWhich::Range;
