@@ -467,3 +467,25 @@ fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
     let sheared = format!("{TWO_LINES} q 240 0 200 200 0 600 cm /Im Do Q");
     assert!(covered(&page(resources, &sheared, &objects)).is_empty(), "{sheared}");
 }
+
+/// Text shown in a render mode that clips (4 to 7) adds its glyphs to the clip at `ET`, so a stroke
+/// or a fill painted after it, here one far from the glyphs, is no cover; nor after an empty text
+/// object in such a mode, whose clip may be empty. Invisible text (mode 3) clips nothing, and a
+/// restore brings the clip back.
+#[test]
+fn a_cover_under_a_text_clip_is_not_read() {
+    let resources = "<< /Font << /F1 5 0 R >> >>";
+    for painter in ["0 G 33 w 100 704 m 320 704 l S", "0 g 90 600 240 200 re f"] {
+        for (clip, hidden) in [
+            ("BT 3 Tr /F1 24 Tf 300 300 Td (X) Tj ET", true),
+            ("BT 4 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
+            ("7 Tr BT ET", false),
+            ("q BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET Q", true),
+        ] {
+            let paint = format!("{TWO_LINES} {clip} {painter}");
+            let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+            assert_eq!(covered(&page(resources, &paint, &[])), want, "{paint}");
+        }
+    }
+}
