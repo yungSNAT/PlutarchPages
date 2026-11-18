@@ -1068,25 +1068,17 @@ mod tests {
 
     #[test]
     fn a_detached_workspace_builds_the_vendored_craft_pdf() {
-        let detached = "[workspace]
-
-[patch.crates-io]
-hayro-jbig2 = { path = \"../../../vendor/hayro-jbig2\" }
-";
-        let patched = format!("{detached}
-[patch.\"https://github.com/storytold/craft-libs\"]
-craft-pdf = {{ path = \"../../../vendor/craft-pdf\" }}
-");
-        passes(detached_craft_pdf, &[("crates/cos/fuzz/Cargo.toml", &patched), ("crates/js/fuzz/Cargo.toml", "[workspace]
-
-[dependencies]
-")]);
-        passes(detached_craft_pdf, &[("Cargo.toml", "[patch.crates-io]
-x = { path = \"vendor/x\" }
-"), ("crates/cos/Cargo.toml", "[package]
-")]);
+        let detached = "[workspace]\n\n[patch.crates-io]\nhayro-jbig2 = { path = \"../../../vendor/hayro-jbig2\" }\n";
+        let patched =
+            format!("{detached}\n[patch.\"https://github.com/storytold/craft-libs\"]\ncraft-pdf = {{ path = \"../../../vendor/craft-pdf\" }}\n");
+        passes(detached_craft_pdf, &[("crates/cos/fuzz/Cargo.toml", &patched), ("crates/js/fuzz/Cargo.toml", "[workspace]\n\n[dependencies]\n")]);
+        passes(detached_craft_pdf, &[("Cargo.toml", "[patch.crates-io]\nx = { path = \"vendor/x\" }\n"), ("crates/cos/Cargo.toml", "[package]\n")]);
         fails(detached_craft_pdf, &[("crates/xfa/fuzz/Cargo.toml", detached)], "crates/xfa/fuzz/Cargo.toml: add [patch.");
-        fails(detached_craft_pdf, &[("crates/cos/fuzz/Cargo.toml", &patched.replace("../../../vendor/craft-pdf", "../../vendor/craft-pdf"))], "crates/cos/fuzz");
+        fails(
+            detached_craft_pdf,
+            &[("crates/cos/fuzz/Cargo.toml", &patched.replace("../../../vendor/craft-pdf", "../../vendor/craft-pdf"))],
+            "crates/cos/fuzz",
+        );
     }
 
     #[test]
