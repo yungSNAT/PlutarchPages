@@ -73,16 +73,18 @@ so it is checked with each set it is used with.
 Limits, by design and documented rather than hidden:
 
 - only filled rectangles and straight strokes count as covers: rectangles drawn with `re` or as a single `m`/`l` subpath whose
-  corners form an axis-aligned rectangle (not other paths), shadings painted with `sh`, over the
+  corners form an axis-aligned rectangle (not other paths; several `re` filled together only by
+  the nonzero rule and all drawn the same way round), shadings painted with `sh`, over the
   box that holds their clip and within their `/BBox`, images (an image XObject, an inline image or
   an image mask) over the box the CTM places them in, within the box that holds their clip, and
   words of block characters drawn filled (render mode 0, 2, 4 or 6), over the box of each word. A
   stroke counts when it is one subpath along one horizontal or vertical line, solid (no dash
   pattern), under a CTM that keeps the axes, stroked alone (`S`, `s`) or over a fill (`B`, `B*`,
   `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
-  It counts only under a clip that is a box on the page (a path of one `re` or one four-cornered
-  subpath, or a form's or appearance's `/BBox`, whose corners land on a box), since another clip
-  may cut the band away from the text. Other strokes, such as a stroked rectangle's border or a curved pen
+  Each of these counts only under a clip that is a box on the page (a path of one `re` or one
+  four-cornered subpath, or a form's or appearance's `/BBox`, whose corners land on a box), and
+  only where what it paints lands on a box there (not a rectangle, `/BBox` or image the CTM
+  shears), since otherwise the clip or the shape may leave the text showing. Other strokes, such as a stroked rectangle's border or a curved pen
   line, are not covers. Other glyphs,
   such as a Type 3 box that maps to a letter, are not covers, and a run whose text doesn't split
   into as many words as it draws counts only when it is all blocks. An image's pixels are not

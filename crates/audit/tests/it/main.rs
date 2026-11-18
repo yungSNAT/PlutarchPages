@@ -183,8 +183,9 @@ fn a_cover_in_a_colour_the_audit_cant_read_hides_text() {
 }
 
 /// A shading painted with `sh` over text hides what the clip it is painted in holds: a clip set by
-/// a rectangle, by lines or by a curve, the box of the form it is painted in, or the page, and
-/// within its own `/BBox`. A half-transparent one hides it too, as a half-transparent rectangle
+/// a rectangle or by lines that make a box, the box of the form it is painted in, or the page, and
+/// within its own `/BBox`. A clip with a curve is no box, so a shading under it is no cover, though
+/// this one holds the text. A half-transparent one hides it too, as a half-transparent rectangle
 /// does.
 #[test]
 fn a_shading_painted_over_text_hides_it() {
@@ -199,7 +200,7 @@ fn a_shading_painted_over_text_hides_it() {
     for (paint, hidden) in [
         ("q 100 688 220 32 re W n /Sh sh Q", true),
         ("q 100 688 m 320 688 l 320 720 l 100 720 l h W n /Sh sh Q", true),
-        ("q 100 688 m 320 688 l 320 720 l 210 740 100 720 v h W n /Sh sh Q", true),
+        ("q 100 688 m 320 688 l 320 720 l 210 740 100 720 v h W n /Sh sh Q", false),
         ("q 0 600 612 192 re W n 100 0 0 100 0 0 cm /Sh sh Q", true),
         ("/Fm Do", true),
         ("/Boxed sh", true),
