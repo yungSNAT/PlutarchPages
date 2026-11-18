@@ -243,13 +243,16 @@ fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
 
 /// Add to `programs` what the font descriptors written in `object` name as font programs
 /// (`/FontFile`, `/FontFile2`): `object` itself, or any written out in place within it, such as a
-/// font's own `/FontDescriptor`.
+/// font's own `/FontDescriptor`. A font descriptor is a dictionary of `/Type /FontDescriptor`, as
+/// the standard requires; the same keys elsewhere, such as a form's resource names, name none.
 fn font_files(object: &Object, programs: &mut std::collections::HashSet<pdfcraft_cos::ObjRef>) {
     let mut stack = vec![object];
     while let Some(object) = stack.pop() {
         match object {
             Object::Dict(dict) | Object::Stream(pdfcraft_cos::Stream { dict, .. }) => {
-                programs.extend([&b"FontFile"[..], b"FontFile2"].into_iter().filter_map(|key| dict.get(key)?.as_ref()));
+                if dict.get(b"Type").and_then(Object::as_name) == Some(&b"FontDescriptor"[..]) {
+                    programs.extend([&b"FontFile"[..], b"FontFile2"].into_iter().filter_map(|key| dict.get(key)?.as_ref()));
+                }
                 stack.extend(dict.iter().map(|(_, value)| value));
             }
             Object::Array(items) => stack.extend(items),

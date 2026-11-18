@@ -185,7 +185,7 @@ impl Path {
     fn rect(self) -> Option<[f64; 4]> {
         match self {
             Path::Rect(r, _) => Some(r),
-            Path::Lines(pts, _) => lines_rect(pts),
+            Path::Lines(pts, _) => lines_rect(&pts),
             Path::Empty | Path::Other => None,
         }
     }
@@ -272,20 +272,18 @@ fn box_on_page(ctm: &Matrix, r: [f64; 4]) -> bool {
         let (x, y) = ctm.apply(x, y);
         [x, y]
     };
-    lines_rect(vec![corner(r[0], r[1]), corner(r[2], r[1]), corner(r[2], r[3]), corner(r[0], r[3])]).is_some()
+    lines_rect(&[corner(r[0], r[1]), corner(r[2], r[1]), corner(r[2], r[3]), corner(r[0], r[3])]).is_some()
 }
 
 /// The bounding box of a closed polygon that is an axis-aligned rectangle, or `None`. A repeated
 /// start point is dropped first; the remaining four corners must alternate horizontal and
 /// vertical edges.
-fn lines_rect(mut pts: Vec<[f64; 2]>) -> Option<[f64; 4]> {
+fn lines_rect(pts: &[[f64; 2]]) -> Option<[f64; 4]> {
     // CTM products leave rounding noise, so corners compare with a tolerance (in points).
     const EPS: f64 = 1e-6;
     let same = |a: f64, b: f64| (a - b).abs() <= EPS;
-    if pts.len() == 5 && same(pts[0][0], pts[4][0]) && same(pts[0][1], pts[4][1]) {
-        pts.pop();
-    }
-    let [a, b, c, d] = <[[f64; 2]; 4]>::try_from(pts).ok()?;
+    let pts = if pts.len() == 5 && same(pts[0][0], pts[4][0]) && same(pts[0][1], pts[4][1]) { &pts[..4] } else { pts };
+    let [a, b, c, d] = *<&[[f64; 2]; 4]>::try_from(pts).ok()?;
     let fits = |first_horizontal: bool| {
         [(a, b), (b, c), (c, d), (d, a)]
             .iter()
@@ -523,7 +521,7 @@ impl<'a> Walker<'a> {
                     // page: a second could cut a hole in it.
                     let boxed = match &path {
                         Path::Rect(_, boxed) => *boxed,
-                        Path::Lines(pts, _) => lines_rect(pts.clone()).is_some(),
+                        Path::Lines(pts, _) => lines_rect(pts).is_some(),
                         Path::Empty | Path::Other => false,
                     };
                     clipping = Some(boxed && subpaths == 1);
