@@ -1,4 +1,5 @@
 use super::listing::{mk_rotation, nums, sig_fields, text, walk_sig_fields};
+use super::locks;
 use super::{Certificate, Dict, DigestAlg, DigitalId, Document, HashSet, Object, PdfString, SaveOptions, SignError, SignedData, Stream};
 
 // ── signing ─────────────────────────────────────────────────────────────────────────────────
@@ -243,6 +244,17 @@ fn sign_inner(
                 return Err(SignError::Pdf(format!("the value of the field {:?} is not a signature", f.name)));
             }
             let fr = f.r.ok_or_else(|| SignError::Pdf("the field is not an indirect object".into()))?;
+            locks::check_signable(&doc, &f, opts.reason.as_deref())?;
+            // What the field locks becomes read-only in the signed revision, and the signature
+            // records it (FieldMDP), with any DocMDP reference kept first.
+            if let Some(lock) = locks::field_lock(&doc, &f)? {
+                locks::lock_fields(&mut doc, &lock)?;
+                let reference = locks::reference(&lock, root);
+                doc.update_dict(sig, |v| match v.get_mut(b"Reference") {
+                    Some(Object::Array(r)) => r.push(reference),
+                    _ => v.set(b"Reference".to_vec(), Object::Array(vec![reference])),
+                })?;
+            }
             doc.update_dict(fr, |d| d.set(b"V".to_vec(), Object::Ref(sig)))?;
             let (wr, wd) = f.widgets.first().cloned().ok_or_else(|| SignError::Pdf("the field has no widget".into()))?;
             let rect = nums(&doc, &wd, b"Rect").filter(|r| r.len() == 4).map(|r| [r[0].min(r[2]), r[1].min(r[3]), r[0].max(r[2]), r[1].max(r[3])]);
