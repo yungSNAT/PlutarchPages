@@ -223,6 +223,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Convert to gray (`doc_convert_gray`, `crates/optimize/src/colors.rs`) predates upstream's Convert
   colours (`doc_convert_colours`), which also converts to gray. Both are kept; retiring the fork's
   tool changes the automation interface, so it needs its own review.
+- XFA's XML tree (`crates/xfa/src/xml.rs`, upstream's since it left roxmltree) keeps one copy of
+  each element name and namespace (`intern`). With a copy for each element, merging a prototype
+  with 20,000 children took 3.4 times the CPU time and failed
+  `prototype_children_that_write_nothing_still_count_against_a_budget` under coverage.
 - Font metrics: a page's walk reads each font once by `FontKey` (`select_font` in
   `crates/edit/src/text/interp.rs`). Upstream's v0.21.1 shares metrics between aliases of one font
   object its own way (`by_font`, `METRICS_BUILT`); its test counts `FONT_READS` here.

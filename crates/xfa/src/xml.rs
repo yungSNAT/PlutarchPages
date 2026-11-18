@@ -1,6 +1,8 @@
 //! Lightweight namespace-aware XML DOM with source byte ranges, backed by `craft_xml`.
 
+use std::collections::HashSet;
 use std::ops::Range;
+use std::sync::Arc;
 
 const XML_NS: &str = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NS: &str = "http://www.w3.org/2000/xmlns/";
@@ -30,8 +32,10 @@ struct AttrData {
 #[derive(Clone, Debug)]
 enum NodeKind {
     Element {
-        ns: Option<String>,
-        name: String,
+        /// Shared by every element with the same one (`intern`): merging prototypes reads the
+        /// name of each child, and one copy stays in cache where a copy each did not.
+        ns: Option<Arc<str>>,
+        name: Arc<str>,
         attrs: Vec<AttrData>,
         /// In-scope `(prefix, uri)` bindings at this element (`""` for default namespace).
         namespaces: Vec<(String, String)>,
@@ -139,6 +143,16 @@ fn split_qname(qname: &str) -> (&str, &str) {
     }
 }
 
+/// The one shared copy of `s` in `names`.
+fn intern(names: &mut HashSet<Arc<str>>, s: &str) -> Arc<str> {
+    if let Some(shared) = names.get(s) {
+        return shared.clone();
+    }
+    let shared: Arc<str> = Arc::from(s);
+    names.insert(shared.clone());
+    shared
+}
+
 fn resolve_ns(scope: &[(String, String)], prefix: &str, is_attr: bool) -> Result<Option<String>, String> {
     if prefix == "xml" {
         return Ok(Some(XML_NS.to_string()));
@@ -178,6 +192,7 @@ impl Document {
         let mut open: Vec<(usize, usize)> = Vec::new(); // (node_id, scope_len_before)
         let mut scope: Vec<(String, String)> = Vec::new();
         let mut root: Option<usize> = None;
+        let mut names: HashSet<Arc<str>> = HashSet::new();
 
         while let Some(ev) = events.next().map_err(|e| e.to_string())? {
             let span = events.span();
@@ -215,7 +230,13 @@ impl Document {
                     namespaces.retain(|(_, u)| !u.is_empty());
                     let id = nodes.len();
                     nodes.push(NodeData {
-                        kind: NodeKind::Element { ns: el_ns, name: el_local.to_string(), attrs: el_attrs, namespaces, range: span.start..span.end },
+                        kind: NodeKind::Element {
+                            ns: el_ns.map(|u| intern(&mut names, &u)),
+                            name: intern(&mut names, el_local),
+                            attrs: el_attrs,
+                            namespaces,
+                            range: span.start..span.end,
+                        },
                         children: Vec::new(),
                     });
                     if let Some(&(parent, _)) = open.last() {
