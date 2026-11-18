@@ -157,26 +157,26 @@ struct Gs {
 /// What a font's glyphs add to the clip in a clipping render mode (ISO 32000-1 §9.3.6).
 #[derive(Clone, Copy)]
 enum FontKind {
-    /// None selected, or none found: no glyph is shown.
-    Missing,
-    /// A simple font: one byte a glyph, and a space (20h) has no outline.
-    Simple,
-    /// A Type 0 font: its codes can be any bytes.
-    Composite,
+    /// A simple font whose encoding leaves code 20h the space, which has no outline.
+    Spaced,
+    /// Any byte may draw a glyph: a Type 0 font, a simple font that gives 20h another glyph, or one
+    /// not selected or found, which a viewer replaces with one of its own.
+    Drawn,
     /// A Type 3 font: only mode 3 affects its glyphs, so it adds nothing.
     Type3,
 }
 
 impl FontKind {
     /// Whether the text-showing operator `op` shows a glyph in this font that adds to the clip: a
-    /// string, or a string in a `TJ` array, with a byte other than a space in a simple font, or any
-    /// byte in a Type 0 font. Another glyph without an outline is taken to clip.
+    /// string, or a string in a `TJ` array, with a byte other than a space in a [`FontKind::Spaced`]
+    /// font, or any byte in a [`FontKind::Drawn`] one. Another glyph without an outline is taken to
+    /// clip.
     fn clips(self, op: &Op) -> bool {
         let shows = |s: &Object| {
             s.as_string().is_some_and(|s| match self {
-                FontKind::Simple => s.bytes.iter().any(|&b| b != b' '),
-                FontKind::Composite => !s.bytes.is_empty(),
-                FontKind::Missing | FontKind::Type3 => false,
+                FontKind::Spaced => s.bytes.iter().any(|&b| b != b' '),
+                FontKind::Drawn => !s.bytes.is_empty(),
+                FontKind::Type3 => false,
             })
         };
         match op.back(0) {
@@ -205,7 +205,7 @@ impl Gs {
             clip,
             clip_exact: true,
             text_clip: false,
-            font: FontKind::Missing,
+            font: FontKind::Drawn,
         }
     }
 }
@@ -585,7 +585,7 @@ impl<'a> Walker<'a> {
                     let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
                     gs.font = match op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
                         Some(entry) => self.walk_type3(entry, i, res, calls)?,
-                        None => FontKind::Missing,
+                        None => FontKind::Drawn,
                     };
                 }
                 b"S" | b"s" => {
@@ -852,11 +852,12 @@ impl<'a> Walker<'a> {
     /// content, once a page for each set of resources they read. Returns the font's kind.
     fn walk_type3(&mut self, entry: &Object, at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<FontKind, AuditError> {
         let font = self.doc.resolve(entry);
-        let Some(font) = font.as_dict() else { return Ok(FontKind::Missing) };
+        let Some(font) = font.as_dict() else { return Ok(FontKind::Drawn) };
         let kind = match crate::subtype(self.doc, font)?.as_deref() {
             Some(b"Type3") => FontKind::Type3,
-            Some(b"Type0") => FontKind::Composite,
-            _ => FontKind::Simple,
+            Some(b"Type0") => FontKind::Drawn,
+            _ if space_remapped(self.doc, font) => FontKind::Drawn,
+            _ => FontKind::Spaced,
         };
         // A font without `/Resources` reads those where it is selected (PDF 1.1), as its glyphs
         // are drawn there: a glyph drawing a form that only some of them name shows its text there
@@ -921,6 +922,23 @@ impl<'a> Walker<'a> {
         self.inside = outer;
         Ok(())
     }
+}
+
+/// Whether a simple font's `/Encoding` `/Differences` gives code 20h a glyph other than `/space`:
+/// every standard base encoding leaves it the space.
+fn space_remapped(doc: &Document, font: &Dict) -> bool {
+    let encoding = font.get(b"Encoding").map(|o| doc.resolve(o));
+    let differences = encoding.as_deref().and_then(Object::as_dict).and_then(|d| d.get(b"Differences")).map(|o| doc.resolve(o));
+    let (mut code, mut remapped) = (None, false);
+    for item in differences.as_deref().and_then(Object::as_array).into_iter().flatten() {
+        if let Some(name) = item.as_name() {
+            remapped = if code == Some(32.0) { name != b"space" } else { remapped };
+            code = code.map(|c| c + 1.0);
+        } else {
+            code = item.as_f64();
+        }
+    }
+    remapped
 }
 
 /// The resources a stream has of its own, `own` being its `/Resources` entry and what that
