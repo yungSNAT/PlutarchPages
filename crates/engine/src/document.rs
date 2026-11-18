@@ -437,11 +437,15 @@ impl Document {
     /// rewrite, because the text's own font can't show it; `None` when its own font can, or for
     /// any other edit. The edit is tried on a copy; one that fails gives its error.
     pub fn stand_in_font(&self, edit: &Edit) -> Result<Option<String>, EditError> {
-        let editor = self.editor.as_ref().ok_or_else(|| EditError::ReadOnly(self.read_only_reason.clone().unwrap_or_default()))?;
-        let mut trial = editor.cos.clone();
+        let copy =
+            || self.editor.as_ref().map(|e| e.cos.clone()).ok_or_else(|| EditError::ReadOnly(self.read_only_reason.clone().unwrap_or_default()));
         let tried = match edit {
-            Edit::EditTextLine { page, line, text } => crate::guard(|| pdfcraft_edit::replace_line(&mut trial, *page, *line, text)),
+            Edit::EditTextLine { page, line, text } => {
+                let mut trial = copy()?;
+                crate::guard(|| pdfcraft_edit::replace_line(&mut trial, *page, *line, text))
+            }
             Edit::EditTextBlock { page, block, text, style } => {
+                let mut trial = copy()?;
                 crate::guard(|| pdfcraft_edit::rewrite_block(&mut trial, *page, *block, Some(text), style))
             }
             _ => return Ok(None),
