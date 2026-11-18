@@ -1065,13 +1065,13 @@ mod tests {
         let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n";
         passes(weak_hash_markers, &[(WEAK_HASH_FILES[0], crypt), (WEAK_HASH_FILES[1], keys)]);
         let merged = crypt.replace(" // NOSONAR: ISO 32000 mandates MD5", "");
-        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], merged.as_str()), (WEAK_HASH_FILES[1], keys)], "lib.rs:2");
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], merged.as_str()), (WEAK_HASH_FILES[1], keys)], "crypt.rs:2");
         let added = format!("{crypt}digest = Md5::digest(&digest).to_vec();\n");
-        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], added.as_str()), (WEAK_HASH_FILES[1], keys)], "lib.rs:3");
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], added.as_str()), (WEAK_HASH_FILES[1], keys)], "crypt.rs:3");
         fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], crypt)], "keys.rs is missing");
         // The marker counts only in a comment, and a hash only in code.
         let in_string = crypt.replace(" // NOSONAR: ISO 32000 mandates MD5", r#"; log("NOSONAR");"#);
-        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], in_string.as_str()), (WEAK_HASH_FILES[1], keys)], "lib.rs:2");
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], in_string.as_str()), (WEAK_HASH_FILES[1], keys)], "crypt.rs:2");
         let block = crypt.replace("// NOSONAR: ISO 32000 mandates MD5", "/* NOSONAR: ISO 32000 */");
         passes(weak_hash_markers, &[(WEAK_HASH_FILES[0], block.as_str()), (WEAK_HASH_FILES[1], keys)]);
         let mentioned = format!("{crypt}// Md5::new() is ISO 32000's\nlet s = \"Md5::digest\";\n");
@@ -1341,7 +1341,7 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         fails_all(
             weak_hash_markers,
             &[(WEAK_HASH_FILES[0], crypt.as_str()), (WEAK_HASH_FILES[1], keys.as_str())],
-            &["lib.rs:3", "lib.rs:4", "lib.rs:5", "keys.rs:3"],
+            &["crypt.rs:3", "crypt.rs:4", "crypt.rs:5", "keys.rs:3"],
         );
     }
 

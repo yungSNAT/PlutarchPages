@@ -1878,7 +1878,7 @@ fn empty_passwords_never_lift_restrictions_or_skip_the_open_prompt() {
     use pdfcraft_cos::Algorithm::{Aes128, Aes256, Rc4_40, Rc4_128};
     let make = |algorithm, user, owner| {
         let mut doc = pdfcraft_cos::Document::open(Arc::new(fixture(1))).unwrap();
-        doc.set_encryption(&pdfcraft_cos::NewEncryption {
+        doc.set_encryption_legacy(&pdfcraft_cos::NewEncryption {
             algorithm,
             user_password: user,
             owner_password: owner,

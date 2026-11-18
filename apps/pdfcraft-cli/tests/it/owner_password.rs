@@ -164,7 +164,7 @@ fn audit_places_findings_with_the_owner_password() {
 fn check_one_does_not_open_a_file_through_an_empty_owner_password() {
     for algorithm in ALGORITHMS {
         let mut doc = pdfcraft_cos::Document::open(Arc::new(fixture(PAGE))).unwrap();
-        doc.set_encryption(&NewEncryption {
+        doc.set_encryption_legacy(&NewEncryption {
             algorithm,
             user_password: "secret",
             owner_password: "",

@@ -1924,7 +1924,8 @@ fn highlight_fields_leaves_push_buttons_alone() {
         app
     });
     h.run_steps(6);
-    let tint = egui::Color32::from_rgba_unmultiplied(0x6E, 0x8E, 0xF5, 48);
+    let hint = pdfcraft_ui_egui::theme::ON_PAGE_HINT;
+    let tint = egui::Color32::from_rgba_unmultiplied(hint.r(), hint.g(), hint.b(), 48);
     let tinted = h.output().shapes.iter().filter(|c| matches!(&c.shape, egui::Shape::Rect(r) if r.fill == tint)).count();
     assert_eq!(tinted, 1, "only the text field is tinted");
 }
