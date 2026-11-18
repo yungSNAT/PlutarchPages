@@ -108,8 +108,8 @@ Limits, by design and documented rather than hidden:
   `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
   counted there: the earlier-revisions count covers it. So a file built to hide text can still
   get past it: an unreferenced stream with any other `/Type` or `/Subtype` is not read, nor is
-  one without either, as a font program has, that a dictionary typed `/FontDescriptor` names as
-  its font program, even when that dictionary is no real descriptor;
+  one with neither, as a font program has none, that a dictionary typed `/FontDescriptor` names
+  as its font program, even when that dictionary is no real descriptor;
 - annotation rectangles are compared in unrotated user space, so `/Rotate` pages may misalign;
 - a cover that hides less than half of every word it touches, less than 40% of a line's box and
   less than 40% of its words (a sliver of a long value) is not flagged.
