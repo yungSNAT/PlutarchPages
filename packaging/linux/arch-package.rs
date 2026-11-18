@@ -24,15 +24,18 @@
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
-//! root searches for `id`, `useradd`, `setsid`, `setpriv`, `timeout` and `runuser` and so must be
-//! root's, the descriptors the caller leaves open, as builder's programs inherit any above 2 that
-//! are not close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), and
-//! DIST's path: root makes and opens DIST by path, so DIST and every directory above it must be
-//! writable only by root, the caller or the checkout's owner, as dist/release is in a checkout
-//! whose own ancestors are. builder is there because makepkg refuses root, not as a sandbox: it
-//! runs the repository's own build, and in a local run its uid can be the checkout owner's. What a
-//! root run guards is root's own lookups: none can be steered into a write or removal outside DIST.
-//! Root reads Cargo.toml and opens DIST before its first program as
+//! root searches for `id`, `useradd`, `setpriv`, `sh`, `setsid`, `timeout` and `runuser` and so must
+//! be root's, the descriptors the caller leaves open, as builder's programs inherit any above 2 that
+//! are not close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), the
+//! programs it runs as builder, which leave nothing running when they return (it ends them only
+//! when the helper itself ends early), and DIST's path: root makes and opens DIST by path, so DIST
+//! and every directory above it must be writable only by root, the caller or the checkout's owner,
+//! as dist/release is in a checkout whose own ancestors are. builder is there because makepkg
+//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
+//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
+//! into a write or removal outside DIST. Root refuses a terminal on standard output or standard
+//! error that builder could open for reading by its name, as builder could then read what is typed
+//! there. Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
@@ -131,6 +134,7 @@ fn arch_package() -> Result {
         if !quiet(Command::new("id").args(["-u", "builder"]))?.success() {
             run(Command::new("useradd").args(["-m", "builder"]))?;
         }
+        refuse_terminal_builder_reads()?;
     }
 
     // builder (or the caller, when not root) makes, fills and removes its own private directory, and
@@ -154,19 +158,53 @@ fn arch_package() -> Result {
 /// ever has root's terminal as its own; builder's programs read nothing from root's standard input
 /// and get root's terminal, where standard output or standard error is one, opened for writing
 /// only, so none can push input into root's terminal or read from it. As that session is not the
-/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send `timeout`, root's
-/// process that waits on runuser, SIGTERM when the helper dies, and `timeout` (with no time limit)
-/// passes it on to runuser and builder's program. The signal goes to `timeout`, not runuser, as
-/// runuser's setup for builder clears it.
+/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send the helper's child
+/// SIGTERM when the helper dies, and that process goes on to be `timeout` (with no time limit),
+/// root's process that waits on runuser, which passes the signal on to runuser and builder's
+/// program. The signal goes to `timeout`, not runuser, as runuser's setup for builder clears it.
+/// The kernel sends it only for a death after setpriv asks, so [`PARENT_CHECK`] then stops the
+/// command if the helper has already gone.
 fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
     if !as_root {
         return Ok(Command::new(program));
     }
-    let mut command = Command::new("setsid");
-    command.args(["--wait", "setpriv", "--pdeathsig", "TERM", "timeout", "0"]);
+    let mut command = Command::new("setpriv");
+    command.args(["--pdeathsig", "TERM", "sh", "-c", PARENT_CHECK, "sh"]).arg(std::process::id().to_string());
+    command.args(["setsid", "--wait", "timeout", "0"]);
     command.args(["runuser", "-u", "builder", "--", "env", "HOME=/home/builder", program]);
     command.stdin(Stdio::null()).stdout(write_only(io::stdout())?).stderr(write_only(io::stderr())?);
     Ok(command)
+}
+
+/// Run by root as `sh -c` once setpriv has asked for the parent-death signal, with the helper's
+/// process ID and then the command: a helper that died before then has left this process to
+/// another parent, so the command never starts.
+const PARENT_CHECK: &str = r#"[ "$PPID" = "$1" ] || exit 125; shift; exec "$@""#;
+
+/// Fails when standard output or standard error is a terminal whose node builder may open for
+/// reading: its owner with the owner's read bit, a member of its group with the group's, or anyone
+/// with the others' bit.
+fn refuse_terminal_builder_reads() -> Result {
+    let ids = |flag: &str| -> Result<Vec<u32>> {
+        let out = capture(Command::new("id").args([flag, "builder"]))?.stdout;
+        String::from_utf8_lossy(&out).split_whitespace().map(|id| id.parse().map_err(|_| format!("id {flag} builder printed {id}").into())).collect()
+    };
+    let (uid, groups) = (ids("-u")?, ids("-G")?);
+    for (name, terminal) in [("output", io::stdout().is_terminal().then_some(1)), ("error", io::stderr().is_terminal().then_some(2))] {
+        let Some(fd) = terminal else { continue };
+        let node = fs::metadata(format!("/proc/self/fd/{fd}"))?;
+        let bit = if uid.contains(&node.uid()) {
+            0o400
+        } else if groups.contains(&node.gid()) {
+            0o040
+        } else {
+            0o004
+        };
+        if node.mode() & bit != 0 {
+            return Err(format!("standard {name} is a terminal builder can read: redirect it, or run from a terminal builder can't read").into());
+        }
+    }
+    Ok(())
 }
 
 /// `stream` for a child: a terminal is opened again for writing only, as the descriptor root has
