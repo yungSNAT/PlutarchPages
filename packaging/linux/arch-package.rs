@@ -24,12 +24,18 @@
 //! cat fills, and builder removes the directory. DIST itself keeps its owner and mode.
 //!
 //! It trusts the checkout it runs in, that checkout's owner, the caller's `PATH`, whose directories
-//! root searches for `id`, `useradd` and `runuser` and so must be root's, and DIST's path: root makes
-//! and opens DIST by path, so DIST and every directory above it must be writable only by root, the
-//! caller or the checkout's owner, as dist/release is in a checkout whose own ancestors are. builder
-//! is there because makepkg refuses root, not as a sandbox: it runs the repository's own build, and
-//! in a local run its uid can be the checkout owner's. What a root run guards is root's own lookups: none can be steered into a
-//! write or removal outside DIST. Root reads Cargo.toml and opens DIST before its first program as
+//! root searches for `id`, `useradd`, `setpriv`, `sh`, `setsid`, `timeout` and `runuser` and so must
+//! be root's, the descriptors the caller leaves open, as builder's programs inherit any above 2 that
+//! are not close-on-exec, so none of those may be a terminal (`docker run` and sudo pass none), the
+//! programs it runs as builder, which leave nothing running when they return (it ends them only
+//! when the helper itself ends early), and DIST's path: root makes and opens DIST by path, so DIST
+//! and every directory above it must be writable only by root, the caller or the checkout's owner,
+//! as dist/release is in a checkout whose own ancestors are. builder is there because makepkg
+//! refuses root, not as a sandbox: it runs the repository's own build, and in a local run its uid
+//! can be the checkout owner's. What a root run guards is root's own lookups: none can be steered
+//! into a write or removal outside DIST. Root refuses a terminal on standard output or standard
+//! error that builder could open for reading by its name, as builder could then read what is typed
+//! there. Root reads Cargo.toml and opens DIST before its first program as
 //! builder, and resolves no path in `TMPDIR`: it only passes the scratch directory's paths to
 //! builder's programs. It makes the package a new name in the opened DIST, never through a link, and
 //! gives it DIST's owner through the handle.
@@ -43,8 +49,8 @@ use std::env;
 use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
-use std::io::{self, Write};
-use std::os::fd::AsRawFd;
+use std::io::{self, IsTerminal, Write};
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
@@ -61,7 +67,7 @@ fn run(command: &mut Command) -> Result {
 }
 
 fn capture(command: &mut Command) -> Result<Output> {
-    let output = command.output()?;
+    let output = command.stdout(Stdio::piped()).stderr(Stdio::piped()).output()?;
     if !output.status.success() {
         eprint!("{}", String::from_utf8_lossy(&output.stderr));
         return Err(format!("{command:?} failed with {}", output.status).into());
@@ -128,36 +134,92 @@ fn arch_package() -> Result {
         if !quiet(Command::new("id").args(["-u", "builder"]))?.success() {
             run(Command::new("useradd").args(["-m", "builder"]))?;
         }
+        refuse_terminal_builder_reads()?;
     }
 
     // builder (or the caller, when not root) makes, fills and removes its own private directory, and
     // root only passes its path on: a lookup there by root could follow a link, or find another
     // directory under its name, that a builder process put there.
-    let mut work = capture(unprivileged("mktemp", as_root).arg("-d"))?.stdout;
+    let mut work = capture(unprivileged("mktemp", as_root)?.arg("-d"))?.stdout;
     if work.ends_with(b"\n") {
         work.pop();
     }
     let work = PathBuf::from(OsString::from_vec(work));
     let packaged = package(arch, &archive, &work, &dist_dir, &version, as_root);
-    if let Err(error) = run(unprivileged("rm", as_root).args(["-rf", "--"]).arg(&work)) {
+    let remove = || run(unprivileged("rm", as_root)?.args(["-rf", "--"]).arg(&work));
+    if let Err(error) = remove() {
         eprintln!("warning: couldn't remove {}: {error}", work.display());
     }
     packaged
 }
 
-/// `program` run as `builder` when the helper runs as root, and as the caller otherwise.
-fn unprivileged(program: &str, as_root: bool) -> Command {
+/// `program` run as `builder` when the helper runs as root, and as the caller otherwise. Root starts
+/// a session without a controlling terminal before runuser drops to builder, so no builder process
+/// ever has root's terminal as its own; builder's programs read nothing from root's standard input
+/// and get root's terminal, where standard output or standard error is one, opened for writing
+/// only, so none can push input into root's terminal or read from it. As that session is not the
+/// terminal's, an interrupt reaches only the helper: setpriv has the kernel send the helper's child
+/// SIGTERM when the helper dies, and that process goes on to be `timeout` (with no time limit),
+/// root's process that waits on runuser, which passes the signal on to runuser and builder's
+/// program. The signal goes to `timeout`, not runuser, as runuser's setup for builder clears it.
+/// The kernel sends it only for a death after setpriv asks, so [`PARENT_CHECK`] then stops the
+/// command if the helper has already gone.
+fn unprivileged(program: &str, as_root: bool) -> io::Result<Command> {
     if !as_root {
-        return Command::new(program);
+        return Ok(Command::new(program));
     }
-    let mut command = Command::new("runuser");
-    command.args(["-u", "builder", "--", "env", "HOME=/home/builder", program]);
-    command
+    let mut command = Command::new("setpriv");
+    command.args(["--pdeathsig", "TERM", "sh", "-c", PARENT_CHECK, "sh"]).arg(std::process::id().to_string());
+    command.args(["setsid", "--wait", "timeout", "0"]);
+    command.args(["runuser", "-u", "builder", "--", "env", "HOME=/home/builder", program]);
+    command.stdin(Stdio::null()).stdout(write_only(io::stdout())?).stderr(write_only(io::stderr())?);
+    Ok(command)
+}
+
+/// Run by root as `sh -c` once setpriv has asked for the parent-death signal, with the helper's
+/// process ID and then the command: a helper that died before then has left this process to
+/// another parent, so the command never starts.
+const PARENT_CHECK: &str = r#"[ "$PPID" = "$1" ] || exit 125; shift; exec "$@""#;
+
+/// Fails when standard output or standard error is a terminal whose node builder may open for
+/// reading: its owner with the owner's read bit, a member of its group with the group's, or anyone
+/// with the others' bit.
+fn refuse_terminal_builder_reads() -> Result {
+    let ids = |flag: &str| -> Result<Vec<u32>> {
+        let out = capture(Command::new("id").args([flag, "builder"]))?.stdout;
+        String::from_utf8_lossy(&out).split_whitespace().map(|id| id.parse().map_err(|_| format!("id {flag} builder printed {id}").into())).collect()
+    };
+    let (uid, groups) = (ids("-u")?, ids("-G")?);
+    for (name, terminal) in [("output", io::stdout().is_terminal().then_some(1)), ("error", io::stderr().is_terminal().then_some(2))] {
+        let Some(fd) = terminal else { continue };
+        let node = fs::metadata(format!("/proc/self/fd/{fd}"))?;
+        let bit = if uid.contains(&node.uid()) {
+            0o400
+        } else if groups.contains(&node.gid()) {
+            0o040
+        } else {
+            0o004
+        };
+        if node.mode() & bit != 0 {
+            return Err(format!("standard {name} is a terminal builder can read: redirect it, or run from a terminal builder can't read").into());
+        }
+    }
+    Ok(())
+}
+
+/// `stream` for a child: a terminal is opened again for writing only, as the descriptor root has
+/// for it can also read.
+fn write_only(stream: impl AsFd + IsTerminal) -> io::Result<Stdio> {
+    if !stream.is_terminal() {
+        return Ok(Stdio::inherit());
+    }
+    let path = Path::new("/proc/self/fd").join(stream.as_fd().as_raw_fd().to_string());
+    Ok(fs::OpenOptions::new().write(true).open(path)?.into())
 }
 
 /// Writes `contents` to `path` through `tee` run by [`unprivileged`], so root opens nothing there.
 fn write_unprivileged(path: &Path, contents: &str, as_root: bool) -> Result {
-    let mut tee = unprivileged("tee", as_root);
+    let mut tee = unprivileged("tee", as_root)?;
     tee.arg("--").arg(path).stdin(Stdio::piped()).stdout(Stdio::null());
     let mut child = tee.spawn()?;
     let written = child.stdin.take().map_or(Ok(()), |mut stdin| stdin.write_all(contents.as_bytes()));
@@ -175,19 +237,20 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
     }
 
     let stage = work.join("stage");
-    run(unprivileged("mkdir", as_root).arg("--").arg(&stage))?;
+    run(unprivileged("mkdir", as_root)?.arg("--").arg(&stage))?;
     let config = work.join("makepkg.conf");
     write_unprivileged(&config, &format!("source /etc/makepkg.conf\nCARCH={arch}\nCHOST={arch}-unknown-linux-gnu\nPKGEXT=.pkg.tar.zst\n"), as_root)?;
     let recipe = include_str!("arch.PKGBUILD").replace("@VERSION@", &pkgver).replace("@ARCH@", arch);
     write_unprivileged(&work.join("PKGBUILD"), &recipe, as_root)?;
-    run(unprivileged("tar", as_root).arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
+    run(unprivileged("tar", as_root)?.arg("-xzf").arg(archive).arg("-C").arg(&stage).arg("--strip-components=1"))?;
     // builder enters the scratch directory itself: once its tar has run, builder could have put a
-    // link where the directory was, and a chdir by root would follow it.
-    run(unprivileged("env", as_root).arg("-C").arg(work).arg("makepkg").arg("--config").arg(&config).args(["--nodeps", "--force"]))?;
+    // link where the directory was, and a chdir by root would follow it. makepkg runs there, so the
+    // configuration's bare name finds it even when `TMPDIR`, and so the directory's path, is relative.
+    run(unprivileged("env", as_root)?.arg("-C").arg(work).args(["makepkg", "--config", "makepkg.conf", "--nodeps", "--force"]))?;
 
     let built = work.join(format!("plutarchpages-{pkgver}-1-{arch}.pkg.tar.zst"));
-    run(unprivileged("pacman", as_root).arg("-Qip").arg(&built))?;
-    let listing = capture(unprivileged("pacman", as_root).arg("-Qlp").arg(&built))?;
+    run(unprivileged("pacman", as_root)?.arg("-Qip").arg(&built))?;
+    let listing = capture(unprivileged("pacman", as_root)?.arg("-Qlp").arg(&built))?;
     let listing = String::from_utf8_lossy(&listing.stdout);
     for path in [
         "/usr/bin/pdfcraft",
@@ -216,7 +279,7 @@ fn package(arch: &str, archive: &Path, work: &Path, dist_dir: &fs::File, version
         let owner = dist_dir.metadata()?;
         std::os::unix::fs::fchown(&file, Some(owner.uid()), Some(owner.gid()))?;
     }
-    run(unprivileged("cat", as_root).arg("--").arg(&built).stdout(file))?;
+    run(unprivileged("cat", as_root)?.arg("--").arg(&built).stdout(file))?;
     println!("wrote {name} in the output directory");
     Ok(())
 }
