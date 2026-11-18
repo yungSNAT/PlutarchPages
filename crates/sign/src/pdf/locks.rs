@@ -2,8 +2,8 @@
 //! that signing it makes read-only, the signature records the same in a FieldMDP reference, and a
 //! later change to one of them is not permitted whatever the document's DocMDP permissions allow.
 
-use super::listing::{Field, walk_fields};
-use super::{Dict, Document, HashSet, ObjRef, Object, PdfString, SignError};
+use super::listing::{Field, sig_fields, walk_fields};
+use super::{Arc, Dict, Document, HashSet, ObjRef, Object, PdfString, SignError};
 
 /// The read-only field flag (`/Ff` bit 1).
 const READ_ONLY: i64 = 1;
@@ -11,6 +11,8 @@ const READ_ONLY: i64 = 1;
 const REASONS_REQUIRED: i64 = 1 << 3;
 /// How far up `/Parent` an inherited `/Ff` is looked for.
 const MAX_PARENTS: usize = 32;
+/// Most objects one signature's locked fields may lead to; past it the lock reads as not whole.
+const MAX_LOCKED_OBJECTS: usize = 1 << 16;
 
 /// The fields a lock covers, by full name: a name also covers the fields below it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,6 +36,11 @@ impl FieldLock {
             b"Exclude" => Some(Self::Exclude(names()?)),
             _ => None,
         }
+    }
+
+    /// The lock `d` gives, or [`FieldLock::All`] when it can't be read as one.
+    fn read_or_all(doc: &Document, d: Option<Arc<Object>>) -> Self {
+        d.and_then(|d| d.as_dict().and_then(|d| Self::read(doc, d))).unwrap_or(Self::All)
     }
 
     fn covers(&self, name: &str) -> bool {
@@ -83,50 +90,93 @@ pub(super) fn reference(lock: &FieldLock, root: ObjRef) -> Object {
     Object::Dict(r)
 }
 
-/// `d`'s field flags, its own `/Ff` or the nearest parent's.
-fn flags(doc: &Document, d: &Dict) -> i64 {
-    let mut d = d.clone();
-    for _ in 0..MAX_PARENTS {
-        if let Some(ff) = d.get(b"Ff").and_then(|f| doc.resolve(f).as_int()) {
-            return ff;
+/// The locks signature value `v` in signature field `field` holds to: its FieldMDP references, and
+/// the field's own `/Lock`, which a reference that disagrees with it can't narrow. One that can't be
+/// read locks everything.
+fn policies(doc: &Document, field: &Dict, v: &Dict) -> Vec<FieldLock> {
+    let mut locks = Vec::new();
+    let references = v.get(b"Reference").map(|r| doc.resolve(r));
+    for r in references.as_deref().and_then(Object::as_array).into_iter().flatten() {
+        let r = doc.resolve(r);
+        if let Some(r) = r.as_dict().filter(|r| r.name(b"TransformMethod") == Some(b"FieldMDP")) {
+            locks.push(FieldLock::read_or_all(doc, r.get(b"TransformParams").map(|p| doc.resolve(p))));
         }
-        let Some(parent) = d.get(b"Parent").map(|p| doc.resolve(p)).and_then(|p| p.as_dict().cloned()) else { break };
-        d = parent;
     }
-    0
+    if let Some(lock) = field.get(b"Lock") {
+        locks.push(FieldLock::read_or_all(doc, Some(doc.resolve(lock))));
+    }
+    locks
+}
+
+/// `d`'s field flags, its own `/Ff` or the nearest parent's; `None` when the parents go on past
+/// [`MAX_PARENTS`], as the flags are then not known.
+fn flags(doc: &Document, d: &Dict) -> Option<i64> {
+    let own = |d: &Dict| d.get(b"Ff").and_then(|f| doc.resolve(f).as_int());
+    if let Some(ff) = own(d) {
+        return Some(ff);
+    }
+    let mut next = d.get(b"Parent").map(|p| doc.resolve(p));
+    for _ in 0..MAX_PARENTS {
+        let parent = next.take();
+        let Some(parent) = parent.as_deref().and_then(Object::as_dict) else { return Some(0) };
+        if let Some(ff) = own(parent) {
+            return Some(ff);
+        }
+        next = parent.get(b"Parent").map(|p| doc.resolve(p));
+    }
+    next.is_none().then_some(0)
 }
 
 /// Refuse to sign `field` when it is read-only (an earlier signature's lock, or its author, made it
-/// so), or when its `/SV` requires one of its `/Reasons` and `reason` isn't one of them. A single
-/// reason of `.` means none may be given.
+/// so), when an earlier signature's lock covers it though it is not read-only, or when its `/SV`
+/// requires one of its `/Reasons` and `reason`, as signing writes it, isn't one of them. Without
+/// `/Reasons`, or with a single reason of `.`, none may be given.
 pub(super) fn check_signable(doc: &Document, field: &Field, reason: Option<&str>) -> Result<(), SignError> {
-    if flags(doc, &field.dict) & READ_ONLY != 0 {
-        return Err(SignError::Pdf(format!("the field {:?} is read-only, locked by an earlier signature or by the form's author", field.name)));
+    match flags(doc, &field.dict) {
+        None => return Err(SignError::Pdf(format!("the field {:?} inherits its flags from too far up for PdfCraft to read", field.name))),
+        Some(ff) if ff & READ_ONLY != 0 => {
+            return Err(SignError::Pdf(format!("the field {:?} is read-only, locked by an earlier signature or by the form's author", field.name)));
+        }
+        Some(_) => {}
     }
-    let Some(sv) = field.dict.get(b"SV").map(|sv| doc.resolve(sv)).and_then(|sv| sv.as_dict().cloned()) else { return Ok(()) };
+    for signed in sig_fields(doc) {
+        let Some(v) = signed.signature(doc) else { continue };
+        if policies(doc, &signed.dict, &v).iter().any(|l| l.covers(&field.name)) {
+            return Err(SignError::Pdf(format!("the field {:?} is read-only, locked by the signature in {:?}", field.name, signed.name)));
+        }
+    }
+    let Some(sv) = field.dict.get(b"SV").map(|sv| doc.resolve(sv)) else { return Ok(()) };
+    let Some(sv) = sv.as_dict() else { return Ok(()) };
     if sv.get(b"Ff").and_then(|f| doc.resolve(f).as_int()).unwrap_or(0) & REASONS_REQUIRED == 0 {
         return Ok(());
     }
-    let reasons: Vec<String> = sv
-        .get(b"Reasons")
-        .map(|r| doc.resolve(r))
-        .and_then(|r| r.as_array().map(|a| a.iter().filter_map(|r| doc.resolve(r).as_string().map(|s| s.to_text())).collect()))
-        .unwrap_or_default();
-    let reason = reason.map(str::trim).filter(|r| !r.is_empty());
-    let ok = match (reasons.as_slice(), reason) {
-        ([], _) => true,
+    let reasons: Option<Vec<String>> = match sv.get(b"Reasons").map(|r| doc.resolve(r)) {
+        None => Some(Vec::new()),
+        Some(r) if matches!(*r, Object::Null) => Some(Vec::new()),
+        Some(r) => r.as_array().and_then(|a| a.iter().map(|r| doc.resolve(r).as_string().map(|s| s.to_text())).collect()),
+    };
+    let Some(reasons) = reasons else {
+        return Err(SignError::Pdf(format!("the field {:?} requires a reason from a list PdfCraft can't read", field.name)));
+    };
+    let given = reason.filter(|r| !r.trim().is_empty());
+    let ok = match (reasons.as_slice(), given) {
+        ([], given) => given.is_none(),
         ([only], given) if only == "." => given.is_none(),
         (_, Some(given)) => reasons.iter().any(|r| r == given),
         (_, None) => false,
     };
     if ok {
         Ok(())
+    } else if reasons.iter().all(|r| r == ".") {
+        Err(SignError::Pdf(format!("the field {:?} must be signed without a reason", field.name)))
     } else {
         Err(SignError::Pdf(format!("the field {:?} must be signed for one of these reasons: {}", field.name, reasons.join("; "))))
     }
 }
 
-/// Make every field `lock` covers read-only. One that already is stays as it was, so a signature
+/// Make every field `lock` covers read-only, by its own `/Ff`. A field with fields below it is
+/// left as it is, as they would inherit its flag whether `lock` covers them or not; those it
+/// covers are made read-only themselves. One that already is stays as it was, so a signature
 /// whose lock repeats an earlier one changes nothing that one locked, and so does a signature field
 /// that already holds a signature: its signature protects it, and a later change to a signed
 /// widget reads as a change to the page.
@@ -137,8 +187,15 @@ pub(super) fn lock_fields(doc: &mut Document, lock: &FieldLock) -> Result<(), Si
             "this form has too many fields, or a field name too long, for PdfCraft to lock the ones this signature locks".into(),
         ));
     }
-    for f in fields.iter().filter(|f| lock.covers(&f.name)) {
-        let ff = flags(doc, &f.dict);
+    let mut names: Vec<&str> = fields.iter().map(|f| f.name.as_str()).collect();
+    names.sort_unstable();
+    let has_fields_below = |name: &str| {
+        let below = format!("{name}.");
+        names.get(names.partition_point(|n| *n < below.as_str())).is_some_and(|n| n.starts_with(&below))
+    };
+    for f in fields.iter().filter(|f| lock.covers(&f.name) && !has_fields_below(&f.name)) {
+        let ff =
+            flags(doc, &f.dict).ok_or_else(|| SignError::Pdf(format!("the field {:?} inherits its flags from too far up to be locked", f.name)))?;
         if ff & READ_ONLY != 0 || f.dict.get(b"V").is_some_and(|v| doc.resolve(v).as_dict().is_some()) {
             continue;
         }
@@ -148,51 +205,124 @@ pub(super) fn lock_fields(doc: &mut Document, lock: &FieldLock) -> Result<(), Si
     Ok(())
 }
 
-/// What a signature's FieldMDP references lock ([`locked`]).
+/// What a signature's locks cover ([`locked`]).
 pub(super) struct Locked {
-    /// The objects of the fields they cover: each field, its widgets and their appearance
-    /// dictionaries and streams.
+    /// Every object the covered fields are made of or lead to: each field, its parents, its
+    /// widgets, and what their entries refer to (values, appearance streams and their resources),
+    /// short of the pages and the rest of the form.
     pub(super) objects: HashSet<u32>,
+    /// Each covered field's name, object and widgets' objects, in the order the form lists them.
+    pub(super) fields: Vec<(String, u32, Vec<u32>)>,
     /// Whether the form was read whole: if not, a field not read may be one of them.
     pub(super) whole: bool,
 }
 
-/// What signature value `v`'s FieldMDP references lock in `old`, the revision it signed, or `None`
-/// when it has none.
-pub(super) fn locked(old: &Document, v: &Dict) -> Option<Locked> {
-    let references = v.get(b"Reference").map(|r| old.resolve(r))?;
-    let mut locks = references
-        .as_array()?
-        .iter()
-        .filter_map(|r| old.resolve(r).as_dict().cloned())
-        .filter(|r| r.name(b"TransformMethod") == Some(b"FieldMDP"))
-        // A FieldMDP reference whose parameters can't be read locks everything.
-        .map(|r| r.get(b"TransformParams").and_then(|p| old.resolve(p).as_dict().and_then(|p| FieldLock::read(old, p))).unwrap_or(FieldLock::All))
-        .peekable();
-    locks.peek()?;
-    let locks: Vec<FieldLock> = locks.collect();
-    let (fields, whole) = walk_fields(old, false);
-    let mut objects = HashSet::new();
-    for f in fields.iter().filter(|f| locks.iter().any(|l| l.covers(&f.name))) {
-        objects.extend(f.r.map(|r| r.num));
-        for (w, d) in &f.widgets {
-            objects.extend(w.map(|r| r.num));
-            appearance_objects(old, d, &mut objects);
-        }
-        appearance_objects(old, &f.dict, &mut objects);
+impl Locked {
+    /// Whether `doc` still has the covered fields the signed revision had, by name, as the same
+    /// objects: a field replaced or moved under another parent leaves its old objects as they were.
+    pub(super) fn same_fields_in(&self, doc: &Document) -> bool {
+        let names: HashSet<&str> = self.fields.iter().map(|(n, ..)| n.as_str()).collect();
+        let (fields, whole) = walk_fields(doc, false);
+        let now: Option<Vec<_>> = fields.iter().filter(|f| names.contains(f.name.as_str())).map(placed).collect();
+        (whole || !self.whole) && now.as_ref() == Some(&self.fields)
     }
-    Some(Locked { objects, whole })
 }
 
-/// The objects of `widget`'s `/AP`: the dictionary, each appearance and each state's appearance.
-fn appearance_objects(doc: &Document, widget: &Dict, out: &mut HashSet<u32>) {
-    let Some(ap) = widget.get(b"AP") else { return };
-    out.extend(ap.as_ref().map(|r| r.num));
-    let ap = doc.resolve(ap);
-    for (_, entry) in ap.as_dict().into_iter().flat_map(Dict::iter) {
-        out.extend(entry.as_ref().map(|r| r.num));
-        if let Object::Dict(states) = &*doc.resolve(entry) {
-            out.extend(states.iter().filter_map(|(_, s)| s.as_ref()).map(|r| r.num));
+/// `f`'s name, object and widgets' objects; `None` when one of them is not an object of its own.
+fn placed(f: &Field) -> Option<(String, u32, Vec<u32>)> {
+    let widgets = f.widgets.iter().map(|(w, _)| w.map(|w| w.num)).collect::<Option<Vec<u32>>>()?;
+    Some((f.name.clone(), f.r?.num, widgets))
+}
+
+/// What the signature in signature field `field`, with value `v`, locks in `old`, the revision it
+/// signed ([`policies`]), or `None` when it locks nothing.
+pub(super) fn locked(old: &Document, field: &Dict, v: &Dict) -> Option<Locked> {
+    let locks = policies(old, field, v);
+    if locks.is_empty() {
+        return None;
+    }
+    let (fields, mut whole) = walk_fields(old, false);
+    let (mut objects, mut covered, mut left) = (HashSet::new(), Vec::new(), MAX_LOCKED_OBJECTS);
+    for f in fields.iter().filter(|f| locks.iter().any(|l| l.covers(&f.name))) {
+        // A field or widget written in place changes with whatever holds it, which may be no
+        // field of these.
+        let Some(place) = placed(f) else {
+            whole = false;
+            continue;
+        };
+        objects.insert(place.1);
+        objects.extend(place.2.iter().copied());
+        covered.push(place);
+        whole &= reach(old, &f.dict, &mut objects, &mut left);
+        for (_, w) in &f.widgets {
+            whole &= reach(old, w, &mut objects, &mut left);
+        }
+        whole &= parents(old, &f.dict, &mut objects, &mut left);
+    }
+    Some(Locked { objects, fields: covered, whole })
+}
+
+/// Add `d`'s parents, and what their entries lead to ([`reach`]), to `out`; false when they go on
+/// past [`MAX_PARENTS`] or [`reach`] stops.
+fn parents(doc: &Document, d: &Dict, out: &mut HashSet<u32>, left: &mut usize) -> bool {
+    let mut next = d.get(b"Parent").cloned();
+    for _ in 0..MAX_PARENTS {
+        let Some(p) = next.take() else { return true };
+        if let Some(r) = p.as_ref() {
+            out.insert(r.num);
+        }
+        let parent = doc.resolve(&p);
+        let Some(parent) = parent.as_dict() else { return true };
+        if !reach(doc, parent, out, left) {
+            return false;
+        }
+        next = parent.get(b"Parent").cloned();
+    }
+    next.is_none()
+}
+
+/// Add to `out` every object `d`'s entries lead to, other than up or across the form and page
+/// trees: `/Parent`, `/Kids` and `/P` are not followed, nor is a page, the page tree or the
+/// catalog. False once that would add more than `left` objects.
+fn reach(doc: &Document, d: &Dict, out: &mut HashSet<u32>, left: &mut usize) -> bool {
+    let mut found = Vec::new();
+    refs_in_dict(d, &mut found);
+    while let Some(r) = found.pop() {
+        if out.contains(&r.num) {
+            continue;
+        }
+        let o = doc.get(r);
+        let dict = match &*o {
+            Object::Dict(d) => Some(d),
+            Object::Stream(s) => Some(&s.dict),
+            _ => None,
+        };
+        if dict.is_some_and(|d| matches!(d.name(b"Type"), Some(b"Page" | b"Pages" | b"Catalog"))) {
+            continue;
+        }
+        let Some(rest) = left.checked_sub(1) else { return false };
+        *left = rest;
+        out.insert(r.num);
+        refs_in(&o, &mut found);
+    }
+    true
+}
+
+/// The references in `o`, written in place or nested, other than through `/Parent`, `/Kids` or `/P`.
+fn refs_in(o: &Object, found: &mut Vec<ObjRef>) {
+    match o {
+        Object::Ref(r) => found.push(*r),
+        Object::Array(a) => a.iter().for_each(|o| refs_in(o, found)),
+        Object::Dict(d) => refs_in_dict(d, found),
+        Object::Stream(s) => refs_in_dict(&s.dict, found),
+        _ => {}
+    }
+}
+
+fn refs_in_dict(d: &Dict, found: &mut Vec<ObjRef>) {
+    for (k, v) in d.iter() {
+        if !matches!(k.as_slice(), b"Parent" | b"Kids" | b"P") {
+            refs_in(v, found);
         }
     }
 }

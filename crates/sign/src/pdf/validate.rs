@@ -275,15 +275,14 @@ fn finish_validation(context: SignatureValidation<'_>, verified: VerifiedSignatu
         // came after it is judged as when the revision cannot be read: not permitted.
         let old = cache.revision(doc, bytes, covered);
         let signed = old.as_ref().and_then(|old| {
-            sig_fields(old)
-                .iter()
-                .filter_map(|f| f.signature(old))
-                .find(|v| nums(old, v, b"ByteRange").is_some_and(|b| b.len() == 4 && b[2] + b[3] == covered as f64))
+            sig_fields(old).into_iter().find_map(|f| {
+                f.signature(old).filter(|v| nums(old, v, b"ByteRange").is_some_and(|b| b.len() == 4 && b[2] + b[3] == covered as f64)).map(|v| (f, v))
+            })
         });
         match (old, signed) {
-            (Some(old), Some(v)) => {
+            (Some(old), Some((field, v))) => {
                 set_certification(&old, &v, info);
-                let locked = locked(&old, &v);
+                let locked = locked(&old, &field.dict, &v);
                 classify_changes(doc, Some(old), info.certify, locked.as_ref())
             }
             _ => classify_changes(doc, None, info.certify, None),

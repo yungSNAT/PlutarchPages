@@ -244,21 +244,19 @@ fn set_props_target(doc: &mut Document, name: &str, object: Option<ObjRef>, prop
     let (sort_items, old_selection) = items_to_sort(doc, &f, props);
     let parent_default = ancestor_sets(doc, f.obj, b"DV");
     let parent_limit = ancestor_sets(doc, f.obj, b"MaxLen");
-    let seed = props.signature_reasons.as_ref().map(|r| seed_with_reasons(doc, f.obj, r.as_deref()));
+    // `/Lock` and `/SV` are indirect references (ISO 32000-2 Table 235), new objects of their own:
+    // one another field shares is left as it was.
+    let lock = props.signature_lock.as_ref().map(|l| l.as_ref().map(|l| doc.add(Object::Dict(lock_dict(l)))));
+    let seed = props.signature_reasons.as_ref().map(|r| seed_with_reasons(doc, f.obj, r.as_deref()).map(|sv| doc.add(Object::Dict(sv))));
     doc.update_dict(f.obj, |d| {
-        match &props.signature_lock {
-            Some(Some(lock)) => d.set(b"Lock".to_vec(), Object::Dict(lock_dict(lock))),
-            Some(None) => {
-                d.remove(b"Lock");
+        for (key, entry) in [(&b"Lock"[..], lock), (b"SV", seed)] {
+            match entry {
+                Some(Some(r)) => d.set(key.to_vec(), Object::Ref(r)),
+                Some(None) => {
+                    d.remove(key);
+                }
+                None => {}
             }
-            None => {}
-        }
-        match seed {
-            Some(Some(sv)) => d.set(b"SV".to_vec(), Object::Dict(sv)),
-            Some(None) => {
-                d.remove(b"SV");
-            }
-            None => {}
         }
         d.set(b"Ff".to_vec(), Object::Int(ff as i64));
         if let Some(t) = &props.tooltip {

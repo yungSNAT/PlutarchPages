@@ -10,8 +10,8 @@ const MAX_ANNOT_ENTRIES: usize = 1 << 22;
 
 /// What later revisions changed, classified as Acrobat reports it, under DocMDP `p` (or none:
 /// an approval signature permits form fill, comments and further signatures). A change to an
-/// object of a field the signature `locked` is not permitted, whatever `p` allows; nor, when the
-/// form was not read whole, is any form fill.
+/// object of a field the signature `locked` is not permitted, whatever `p` allows, nor is replacing
+/// such a field; nor, when the form was not read whole, is any form fill.
 pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<u8>, locked: Option<&Locked>) -> Modification {
     let Some(old) = old else {
         return Modification::Disallowed(vec![kind::UNREADABLE]);
@@ -185,10 +185,12 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         // graphics state does not make that a form fill. A container (the resources dictionary,
         // a category dictionary) that kept every entry it had and only gained names changes
         // nothing the signed content draws, and is judged as before.
-        let Some(what) = classifier.classify(r, &new, before.as_deref()) else { continue };
-        let what = match locked {
-            Some(l) if l.objects.contains(&num) || (!l.whole && what == kind::FORM_FILL) => kind::LOCKED_FORM_FIELDS,
-            _ => what,
+        // A locked object is judged as one before the classifier can pass over it as unchanged.
+        let what = if locked.is_some_and(|l| l.objects.contains(&num)) {
+            kind::LOCKED_FORM_FIELDS
+        } else {
+            let Some(what) = classifier.classify(r, &new, before.as_deref()) else { continue };
+            if locked.is_some_and(|l| !l.whole) && what == kind::FORM_FILL { kind::LOCKED_FORM_FIELDS } else { what }
         };
         let ok = match (what, p) {
             (kind::SIGNATURE | kind::SECURITY_STORE, _) => true,
@@ -218,6 +220,10 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         if !disallowed.contains(&what) {
             disallowed.push(what);
         }
+    }
+    // A locked field replaced, or moved under another parent, leaves its old objects as they were.
+    if locked.is_some_and(|l| !l.same_fields_in(doc)) && !disallowed.contains(&kind::LOCKED_FORM_FIELDS) {
+        disallowed.push(kind::LOCKED_FORM_FIELDS);
     }
     // DocMDP P=1 ("no changes allowed", ISO 32000-2 §12.8.2.2) permits only validation data to
     // follow: the document security store, and document timestamps added for PAdES long-term
