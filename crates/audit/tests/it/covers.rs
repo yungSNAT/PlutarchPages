@@ -471,12 +471,20 @@ fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
 /// Text shown in a render mode that clips (4 to 7) adds its glyphs to the clip at `ET`, so a stroke
 /// or a fill painted after it, here one far from the glyphs, is no cover. Nothing is clipped where
 /// no glyph with an outline is shown (ISO 32000-1 §9.3.6): a text object that shows nothing, an
-/// empty string, spaces alone in a simple font, or text in a Type 3 font, whose glyphs only mode 3
-/// affects; nor by invisible text (mode 3). A restore brings the clip back.
+/// empty string, spaces alone in a simple font whose encoding keeps 20h the space, or text in a
+/// Type 3 font, whose glyphs only mode 3 affects; nor by invisible text (mode 3). A Type 0 font's
+/// codes and a font the page lacks, which a viewer replaces, are taken to draw. A restore brings
+/// the clip back.
 #[test]
 fn a_cover_under_a_text_clip_is_not_read() {
-    let resources = "<< /Font << /F1 5 0 R /T3 6 0 R >> /ExtGState << /G3 << /Font [6 0 R 24] >> >> >>";
-    let fonts = [type3(7, ""), stream_obj("", "1000 0 d0")];
+    let resources = "<< /Font << /F1 5 0 R /T3 6 0 R /FA 8 0 R /F0 9 0 R >> /ExtGState << /G3 << /Font [6 0 R 24] >> >> >>";
+    let fonts = [
+        type3(7, ""),
+        stream_obj("", "1000 0 d0"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences [32 /A] >> >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [<< /Type /Font           /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>] >>"
+            .to_vec(),
+    ];
     let mut wrong = Vec::new();
     for painter in ["0 G 33 w 100 704 m 320 704 l S", "0 g 90 600 240 200 re f"] {
         for (clip, hidden) in [
@@ -492,6 +500,9 @@ fn a_cover_under_a_text_clip_is_not_read() {
             ("BT 7 Tr /F1 24 Tf 300 300 Td [-500 ( X)] TJ ET", false),
             ("BT 7 Tr /T3 24 Tf 300 300 Td (a) Tj ET", true),
             ("BT 7 Tr /G3 gs 300 300 Td (a) Tj ET", true),
+            ("BT 7 Tr /FA 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /F0 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /F9 24 Tf 300 300 Td (X) Tj ET", false),
             ("q BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET Q", true),
         ] {
             let paint = format!("{TWO_LINES} {clip} {painter}");
