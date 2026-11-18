@@ -250,6 +250,8 @@ fn font_files(object: &Object, programs: &mut std::collections::HashSet<pdfcraft
     while let Some(object) = stack.pop() {
         match object {
             Object::Dict(dict) | Object::Stream(pdfcraft_cos::Stream { dict, .. }) => {
+                // A `/Type` written as a reference is not resolved: such a descriptor names nothing,
+                // so its program is read as a candidate, which can over-report, never hide text.
                 if dict.get(b"Type").and_then(Object::as_name) == Some(&b"FontDescriptor"[..]) {
                     programs.extend([&b"FontFile"[..], b"FontFile2"].into_iter().filter_map(|key| dict.get(key)?.as_ref()));
                 }

@@ -148,10 +148,10 @@ fn unreferenced_streams_that_show_text_are_counted() {
 /// A font program is not content, however its bytes read: an unreferenced stream that a font
 /// descriptor names as its `/FontFile` or `/FontFile2` is skipped, the descriptor an object of its
 /// own or written out in place in a font; the same key in another dictionary names none. A
-/// reference names one object by number and generation,
-/// so a stale one to an earlier generation skips nothing. `/Length1` alone, which any stream can
-/// carry, does not make one a font program, so a stream with it that shows text and that no
-/// descriptor names is counted, and one that can't be decoded fails the audit.
+/// reference names one object by number and generation, so a stale one to an earlier generation
+/// skips nothing. `/Length1` alone, which any stream can carry, does not make one a font program,
+/// so a stream with it that shows text and that no descriptor names is counted, and one that can't
+/// be decoded fails the audit.
 #[test]
 fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
     const DESCRIPTOR: &str =
