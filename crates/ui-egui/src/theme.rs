@@ -276,6 +276,9 @@ pub const SYSTEM_TAMIL_FALLBACK: &str = "system-tamil-fallback";
 pub const SYSTEM_HEBREW_FALLBACK: &str = "system-hebrew-fallback";
 /// The name of the installed Hangul (Korean) face [`installed_font_definitions`] may add.
 pub const SYSTEM_HANGUL_FALLBACK: &str = "system-hangul-fallback";
+/// The name of the installed face with U+FFFD [`installed_font_definitions`] may add.
+#[cfg(not(target_arch = "wasm32"))]
+const SYSTEM_REPLACEMENT_FALLBACK: &str = "system-replacement-fallback";
 
 /// Which installed face an interface language needs, given whether the build embeds a `Hans`
 /// face.
@@ -311,7 +314,8 @@ fn installed_fallback_need(cjk: CjkPreference, has_embedded_hans: bool) -> crate
 /// Installed Devanagari, Telugu, Sinhala, Tamil, Hebrew and Hangul faces, when there are, end
 /// every family just before that one, so Hindi, Telugu (#1531), Sinhala and Tamil (#1688) and
 /// Korean text, such as a file name or a tab title, and Hebrew file names (#586) draw in a build
-/// without such faces.
+/// without such faces. An installed face with U+FFFD does the same for names that are not text
+/// (a PDF name that is not UTF-8), which would otherwise abort the frame that shows them.
 ///
 /// `PDFCRAFT_SYSTEM_FONTS=0` leaves them out.
 pub fn installed_font_definitions(cjk: CjkPreference) -> FontDefinitions {
@@ -328,6 +332,7 @@ pub fn installed_font_definitions(cjk: CjkPreference) -> FontDefinitions {
             (SYSTEM_TAMIL_FALLBACK, crate::system_fonts::tamil_fallback()),
             (SYSTEM_HEBREW_FALLBACK, crate::system_fonts::hebrew_fallback()),
             (SYSTEM_HANGUL_FALLBACK, crate::system_fonts::hangul_fallback()),
+            (SYSTEM_REPLACEMENT_FALLBACK, crate::system_fonts::replacement_fallback()),
         ] {
             let Some(data) = data else { continue };
             fonts.font_data.insert(name.to_owned(), data);
