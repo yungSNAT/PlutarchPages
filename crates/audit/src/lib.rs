@@ -225,14 +225,16 @@ fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
         let Object::Stream(stream) = &*object else { continue };
         let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
         if matches!(name(b"Type").as_deref(), None | Some(b"XObject")) && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form")) {
-            candidates.push(reference);
+            candidates.push((reference, stream.dict.get(b"Type").is_none() && stream.dict.get(b"Subtype").is_none()));
         }
     }
-    // A reference names one object by number and generation: a stale one names none.
-    candidates.retain(|r| !programs.contains(r));
+    // A font program has neither `/Type` nor `/Subtype`, so a stream with either that a descriptor
+    // names, such as a form, is still read. A reference names one object by number and generation:
+    // a stale one names none.
+    candidates.retain(|(r, untyped)| !(*untyped && programs.contains(r)));
     let mut budget = pdfcraft_cos::DecodeBudget::page();
     let mut count = 0;
-    for (_, object) in doc.scan_objects_subset(candidates.into_iter().map(|r| r.num).collect()) {
+    for (_, object) in doc.scan_objects_subset(candidates.into_iter().map(|(r, _)| r.num).collect()) {
         let Object::Stream(stream) = &*object? else { continue };
         if pdfcraft_content::ops(&budget.decode_strict(doc, stream)?).any(|op| matches!(op.op.as_slice(), b"Tj" | b"TJ" | b"'" | b"\"")) {
             count += 1;
