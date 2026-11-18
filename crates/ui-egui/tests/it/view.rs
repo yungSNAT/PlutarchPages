@@ -2092,10 +2092,19 @@ fn buttons_take_presses_as_the_scripts_show_them() {
         app.open_bytes("frames.pdf", None, SHOWN_BY_SCRIPT.to_vec()).expect("opens");
         app
     });
-    h.run_steps(2);
+    // Wait for the page's open action, which runs on a later frame, for up to about 6 s.
+    let id = h.state().views[0].id;
+    let opened = (0..600).any(|_| {
+        h.run_steps(1);
+        let ran = h.state_mut().session.run_javascript(id, "typeof pressed", None).expect("runs").result.as_deref() == Some("string");
+        if !ran {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        ran
+    });
+    assert!(opened, "the page's open action ran");
     press_field(&mut h, "shown");
     press_field(&mut h, "gone");
-    let id = h.state().views[0].id;
     let pressed = h.state_mut().session.run_javascript(id, "pressed", None).expect("runs").result;
     assert_eq!(pressed.as_deref(), Some("shown"));
 }
