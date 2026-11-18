@@ -47,8 +47,10 @@ Like the rest of `vendor/`, this crate is outside the workspace: as a member, ev
 dependency of its other features would join `Cargo.lock` and the licence and source checks. So the
 gate runs only the tests that reach it through the facades (`crates/cos/tests`, `crates/crypt/tests`
 and the others), and its own unit tests, the fixes' among them, run from the repository root with
-the workspace's hayro-syntax:
+the workspace's hayro-syntax and hayro-jbig2:
 
 ```sh
-CARGO_TARGET_DIR=target cargo test --manifest-path vendor/craft-pdf/Cargo.toml --features content --lib \n  --config 'patch.crates-io.hayro-syntax.path="vendor/hayro-syntax"'
+CARGO_TARGET_DIR=target cargo test --manifest-path vendor/craft-pdf/Cargo.toml --features content --lib \
+  --config 'patch.crates-io.hayro-syntax.path="vendor/hayro-syntax"' \
+  --config 'patch.crates-io.hayro-jbig2.path="vendor/hayro-jbig2"'
 ```
