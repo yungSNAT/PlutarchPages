@@ -469,9 +469,9 @@ fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
 }
 
 /// Text shown in a render mode that clips (4 to 7) adds its glyphs to the clip at `ET`, so a stroke
-/// or a fill painted after it, here one far from the glyphs, is no cover; nor after an empty text
-/// object in such a mode, whose clip may be empty. Invisible text (mode 3) clips nothing, and a
-/// restore brings the clip back.
+/// or a fill painted after it, here one far from the glyphs, is no cover. A text object in such a
+/// mode that shows nothing clips nothing (ISO 32000-2 §9.3.6), nor does invisible text (mode 3),
+/// and a restore brings the clip back.
 #[test]
 fn a_cover_under_a_text_clip_is_not_read() {
     let resources = "<< /Font << /F1 5 0 R >> >>";
@@ -480,7 +480,7 @@ fn a_cover_under_a_text_clip_is_not_read() {
             ("BT 3 Tr /F1 24 Tf 300 300 Td (X) Tj ET", true),
             ("BT 4 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
             ("BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
-            ("7 Tr BT ET", false),
+            ("7 Tr BT ET", true),
             ("q BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET Q", true),
         ] {
             let paint = format!("{TWO_LINES} {clip} {painter}");
