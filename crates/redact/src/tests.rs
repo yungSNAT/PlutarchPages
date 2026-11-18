@@ -664,7 +664,8 @@ fn added_text_parameters_do_not_keep_redacted_text() {
     mark(&mut doc, 0, &[[20.0, 95.0, 40.0, 110.0]], "");
     apply(&mut doc, None).unwrap();
     assert!(!content(&doc, 0).contains("1234"));
-    let bytes = write_full(&doc, &SaveOptions::default()).unwrap();
+    // A pinned identifier: one drawn at random is hex digits that can spell the 4 searched for.
+    let bytes = write_full(&doc, &SaveOptions { id_entropy: Some([7; 16]), ..SaveOptions::default() }).unwrap();
     assert!(!bytes.windows(4).any(|w| w == b"1234"), "redacted text left in the saved file");
 }
 
@@ -7494,7 +7495,8 @@ fn a_redacted_form_xobject_drops_the_source_text_of_added_content() {
     let mut doc = one_page(b"/X Do", "/XObject << /X 7 0 R >>", vec![form]);
     mark(&mut doc, 0, &[[20.0, 95.0, 40.0, 110.0]], "");
     apply(&mut doc, None).unwrap();
-    let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    // A pinned identifier: one drawn at random is hex digits that can spell the 4 searched for.
+    let bytes = write_full(&doc, &SaveOptions { object_streams: false, id_entropy: Some([7; 16]), ..SaveOptions::default() }).unwrap();
     assert!(!bytes.windows(4).any(|w| w == b"1234"), "redacted text left in the saved file");
 }
 
