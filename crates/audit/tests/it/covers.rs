@@ -437,3 +437,33 @@ fn a_stroke_counts_only_under_a_clip_that_is_a_box() {
         assert_eq!(covered(&doc), want, "appearance {}", appearance.0);
     }
 }
+
+/// A fill, a shading or an image is read as a cover only where the clip is a box on the page, as a
+/// stroke is, and over the part of its box within the clip: under a triangle or a box with a hole
+/// it may be clipped away from the text, and a box clip beside the text leaves it showing. An image
+/// the CTM shears paints no box either.
+#[test]
+fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
+    let resources = "<< /Font << /F1 5 0 R >> /Shading << /Sh 6 0 R >> /XObject << /Im 7 0 R >> >>";
+    let objects = [
+        BLACK_SHADING.as_bytes().to_vec(),
+        stream_obj("/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", "0"),
+    ];
+    for painter in ["0 g 90 600 240 200 re f", "/Sh sh", "240 0 0 200 90 600 cm /Im Do"] {
+        for (clip, hidden) in [
+            ("90 600 240 200 re W n", true),
+            ("90 600 m 330 600 l 330 800 l 90 800 l h W n", true),
+            ("200 600 130 200 re W n", false),
+            ("100 800 m 320 800 l 320 600 l h W n", false),
+            ("100 800 m 320 800 l 320 600 l h W* n", false),
+            ("90 690 120 40 re 0 0 612 792 re W* n", false),
+            ("210 690 -120 40 re 0 0 612 792 re W n", false),
+        ] {
+            let paint = format!("q {clip} {painter} Q");
+            let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+            assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &objects)), want, "{paint}");
+        }
+    }
+    let sheared = format!("{TWO_LINES} q 240 0 200 200 0 600 cm /Im Do Q");
+    assert!(covered(&page(resources, &sheared, &objects)).is_empty(), "{sheared}");
+}
