@@ -118,6 +118,82 @@ fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
     }
 }
 
+/// Streams nothing refers to that show text are counted as `unreferenced-text`, a stream or a form
+/// alike: a redaction applied and saved without garbage collection leaves the page's old content
+/// so. One that shows no text, and an image, however its data reads, are not; nor is any once the
+/// next save must write the document in full, which keeps only what it refers to.
+#[test]
+fn unreferenced_streams_that_show_text_are_counted() {
+    let mut b = Builder::new();
+    b.add("<< /Type /Catalog /Pages 2 0 R >>");
+    b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+    b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
+    b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
+    b.add(FONT);
+    b.add_stream(b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET");
+    b.add_stream_with(b"BT /F1 24 Tf 100 700 Td [(SECRET)] TJ ET", "/Type /XObject /Subtype /Form /BBox [0 0 612 792]");
+    b.add_stream(b"0 g 100 688 220 32 re f");
+    b.add_stream_with(b"BT (SECRET) Tj ET", "/Type /XObject /Subtype /Image /Width 17 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8");
+    let mut doc = open(b.build());
+    let kinds = |doc: &Document| -> Vec<(&'static str, usize)> {
+        let report = crate::audit_document(doc).unwrap();
+        assert!(report.page_findings.is_empty());
+        report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
+    };
+    assert_eq!(kinds(&doc), [("unreferenced-text", 2)]);
+    doc.require_full_save();
+    assert!(kinds(&doc).is_empty());
+}
+
+/// A font program is not content, however its bytes read: an unreferenced stream that a font
+/// descriptor names as its `/FontFile` or `/FontFile2` is skipped, the descriptor an object of its
+/// own or written out in place in a font; the same key in another dictionary names none. A
+/// reference names one object by number and generation, so a stale one to an earlier generation
+/// skips nothing. `/Length1` alone, which any stream can carry, does not make one a font program,
+/// so a stream with it that shows text and that no descriptor names is counted, and one that can't
+/// be decoded fails the audit.
+#[test]
+fn only_a_font_program_a_descriptor_names_is_skipped_as_unreferenced_text() {
+    const DESCRIPTOR: &str =
+        "/Type /FontDescriptor /FontName /Old /Flags 4 /FontBBox [0 0 1000 1000] /ItalicAngle 0 /Ascent 800 /Descent -200 /CapHeight 700 /StemV 80";
+    // A page showing PUBLIC, then `objects` from object 6.
+    let audit = |objects: &[(&str, &[u8])]| {
+        let mut b = Builder::new();
+        b.add("<< /Type /Catalog /Pages 2 0 R >>");
+        b.add("<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+        b.add("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>");
+        b.add_stream(b"BT /F1 24 Tf 100 500 Td (PUBLIC) Tj ET");
+        b.add(FONT);
+        for (dict, data) in objects {
+            if data.is_empty() {
+                b.add(dict);
+            } else {
+                b.add_stream_with(data, dict);
+            }
+        }
+        crate::audit_document(&open(b.build()))
+    };
+    let count = |objects: &[(&str, &[u8])]| {
+        let report = audit(objects).unwrap();
+        assert!(report.page_findings.is_empty());
+        report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>()
+    };
+    let text: &[u8] = b"BT /F1 24 Tf 100 700 Td (SECRET) Tj ET";
+    let program: &[u8] = b"(SECRET) Tj";
+    let named = format!("<< {DESCRIPTOR} /FontFile 8 0 R /FontFile2 9 0 R >>");
+    assert_eq!(count(&[("/Length1 38", text), (&named, b""), ("/Length1 11 /Length2 0 /Length3 0", program), ("/Length1 11", program)]), 1);
+    let in_place = format!("<< /Type /Font /Subtype /TrueType /BaseFont /Old /FontDescriptor << {DESCRIPTOR} /FontFile2 7 0 R >> >>");
+    assert_eq!(count(&[(&in_place, b""), ("/Length1 11", program)]), 0);
+    let stale = format!("<< {DESCRIPTOR} /FontFile 7 1 R >>");
+    assert_eq!(count(&[(&stale, b""), ("/Length1 38", text)]), 1);
+    // A `/FontFile2` key in a dictionary that is no font descriptor, here a form's resource name
+    // for the text-bearing form it draws, names no font program.
+    let form = "/Type /XObject /Subtype /Form /BBox [0 0 612 792]";
+    let caller = format!("{form} /Resources << /XObject << /FontFile2 7 0 R >> >>");
+    assert_eq!(count(&[(&caller, b"/FontFile2 Do"), (form, text)]), 1);
+    assert!(audit(&[("/Length1 5 /Filter /FlateDecode", b"xxxxx")]).is_err(), "an undecodable stream must fail the audit");
+}
+
 #[test]
 fn audit_reports_a_covered_text_advance_only_after_the_displacement() {
     let text = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET";

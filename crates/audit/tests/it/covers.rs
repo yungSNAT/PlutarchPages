@@ -351,3 +351,89 @@ fn a_squares_appearance_is_painted_instead_of_its_interior_colour() {
     assert_eq!(covered(&doc("")), ["SECRET"]);
     assert_eq!(covered(&doc("/AP << /N << /On 7 0 R >> >>")), ["SECRET"]);
 }
+
+/// A straight stroke, horizontal or vertical on the page and solid, hides what lies under the band
+/// its line width paints, as a filled rectangle over that band does: a pen drawn across text, as
+/// pdf.js's ink editor saves it (a curve whose control points lie on the line). Its stroking colour
+/// and opacity (`G`, `RG`, `K`, `CS` with `SC`, `/CA`) decide, not the fill's; its width is in
+/// user space, set with `w` or an ExtGState's `/LW`. A path filled and stroked (`B`, `B*`, `b`,
+/// `b*`) is stroked over its fill, so its stroke hides the text whatever the fill's colour. A
+/// dashed one, a thin one through the text, and one drawn before the text hide nothing. A stroke
+/// leaves what lies under the text unread, so a translucent one is judged by its colour against
+/// the text's.
+#[test]
+fn a_stroke_over_text_hides_it() {
+    let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Clear << /ca 0 >> /PenHalf << /CA 0.5 >> /Thick << /LW 33 >> \
+                     /Dash << /D [[4 4] 0] >> /Mult << /BM /Multiply >> >> >>";
+    let pen = "100 704 m 320 704 l S";
+    for (paint, hidden) in [
+        (format!("0 G 33 w {pen}"), true),
+        ("0 G 33 w 1 J 100 704 m 100 704 320 704 320 704 c S".to_owned(), true),
+        ("0 G 220 w 210 690 m 210 722 l S".to_owned(), true),
+        ("q 2 0 0 2 0 0 cm 0 G 16.5 w 50 352 m 160 352 l S Q".to_owned(), true),
+        (format!("1 g 0 G 33 w {pen}"), true),
+        (format!("0 g 1 G 33 w {pen}"), true),
+        (format!("q /Clear gs 0 G 33 w {pen} Q"), true),
+        (format!("/Thick gs 0 G {pen}"), true),
+        (format!("q /Mult gs 0 g 1 1 0 RG 33 w {pen} Q"), false),
+        (format!("q /Mult gs 1 1 0 rg 0 G 33 w {pen} Q"), true),
+        (format!("q /Mult gs 0 0 0 1 K 33 w {pen} Q"), true),
+        (format!("q /Mult gs /DeviceGray CS 1 SC 33 w {pen} Q"), false),
+        (format!("q /Mult gs 1 G /DeviceGray CS 33 w {pen} Q"), true),
+        (format!("q /PenHalf gs 0 G 33 w {pen} Q"), true),
+        (format!("q /PenHalf gs 1 1 0 RG 33 w {pen} Q"), false),
+        (format!("0 G 33 w [4 4] 0 d {pen}"), false),
+        (format!("/Dash gs 0 G 33 w {pen}"), false),
+        ("0 G 2 w 100 708 m 320 708 l S".to_owned(), false),
+        ("1 g 0 G 33 w 100 704 m 320 704 l B".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l B*".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l b".to_owned(), true),
+        ("1 g 0 G 33 w 100 704 m 320 704 l b*".to_owned(), true),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &[])), want, "{paint}");
+    }
+    let before = page(resources, &format!("0 G 33 w {pen} {TWO_LINES}"), &[]);
+    assert!(covered(&before).is_empty(), "text painted after the stroke is on it");
+}
+
+/// A stroke is read as a cover only where the clip is a box on the page, as the box the audit
+/// keeps for it then holds exactly what shows: one `re` or one four-cornered `m`/`l` path made the
+/// clip, or a form's or an appearance's `/BBox` whose corners land on a box. Under any other clip,
+/// a triangle, a box with a hole cut in it (by `W*`, or by `W` around a box drawn the other way),
+/// or a box the CTM shears however slightly, the stroke may be clipped away from the text, so the
+/// audit reads no cover from it rather than report text it can't show is hidden.
+#[test]
+fn a_stroke_counts_only_under_a_clip_that_is_a_box() {
+    let pen = "0 G 33 w 100 704 m 320 704 l S";
+    // Each sheared form or appearance shears its box, then shears back, so the stroke lands where
+    // `pen` paints on the page; only the clip differs. `/Tiny` shears by a millionth and stretches
+    // its box to match, so the clip is as far from a box as `/Shear`'s.
+    let shear = ("/BBox [0 0 100 800] /Matrix [1 0 1 1 0 0]", format!("1 0 -1 1 0 0 cm {pen}"));
+    let tiny = ("/BBox [0 0 100 800000000] /Matrix [1 0 0.000001 0.000001 0 0]", format!("1 0 -1 1000000 0 0 cm {pen}"));
+    let form = |(dict, content): &(&str, String)| stream_obj(&format!("/Type /XObject /Subtype /Form {dict}"), content);
+    let resources = "<< /Font << /F1 5 0 R >> /XObject << /Shear 6 0 R /Tiny 7 0 R /Plain 8 0 R >> >>";
+    let forms = [form(&shear), form(&tiny), form(&("/BBox [0 0 612 792]", pen.to_owned()))];
+    for (paint, hidden) in [
+        (format!("q 90 600 240 200 re W n {pen} Q"), true),
+        (format!("q 90 600 m 330 600 l 330 800 l 90 800 l h W n {pen} Q"), true),
+        (format!("q 200 600 130 200 re W n {pen} Q"), false),
+        (format!("q 100 800 m 320 800 l 320 600 l h W n {pen} Q"), false),
+        (format!("q 100 800 m 320 800 l 320 600 l h W* n {pen} Q"), false),
+        (format!("q 90 690 120 40 re 0 0 612 792 re W* n {pen} Q"), false),
+        (format!("q 210 690 -120 40 re 0 0 612 792 re W n {pen} Q"), false),
+        ("/Plain Do".to_owned(), true),
+        ("/Shear Do".to_owned(), false),
+        ("/Tiny Do".to_owned(), false),
+    ] {
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&page(resources, &format!("{TWO_LINES} {paint}"), &forms)), want, "{paint}");
+    }
+    for (appearance, rect, hidden) in
+        [(("/BBox [0 0 612 792]", pen.to_owned()), "[0 0 612 792]", true), (shear, "[0 0 900 800]", false), (tiny, "[0 0 900 800]", false)]
+    {
+        let doc = annotated(TWO_LINES, &format!("<< /Type /Annot /Subtype /Ink /Rect {rect} /AP << /N 7 0 R >> >>"), &[form(&appearance)]);
+        let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+        assert_eq!(covered(&doc), want, "appearance {}", appearance.0);
+    }
+}
