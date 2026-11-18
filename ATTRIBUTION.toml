@@ -3243,7 +3243,7 @@ licence = "MIT OR Apache-2.0"
 licence_file = "LICENSE-MIT"
 kind = "translation"
 usage = "French UI strings, embedded before craft-i18n's pdfcraft.tsv by crates/ui-egui/build_i18n_fork.rs"
-sha256 = "9b47d8946d102f9fdca1c5eccc586063f5b04c78f215a7c7f70ea72287e0a940"
+sha256 = "1705dce21afb4acd88679cbcc47ef21a354c57d38b75d9637bac7baba53a4bec"
 
 [[asset]]
 path = "crates/ui-egui/i18n-fork/hi.tsv"
