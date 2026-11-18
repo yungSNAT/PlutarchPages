@@ -178,7 +178,7 @@ pub(crate) fn text(doc: &Document, d: &Dict, key: &[u8]) -> Option<String> {
     (!s.is_empty()).then_some(s)
 }
 
-/// A signature field [`walk_sig_fields`] found.
+/// A field [`walk_fields`] found.
 pub(crate) struct Field {
     /// Fully qualified: the `/T` parts down the tree joined with dots, at most
     /// [`MAX_FIELD_NAME_BYTES`].
@@ -238,6 +238,12 @@ pub(super) fn sig_fields(doc: &Document) -> Vec<Field> {
 /// by reference is taken where the walk first reaches it; one written in place in an indirect
 /// array is queued once, however many fields list that array.
 pub(crate) fn walk_sig_fields(doc: &Document) -> (Vec<Field>, bool) {
+    walk_fields(doc, true)
+}
+
+/// [`walk_sig_fields`], or with `sig_only` false every named field, a field of fields included;
+/// with it false, a field passed over for its name leaves the walk not whole.
+pub(super) fn walk_fields(doc: &Document, sig_only: bool) -> (Vec<Field>, bool) {
     let mut out = Vec::new();
     let Some(root) = doc.root() else { return (out, true) };
     // A form that isn't there holds no fields; one that is there but isn't a dictionary may hold any.
@@ -281,7 +287,7 @@ pub(crate) fn walk_sig_fields(doc: &Document) -> (Vec<Field>, bool) {
         let sig = d.name(b"FT").map_or(inherited_sig, |ft| ft == b"Sig");
         // Passed over for its name, a leaf of another type hides no signature: it is none, and
         // has no kids to hold one.
-        let hides = sig || d.contains(b"Kids");
+        let hides = sig || d.contains(b"Kids") || !sig_only;
         // Even as UTF-16, a name within the cap takes at most twice its length plus a two-byte
         // mark. A /T stored in more is passed over undecoded, whatever it would trim to: a long
         // string named by many fields would otherwise be decoded once for each.
@@ -304,7 +310,7 @@ pub(crate) fn walk_sig_fields(doc: &Document) -> (Vec<Field>, bool) {
             whole &= !hides;
             continue;
         }
-        let listed = sig && part.is_some();
+        let listed = (sig || !sig_only) && part.is_some();
         // Signed, but with no name to be listed under: the signature is there all the same.
         if sig && part.is_none() && holds_signature(doc, &d) {
             whole = false;

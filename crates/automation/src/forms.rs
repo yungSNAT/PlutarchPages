@@ -668,6 +668,8 @@ impl Automation {
                 })
                 .transpose()?,
             caption_all: None,
+            signature_lock: None,
+            signature_reasons: None,
             read_only: a.opt_bool("read_only")?,
             required: a.opt_bool("required")?,
             multiline: a.opt_bool("multiline")?,

@@ -8,8 +8,10 @@ use std::cell::{Cell, OnceCell};
 const MAX_ANNOT_ENTRIES: usize = 1 << 22;
 
 /// What later revisions changed, classified as Acrobat reports it, under DocMDP `p` (or none:
-/// an approval signature permits form fill, comments and further signatures).
-pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<u8>) -> Modification {
+/// an approval signature permits form fill, comments and further signatures). A change to an
+/// object of a field the signature `locked` is not permitted, whatever `p` allows; nor, when the
+/// form was not read whole, is any form fill.
+pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<u8>, locked: Option<&super::locks::Locked>) -> Modification {
     let Some(old) = old else {
         return Modification::Disallowed(vec![kind::UNREADABLE]);
     };
@@ -182,7 +184,7 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         // graphics state does not make that a form fill. A container (the resources dictionary,
         // a category dictionary) that kept every entry it had and only gained names changes
         // nothing the signed content draws, and is judged as before.
-        let Some(what) = classifier.classify(r, &new, before.as_deref()) else { continue };
+        let Some(what) = super::locks::under_lock(locked, num, || classifier.classify(r, &new, before.as_deref())) else { continue };
         let ok = match (what, p) {
             (kind::SIGNATURE | kind::SECURITY_STORE, _) => true,
             (kind::FORM_FILL, Some(2 | 3) | None) => true,
@@ -1141,7 +1143,7 @@ mod tests {
         doc.update_dict(ObjRef { num: 3, generation: 0 }, |p| p.set(b"DocMDP".to_vec(), Object::Ref(other))).unwrap();
         let edited = pdfcraft_cos::write_incremental(&doc, &pdfcraft_cos::SaveOptions { object_streams: false, ..Default::default() }).unwrap();
         let doc = Document::open(Arc::new(edited)).unwrap();
-        match classify_changes(&doc, Some(old), Some(1)) {
+        match classify_changes(&doc, Some(old), Some(1), None) {
             Modification::Disallowed(kinds) => assert!(kinds.contains(&kind::STRUCTURE), "{kinds:?}"),
             other => panic!("the certification's /Perms changed in place under P=1: {other:?}"),
         }
