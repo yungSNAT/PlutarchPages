@@ -1,4 +1,3 @@
-use super::locks::Locked;
 use super::types::{Modification, kind};
 use super::{Arc, Dict, Document, HashMap, HashSet, ObjRef, Object};
 use std::cell::{Cell, OnceCell};
@@ -10,9 +9,9 @@ const MAX_ANNOT_ENTRIES: usize = 1 << 22;
 
 /// What later revisions changed, classified as Acrobat reports it, under DocMDP `p` (or none:
 /// an approval signature permits form fill, comments and further signatures). A change to an
-/// object of a field the signature `locked` is not permitted, whatever `p` allows, nor is replacing
-/// such a field; nor, when the form was not read whole, is any form fill.
-pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<u8>, locked: Option<&Locked>) -> Modification {
+/// object of a field the signature `locked` is not permitted, whatever `p` allows; nor, when the
+/// form was not read whole, is any form fill.
+pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<u8>, locked: Option<&super::locks::Locked>) -> Modification {
     let Some(old) = old else {
         return Modification::Disallowed(vec![kind::UNREADABLE]);
     };
@@ -185,7 +184,7 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         // graphics state does not make that a form fill. A container (the resources dictionary,
         // a category dictionary) that kept every entry it had and only gained names changes
         // nothing the signed content draws, and is judged as before.
-        let Some(what) = under_lock(locked, num, || classifier.classify(r, &new, before.as_deref())) else { continue };
+        let Some(what) = super::locks::under_lock(locked, num, || classifier.classify(r, &new, before.as_deref())) else { continue };
         let ok = match (what, p) {
             (kind::SIGNATURE | kind::SECURITY_STORE, _) => true,
             (kind::FORM_FILL, Some(2 | 3) | None) => true,
@@ -215,10 +214,6 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
             disallowed.push(what);
         }
     }
-    // A locked field replaced, or moved under another parent, leaves its old objects as they were.
-    if locked.is_some_and(|l| !l.same_fields_in(doc)) && !disallowed.contains(&kind::LOCKED_FORM_FIELDS) {
-        disallowed.push(kind::LOCKED_FORM_FIELDS);
-    }
     // DocMDP P=1 ("no changes allowed", ISO 32000-2 §12.8.2.2) permits only validation data to
     // follow: the document security store, and document timestamps added for PAdES long-term
     // archiving (§12.8.5). Those timestamps draw nothing. Any other signature added since — an
@@ -228,17 +223,6 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         only_validation_data(&mut allowed, &mut disallowed, doc, &old);
     }
     if disallowed.is_empty() { Modification::Allowed(allowed) } else { Modification::Disallowed(disallowed) }
-}
-
-/// How a change to object `num` reads under `locked`: as a change to a locked field when `num` is
-/// one of its objects, before `classify` can pass over it as unchanged, or when it is a form fill
-/// and the form was not read whole; otherwise as `classify` reads it (`None`: no change).
-fn under_lock(locked: Option<&Locked>, num: u32, classify: impl FnOnce() -> Option<&'static str>) -> Option<&'static str> {
-    match locked {
-        Some(l) if l.objects.contains(&num) => Some(kind::LOCKED_FORM_FIELDS),
-        Some(l) if !l.whole => classify().map(|what| if what == kind::FORM_FILL { kind::LOCKED_FORM_FIELDS } else { what }),
-        _ => classify(),
-    }
 }
 
 /// DocMDP P=1 ("no changes allowed") permits only validation data to follow the signed revision:

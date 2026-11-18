@@ -2,7 +2,9 @@
 //! that signing it makes read-only, the signature records the same in a FieldMDP reference, and a
 //! later change to one of them is not permitted whatever the document's DocMDP permissions allow.
 
+use super::changes::classify_changes;
 use super::listing::{Field, sig_fields, walk_fields};
+use super::types::{Modification, kind};
 use super::{Arc, Dict, Document, HashSet, ObjRef, Object, PdfString, SignError};
 
 /// The read-only field flag (`/Ff` bit 1).
@@ -225,6 +227,34 @@ impl Locked {
         let (fields, whole) = walk_fields(doc, false);
         let now: Option<Vec<_>> = fields.iter().filter(|f| names.contains(f.name.as_str())).map(placed).collect();
         (whole || !self.whole) && now.as_ref() == Some(&self.fields)
+    }
+}
+
+/// [`classify_changes`] of `doc` against `old` under `locked`; a covered field replaced, or moved
+/// under another parent, which leaves its old objects as they were, is a change to a locked field.
+pub(super) fn classify_locked(doc: &Document, old: Document, p: Option<u8>, locked: Option<&Locked>) -> Modification {
+    let judged = classify_changes(doc, Some(old), p, locked);
+    if !locked.is_some_and(|l| !l.same_fields_in(doc)) {
+        return judged;
+    }
+    let mut kinds = match judged {
+        Modification::Disallowed(kinds) => kinds,
+        _ => Vec::new(),
+    };
+    if !kinds.contains(&kind::LOCKED_FORM_FIELDS) {
+        kinds.push(kind::LOCKED_FORM_FIELDS);
+    }
+    Modification::Disallowed(kinds)
+}
+
+/// How a change to object `num` reads under `locked`: as a change to a locked field when `num` is
+/// one of its objects, before `classify` can pass over it as unchanged, or when it is a form fill
+/// and the form was not read whole; otherwise as `classify` reads it (`None`: no change).
+pub(super) fn under_lock(locked: Option<&Locked>, num: u32, classify: impl FnOnce() -> Option<&'static str>) -> Option<&'static str> {
+    match locked {
+        Some(l) if l.objects.contains(&num) => Some(kind::LOCKED_FORM_FIELDS),
+        Some(l) if !l.whole => classify().map(|what| if what == kind::FORM_FILL { kind::LOCKED_FORM_FIELDS } else { what }),
+        _ => classify(),
     }
 }
 

@@ -1,6 +1,6 @@
 use super::changes::classify_changes;
 use super::listing::{DigestCache, list, nums, sig_fields, text};
-use super::locks::locked;
+use super::locks::{classify_locked, locked};
 use super::types::{Detail, Fill, Modification, Status, TrustStore};
 use super::{
     Certificate, Dict, DigestAlg, Document, HashSet, ObjRef, Object, SignError, SignatureInfo, SignedData, Time, build_chain, build_chain_noted,
@@ -283,7 +283,7 @@ fn finish_validation(context: SignatureValidation<'_>, verified: VerifiedSignatu
             (Some(old), Some((field, v))) => {
                 set_certification(&old, &v, info);
                 let locked = locked(&old, &field.dict, &v);
-                classify_changes(doc, Some(old), info.certify, locked.as_ref())
+                classify_locked(doc, old, info.certify, locked.as_ref())
             }
             _ => classify_changes(doc, None, info.certify, None),
         }
