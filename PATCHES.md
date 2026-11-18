@@ -227,6 +227,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   each element name and namespace (`intern`). With a copy for each element, merging a prototype
   with 20,000 children took 3.4 times the CPU time and failed
   `prototype_children_that_write_nothing_still_count_against_a_budget` under coverage.
+- A 16-bit PNG becomes 8-bit samples in one buffer asked for fallibly (`png_image` in
+  `crates/create/src/lib.rs`), so too little memory is an error, not an abort. Upstream copies the
+  samples twice with allocations that can't fail: about 3 GiB more for a 2 MB file of 16384 × 16384
+  pixels.
 - Font metrics: a page's walk reads each font once by `FontKey` (`select_font` in
   `crates/edit/src/text/interp.rs`). Upstream's v0.21.1 shares metrics between aliases of one font
   object its own way (`by_font`, `METRICS_BUILT`); its test counts `FONT_READS` here.

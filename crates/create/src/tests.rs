@@ -43,6 +43,19 @@ fn jpeg_bytes() -> Vec<u8> {
     v
 }
 
+/// A 16-bit PNG embeds as 8-bit, each sample its high byte.
+#[test]
+fn a_16_bit_png_embeds_each_samples_high_byte() {
+    let samples = [0x1234, 0xABCD, 0x00FF, 0xFF00, 0x8001, 0x7FFE];
+    let img = craft_image_codecs::Image::from_u16(2, 1, craft_image_codecs::ChannelLayout::Rgb, &samples).unwrap();
+    let png = craft_image_codecs::encode(&img, craft_image_codecs::Format::Png, &craft_image_codecs::EncodeOptions::default()).unwrap();
+    let decoded = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Png, &png, &craft_image_codecs::DecodeOptions::default()).unwrap();
+    assert_eq!(decoded.sample_type(), craft_image_codecs::SampleType::U16, "the fixture stays 16-bit");
+    let embedded = png_image("deep.png", &png).unwrap();
+    assert_eq!(embedded.data, [0x12, 0xAB, 0x00, 0xFF, 0x80, 0x7F]);
+    assert_eq!(embedded.dict.get(b"BitsPerComponent"), Some(&Object::Int(8)));
+}
+
 #[test]
 fn blank_documents() {
     let doc = reopen(&blank(612.0, 792.0, 3).unwrap());

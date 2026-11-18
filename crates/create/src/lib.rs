@@ -453,8 +453,14 @@ fn png_image(name: &str, bytes: &[u8]) -> Result<Embedded, CreateError> {
     };
     let data: std::borrow::Cow<'_, [u8]> = if let Some(u8s) = img.as_u8() {
         std::borrow::Cow::Borrowed(u8s)
-    } else if let Some(u16s) = img.to_u16_samples() {
-        std::borrow::Cow::Owned(u16s.into_iter().map(|v| (v >> 8) as u8).collect())
+    } else if img.sample_type() == craft_image_codecs::SampleType::U16 {
+        // Each sample's high byte, in one buffer asked for fallibly: a failed allocation would
+        // abort the whole app, and no `catch_unwind` stops that.
+        let raw = img.data();
+        let mut high = Vec::new();
+        high.try_reserve_exact(raw.len() / 2).map_err(|_| bad("not enough memory for this image".into()))?;
+        high.extend(raw.as_chunks::<2>().0.iter().map(|c| (u16::from_ne_bytes(*c) >> 8) as u8));
+        std::borrow::Cow::Owned(high)
     } else {
         return Err(bad("expected 8-bit or 16-bit PNG samples".into()));
     };
