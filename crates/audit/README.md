@@ -8,9 +8,10 @@ let report = audit_document(&doc)?; // page_findings and document_findings
 
 The report checks for:
 
-- **faux redaction**: a filled rectangle, an image, or a word of block characters (`█`, `■` and
-  the like), painted *after* text it overlaps, while the text is still extractable underneath;
-  filled Square annotations count as covers too. A cover painted fully opaque in the Normal blend
+- **faux redaction**: a filled rectangle, a thick straight stroke (a pen line across the text),
+  an image, or a word of block characters (`█`, `■` and the like), painted *after* text it
+  overlaps, while the text is still extractable underneath; filled Square annotations count as
+  covers too. A cover painted fully opaque in the Normal blend
   mode hides the text whatever its colour: it replaces what lies under it, so a black box over red
   text or a white box over black text both hide it. A translucent cover (`/ca` above 0 and below 1,
   or a Square's interior colour at `/CA` below 1), a blended one (`/BM` other than Normal, as a
@@ -27,6 +28,11 @@ The report checks for:
   cover. An adjustment can preserve the removed text's exact width even after the
   text has gone. Ordinary text positioning can produce the same signal;
 - **earlier revisions**: counts incremental revisions that a reader can inspect;
+- **unreferenced text**: counts streams nothing in the file refers to that still show text, as a
+  redaction applied and saved without garbage collection leaves the page's old content. No viewer
+  draws them, but any reader of the file's objects recovers the text. `pdfcraft-cli audit` fails
+  on them, as on covered text. A document an edit has marked for a full rewrite, as applying a
+  redaction does, has none: its next save keeps only what is referred to;
 - **document metadata**: counts entries in the document information dictionary and
   reports an XMP metadata stream attached to the catalogue. The audit returns counts
   only.
@@ -66,11 +72,18 @@ so it is checked with each set it is used with.
 
 Limits, by design and documented rather than hidden:
 
-- only filled rectangles count as covers, drawn with `re` or as a single `m`/`l` subpath whose
+- only filled rectangles and straight strokes count as covers: rectangles drawn with `re` or as a single `m`/`l` subpath whose
   corners form an axis-aligned rectangle (not other paths), shadings painted with `sh`, over the
   box that holds their clip and within their `/BBox`, images (an image XObject, an inline image or
   an image mask) over the box the CTM places them in, within the box that holds their clip, and
-  words of block characters drawn filled (render mode 0, 2, 4 or 6), over the box of each word. Other glyphs,
+  words of block characters drawn filled (render mode 0, 2, 4 or 6), over the box of each word. A
+  stroke counts when it is one subpath along one horizontal or vertical line, solid (no dash
+  pattern), under a CTM that keeps the axes, stroked alone (`S`, `s`) or over a fill (`B`, `B*`,
+  `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
+  It counts only under a clip that is a box on the page (a path of one `re` or one four-cornered
+  subpath, or a form's or appearance's `/BBox`, whose corners land on a box), since another clip
+  may cut the band away from the text. Other strokes, such as a stroked rectangle's border or a curved pen
+  line, are not covers. Other glyphs,
   such as a Type 3 box that maps to a letter, are not covers, and a run whose text doesn't split
   into as many words as it draws counts only when it is all blocks. An image's pixels are not
   read: one with a mask of its own (`/SMask`, `/Mask` or a JPEG 2000 image's `/SMaskInData`) is
@@ -79,7 +92,8 @@ Limits, by design and documented rather than hidden:
   draw the scan over the text they read from it, so a black image pasted over a scan's OCR layer
   is not flagged, though a filled rectangle there is. A translucent, blended or soft-masked
   cover is judged by its colour as set with `g`, `rg`, `k` or in a gray, RGB or CMYK colour space
-  with `cs` and `sc`/`scn`, a block by its text's colour. On a page with a stroke, or an image with
+  with `cs` and `sc`/`scn` (a stroke's with `G`, `RG`, `K`, `CS` and `SC`/`SCN`), a block by its
+  text's colour. On a page with a stroke, or an image with
   a mask of its own, a translucent cover is judged by its colour too, as is one in a transparency
   group (a form with `/Group`) drawn translucent, blended or through a soft mask, whatever its own
   opacity. One in a colour the audit doesn't read (a
@@ -88,6 +102,14 @@ Limits, by design and documented rather than hidden:
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
+- the unreferenced-text check reads only streams that can be content (a form, or one without
+  `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or `/FontFile2`) and
+  counts each that shows text with `Tj`,
+  `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
+  counted there: the earlier-revisions count covers it. So a file built to hide text can still
+  get past it: an unreferenced stream with any other `/Type` or `/Subtype` is not read, nor is
+  one that a dictionary typed `/FontDescriptor` names as its font program, even when that
+  dictionary is no real descriptor;
 - annotation rectangles are compared in unrotated user space, so `/Rotate` pages may misalign;
 - a cover that hides less than half of every word it touches, less than 40% of a line's box and
   less than 40% of its words (a sliver of a long value) is not flagged.
