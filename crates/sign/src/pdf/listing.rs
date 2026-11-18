@@ -32,6 +32,8 @@ pub(crate) struct TimestampCandidates {
 
 pub(crate) const DISCOVERY_CACHE_LIMIT: usize = 4096;
 
+/// Reads names and keys only, so discovery can judge an encrypted object before decrypting it
+/// ([`Document::scan_objects_where`]).
 pub(crate) fn is_document_timestamp(object: &Object) -> bool {
     object.as_dict().is_some_and(|d| is_doc_timestamp(d) && d.contains(b"ByteRange"))
 }
@@ -113,13 +115,10 @@ impl DigestCache {
         self.discovery_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut complete = true;
         let candidates: Vec<_> = doc
-            .scan_objects_checked()
-            .filter_map(|(reference, object)| match object {
-                Ok(object) => is_document_timestamp(&object).then_some(reference),
-                Err(_) => {
-                    complete = false;
-                    None
-                }
+            .scan_objects_where(is_document_timestamp)
+            .filter_map(|(reference, object)| {
+                complete &= object.is_ok();
+                object.is_ok().then_some(reference)
             })
             .collect();
         if eligible

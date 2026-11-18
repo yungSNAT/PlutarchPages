@@ -26,6 +26,7 @@ building this copy after a revision bump.
 | The weak-hash lines carry `NOSONAR` (#58) | `src/crypt.rs` | `cargo xtask fork-check` |
 | Failed operands are read again a bounded number of times (#128, `f74779bb`) | `src/cos/content.rs` | `cos::content::tests::unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times` |
 | A written inline image ends where it was read, as the renderer reads it (#134, `9ab4f813`) | `src/cos/content.rs` | the `cos::content::tests` inline-image cases |
+| `Document::scan_objects_where` judges an encrypted file's objects as stored and decrypts only those it keeps, so the signature list's search for document timestamps no longer decrypts the whole file | `src/cos/document/objects.rs` | `crates/cos/tests/it/encryption.rs`; `crates/sign` `discovery_does_not_decrypt_what_it_refuses` |
 
 Upstream security commits the fork took early (#67) are in the base already. RC4 stays craft-pdf's
 own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstream' in the root

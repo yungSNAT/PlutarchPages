@@ -155,6 +155,54 @@ fn incremental_edits_of_encrypted_documents_stay_encrypted() {
     }
 }
 
+/// A filtered scan of an encrypted file judges each object first as stored, and decrypts and
+/// judges again only what it keeps; an edit is judged once, as it reads now, and a read error
+/// comes back whatever the filter says.
+#[test]
+fn a_filtered_scan_decrypts_only_what_it_keeps() {
+    let mut doc = Document::open(Arc::new(fixture())).unwrap();
+    doc.set_encryption_legacy(&NewEncryption {
+        algorithm: Algorithm::Rc4_128,
+        user_password: "",
+        owner_password: "owner",
+        permissions: -1,
+        encrypt_metadata: true,
+        seed: [9; 32],
+    })
+    .unwrap();
+    let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    let mut doc = Document::open(Arc::new(bytes.clone())).unwrap();
+    let info = doc.trailer().reference(b"Info").unwrap();
+    let seen = std::cell::RefCell::new(Vec::new());
+    let titled = |o: &Object| {
+        let title = o.as_dict().and_then(|d| d.get(b"Title")).and_then(Object::as_string);
+        seen.borrow_mut().extend(title.map(|t| t.bytes.clone()));
+        title.is_some()
+    };
+    let title = |kept: Vec<(ObjRef, Result<Arc<Object>, CosError>)>| match &kept[..] {
+        [(r, Ok(o))] if *r == info => o.as_dict().and_then(|d| d.get(b"Title")).and_then(Object::as_string).map(|t| t.bytes.clone()),
+        _ => None,
+    };
+    assert_eq!(title(doc.scan_objects_where(titled).collect()).as_deref(), Some(&b"Quarterly numbers"[..]));
+    let stored = seen.take();
+    assert_eq!(stored.len(), 2, "as stored, then decrypted");
+    assert_ne!(stored[0], b"Quarterly numbers");
+    assert_eq!(stored[1], b"Quarterly numbers");
+
+    doc.update_dict(info, |d| d.set(b"Title".to_vec(), Object::String(PdfString::literal("Revised")))).unwrap();
+    assert_eq!(title(doc.scan_objects_where(titled).collect()).as_deref(), Some(&b"Revised"[..]));
+    assert_eq!(seen.take(), vec![b"Revised".to_vec()]);
+
+    // The Info dictionary's `obj` keyword broken in place: it reads nowhere, before or after decryption.
+    let header = format!("\n{} 0 obj", info.num).into_bytes();
+    let at = bytes.windows(header.len()).position(|w| w == header).unwrap() + header.len() - 1;
+    let mut damaged = bytes;
+    damaged[at] = b'x';
+    let damaged = Document::open(Arc::new(damaged)).unwrap();
+    let errors: Vec<ObjRef> = damaged.scan_objects_where(|_| false).filter(|(_, o)| o.is_err()).map(|(r, _)| r).collect();
+    assert_eq!(errors, vec![info]);
+}
+
 #[test]
 fn changing_and_removing_passwords() {
     let bytes = protect(Algorithm::Rc4_128, "old", "old-owner", -1);
