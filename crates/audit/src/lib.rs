@@ -200,11 +200,32 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
     Ok(AuditReport { page_findings: audit_pages(doc, Limits::DEFAULT, true)?, document_findings })
 }
 
+/// The `/Type` and `/Subtype` values of the streams that are never content: images, the font
+/// programs `/FontFile3` names, XMP metadata, cross-reference and object streams, embedded files,
+/// CMaps, 3D artwork and halftones. Their bytes, read as content, can show text operators that
+/// are no text, as a font program's often do.
+const NOT_CONTENT: &[&[u8]] = &[
+    b"Image",
+    b"Type1C",
+    b"CIDFontType0C",
+    b"OpenType",
+    b"Metadata",
+    b"XML",
+    b"XRef",
+    b"ObjStm",
+    b"EmbeddedFile",
+    b"CMap",
+    b"3D",
+    b"U3D",
+    b"PRC",
+    b"Halftone",
+];
+
 /// How many streams nothing in the file refers to show text (`Tj`, `TJ`, `'` or `"`): text no viewer
 /// draws that any reader of the file's objects recovers, as a redaction applied and saved without
-/// garbage collection leaves the page's old content. Only a stream that can be content is read: a
-/// form, or one without a `/Type` or `/Subtype` that no font descriptor names as its `/FontFile` or
-/// `/FontFile2`; images, fonts, metadata and object streams are not. When an edit has marked the
+/// garbage collection leaves the page's old content. Only a stream that can be content is read: one
+/// whose `/Type` and `/Subtype` are not among [`NOT_CONTENT`], and, if it has neither, that no font
+/// descriptor names as its `/FontFile` or `/FontFile2`. When an edit has marked the
 /// document for a full rewrite ([`Document::full_save_required`], as applying a redaction does),
 /// its next save keeps only what is referred to, and none are counted. One that can't be read or decoded within
 /// one page's [`DecodeBudget`](pdfcraft_cos::DecodeBudget) in all fails the audit.
@@ -224,7 +245,8 @@ fn unreferenced_text(doc: &Document) -> Result<usize, AuditError> {
         font_files(&object, &mut programs);
         let Object::Stream(stream) = &*object else { continue };
         let name = |key: &[u8]| stream.dict.get(key).map(|o| doc.resolve(o)).and_then(|o| o.as_name().map(<[u8]>::to_vec));
-        if matches!(name(b"Type").as_deref(), None | Some(b"XObject")) && matches!(subtype(doc, &stream.dict)?.as_deref(), None | Some(b"Form")) {
+        let content = |kind: Option<Vec<u8>>| kind.is_none_or(|kind| !NOT_CONTENT.contains(&kind.as_slice()));
+        if content(name(b"Type")) && content(subtype(doc, &stream.dict)?) {
             candidates.push((reference, stream.dict.get(b"Type").is_none() && stream.dict.get(b"Subtype").is_none()));
         }
     }
