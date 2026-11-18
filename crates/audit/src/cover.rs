@@ -145,9 +145,11 @@ struct Gs {
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
     /// The clip is that box exactly: every clip set was a box on the page (a path of one `re` or one
-    /// four-cornered subpath, or a `/BBox`, whose corners land on a box). Only then can a stroke's
-    /// band within `clip` be taken as what it paints.
+    /// four-cornered subpath, or a `/BBox`, whose corners land on a box), and no text was shown in a
+    /// clipping render mode. Only then can what is painted within `clip` be taken as what shows.
     clip_exact: bool,
+    /// The text render mode (`Tr`) is one that adds the glyphs' outlines to the clip (4 to 7).
+    text_clip: bool,
 }
 
 impl Gs {
@@ -167,6 +169,7 @@ impl Gs {
             grouped: false,
             clip,
             clip_exact: true,
+            text_clip: false,
         }
     }
 }
@@ -406,6 +409,8 @@ impl<'a> Walker<'a> {
         let mut path_box: Option<[f64; 4]> = None;
         let mut subpaths = 0;
         let mut clipping: Option<bool> = None;
+        // Text shown since `BT` in a clipping render mode: at `ET` its glyphs become part of the clip.
+        let mut glyph_clip = false;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
@@ -533,7 +538,17 @@ impl<'a> Walker<'a> {
                     if let Some(unplaced) = self.inside {
                         return Err(AuditError::UncheckedText(self.page, unplaced.what()));
                     }
+                    glyph_clip |= gs.text_clip;
                 }
+                b"Tr" => {
+                    if let Some([mode]) = op.nums::<1>() {
+                        gs.text_clip = (4.0..=7.0).contains(&mode);
+                    }
+                }
+                b"BT" => glyph_clip = false,
+                // The glyphs' outlines are no box; with none shown the clip may be empty (ISO 32000-2
+                // §9.3.6). Either way what is painted after may not show where its box says.
+                b"ET" => gs.clip_exact &= !(glyph_clip || gs.text_clip),
                 b"Tf" => {
                     let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
                     if let Some(entry) = op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
