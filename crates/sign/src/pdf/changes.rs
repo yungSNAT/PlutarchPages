@@ -185,13 +185,7 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         // graphics state does not make that a form fill. A container (the resources dictionary,
         // a category dictionary) that kept every entry it had and only gained names changes
         // nothing the signed content draws, and is judged as before.
-        // A locked object is judged as one before the classifier can pass over it as unchanged.
-        let what = if locked.is_some_and(|l| l.objects.contains(&num)) {
-            kind::LOCKED_FORM_FIELDS
-        } else {
-            let Some(what) = classifier.classify(r, &new, before.as_deref()) else { continue };
-            if locked.is_some_and(|l| !l.whole) && what == kind::FORM_FILL { kind::LOCKED_FORM_FIELDS } else { what }
-        };
+        let Some(what) = under_lock(locked, num, || classifier.classify(r, &new, before.as_deref())) else { continue };
         let ok = match (what, p) {
             (kind::SIGNATURE | kind::SECURITY_STORE, _) => true,
             (kind::FORM_FILL, Some(2 | 3) | None) => true,
@@ -234,6 +228,17 @@ pub(super) fn classify_changes(doc: &Document, old: Option<Document>, p: Option<
         only_validation_data(&mut allowed, &mut disallowed, doc, &old);
     }
     if disallowed.is_empty() { Modification::Allowed(allowed) } else { Modification::Disallowed(disallowed) }
+}
+
+/// How a change to object `num` reads under `locked`: as a change to a locked field when `num` is
+/// one of its objects, before `classify` can pass over it as unchanged, or when it is a form fill
+/// and the form was not read whole; otherwise as `classify` reads it (`None`: no change).
+fn under_lock(locked: Option<&Locked>, num: u32, classify: impl FnOnce() -> Option<&'static str>) -> Option<&'static str> {
+    match locked {
+        Some(l) if l.objects.contains(&num) => Some(kind::LOCKED_FORM_FIELDS),
+        Some(l) if !l.whole => classify().map(|what| if what == kind::FORM_FILL { kind::LOCKED_FORM_FIELDS } else { what }),
+        _ => classify(),
+    }
 }
 
 /// DocMDP P=1 ("no changes allowed") permits only validation data to follow the signed revision:
