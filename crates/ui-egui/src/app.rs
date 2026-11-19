@@ -324,6 +324,7 @@ impl PdfCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             window_state: Default::default(),
             styled: false,
+            launched_at: None,
             fonts_ready: false,
             fonts_cjk: theme::CjkPreference::Default,
             control: None,

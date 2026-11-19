@@ -209,6 +209,8 @@ fn rejoin_split_paths(args: Vec<String>, exists: impl Fn(&str) -> bool) -> Vec<S
 }
 
 fn main() -> eframe::Result {
+    // For `ui.first_page_paint`: launch time as close to the start of the process as `main` gets.
+    let launched = std::time::Instant::now();
     // Before anything uses aws-lc: an `OPENSSL_ia32cap` naming a CPU feature this processor lacks
     // would stop it, so PdfCraft runs again without it (#2916, `crypto_env`).
     if let Some(code) = pdfcraft_platform::crypto_env::run_without_cpu_override() {
@@ -283,7 +285,7 @@ fn main() -> eframe::Result {
         single_instance::Claim::Alone => None,
     };
     let choice = renderer_choice(std::env::var("PDFCRAFT_RENDERER").ok().as_deref());
-    let launch = Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged };
+    let launch = Launch { launched, files, options, control_file, create_images, combine, integrated, window_controls, two_paged };
     // Finder, Open With and the Dock deliver files as Apple events, not arguments; catch the one
     // that launched us as well as later ones. Lives until the event loop returns.
     #[cfg(target_os = "macos")]
@@ -394,6 +396,7 @@ fn native_options(integrated: bool, app_frame: bool, renderer: eframe::Renderer)
 /// What the command line asked for, kept so a second run (with OpenGL) can start the same way.
 #[derive(Clone)]
 struct Launch {
+    launched: std::time::Instant,
     files: Vec<String>,
     options: Vec<(String, String)>,
     control_file: Option<String>,
@@ -466,10 +469,11 @@ fn app_creator<'a>(
     instance: Option<&'a single_instance::Server>,
     #[cfg(target_os = "macos")] apple_events: &'a apple_events::AppleEvents,
 ) -> eframe::AppCreator<'a> {
-    let Launch { files, options, control_file, create_images, combine, integrated, window_controls, two_paged } = launch;
+    let Launch { launched, files, options, control_file, create_images, combine, integrated, window_controls, two_paged } = launch;
     Box::new(move |cc| {
         started.set(true);
         let mut app = PdfCraftApp::new();
+        app.launched_at = Some(launched);
         // First start (or settings from before Units existed): the region's unit.
         app.units = pdfcraft_ui_egui::units::Unit::system();
         #[cfg(target_os = "linux")]

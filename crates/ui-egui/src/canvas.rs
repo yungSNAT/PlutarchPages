@@ -483,6 +483,16 @@ pub(crate) fn snapshot_tab_name(title: &str, file_name: &str, snapshot: &Snapsho
 /// Markup quadrilaterals in user space, one entry per page: (page, quads).
 pub type PageMarks = Vec<(usize, Vec<[f64; 8]>)>;
 
+/// The UI pass that first painted a page raster of a document inside the viewport. GPU
+/// submission and presentation follow the pass, so this is not when the page reached the screen.
+#[derive(Clone, Copy)]
+pub(crate) struct FirstPaint {
+    /// 0-based.
+    pub(crate) page: usize,
+    pub(crate) at: web_time::Instant,
+    pub(crate) wall: web_time::SystemTime,
+}
+
 pub struct DocView {
     /// Where the tab shows (split view's panes) and the key that tells two
     /// views of one document apart (`crate::panes`).
@@ -567,6 +577,8 @@ pub struct DocView {
     cut_notice_dismissed: std::collections::BTreeSet<usize>,
     /// When each still-missing page was first shown, to flag unusually slow renders.
     waiting_since: HashMap<usize, f64>,
+    /// The UI pass that first painted one of this document's page rasters in view (`ui.first_frame`).
+    pub(crate) first_paint: Option<FirstPaint>,
     thumbs: HashMap<usize, PageTex>,
     /// This frame's consumers, with visible cells ahead of prefetch.
     thumb_demand: HashMap<usize, bool>,
@@ -1088,6 +1100,7 @@ impl DocView {
             cut_pages: Default::default(),
             cut_notice_dismissed: Default::default(),
             waiting_since: HashMap::new(),
+            first_paint: None,
             thumbs: HashMap::new(),
             thumb_demand: HashMap::new(),
             frame_queue: Vec::new(),
@@ -1633,6 +1646,10 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
         } else {
             None
         };
+        // A tiled page's backdrop counts: it is the page's content, if not yet sharp.
+        if view.first_paint.is_none() && view.pages.contains_key(&i) && r.intersects(visible) {
+            view.first_paint = Some(FirstPaint { page: i, at: web_time::Instant::now(), wall: web_time::SystemTime::now() });
+        }
         match view.pages.get(&i) {
             Some(p) => {
                 if !tiled && p.tag == want_tag {
