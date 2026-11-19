@@ -379,7 +379,7 @@ index a308797..0228289 100644
  pub fn serialize_ops(ops: &[Op]) -> Vec<u8> {
      let mut out = Vec::new();
 diff --git a/src/cos/document/objects.rs b/src/cos/document/objects.rs
-index 2b8df8e..52d6f5e 100644
+index 2b8df8e..c7eaa74 100644
 --- a/src/cos/document/objects.rs
 +++ b/src/cos/document/objects.rs
 @@ -73,7 +73,8 @@ impl Document {
@@ -416,6 +416,51 @@ index 2b8df8e..52d6f5e 100644
      }
  
      /// `s` with the `/DecodeParms` its filters use made direct, so [`Stream::decoded`] reads them:
+@@ -681,6 +688,44 @@ impl Document {
+         })
+     }
+ 
++    /// [`Self::scan_objects_checked`], keeping only the objects `keep` accepts and every read error.
++    ///
++    /// In an encrypted file, `keep` first sees each unedited object as the file stores it, and
++    /// an object it refuses there is never decrypted: a search for a few dictionaries would
++    /// otherwise decrypt every string and stream of the file. What it accepts is read again
++    /// decrypted and judged again, so `keep` must not read strings or stream data, which are all
++    /// that decryption changes (§7.6.2).
++    pub fn scan_objects_where<F: Fn(&Object) -> bool>(&self, keep: F) -> impl Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)> + use<F> {
++        let mut reader = self.object_reader();
++        self.object_numbers().into_iter().filter_map(move |num| {
++            if reader.document.refused_before_decryption(num, &keep) {
++                return None;
++            }
++            let reference = ObjRef::new(num, reader.document.generation(num));
++            let object = reader.try_get(reference);
++            match &object {
++                Ok(o) if !keep(o) => None,
++                _ => Some((reference, object)),
++            }
++        })
++    }
++
++    /// Whether `keep` refuses object `num` of an encrypted file as stored at its cross-reference
++    /// offset, undecrypted. Anything else (an edit, a member of an object stream, whose stream
++    /// is decrypted as a whole, or an object not at its offset) is left to a full read.
++    pub(super) fn refused_before_decryption(&self, num: u32, keep: &dyn Fn(&Object) -> bool) -> bool {
++        if self.security.is_none() || self.overlay.contains_key(&num) {
++            return false;
++        }
++        let Some(XrefEntry::InFile { offset, .. }) = self.entries.lookup(num, &self.data) else { return false };
++        let Ok(offset) = usize::try_from(offset) else { return false };
++        // As in a load of `num`: a `/Length` that leads back to `num` reads as missing, rather than
++        // loading, and so decrypting, the object being judged.
++        let Some(_loading) = LoadGuard::enter(num) else { return false };
++        let resolve = |r: ObjRef| self.stream_length(r);
++        matches!(parse_indirect_shared(&self.data, offset, &resolve, &self.endstreams), Ok((id, o)) if id.num == num && !keep(&o))
++    }
++
+     /// Inspect selected objects in the immutable source, ignoring all unsaved edits. This
+     /// allows a consumer to check an edit's dependencies without retaining an old document.
+     pub fn scan_original_objects_subset(&self, numbers: Vec<u32>) -> impl Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)> + use<> {
 diff --git a/src/cos/document/open.rs b/src/cos/document/open.rs
 index 4991412..cc1fe78 100644
 --- a/src/cos/document/open.rs
@@ -510,7 +555,7 @@ index 4991412..cc1fe78 100644
  
      /// Whether object `num` is written as it is held, being one of [`Document::encryption_members`],
 diff --git a/src/cos/document/tests.rs b/src/cos/document/tests.rs
-index 836b8a0..a82d2f4 100644
+index 836b8a0..6f74b55 100644
 --- a/src/cos/document/tests.rs
 +++ b/src/cos/document/tests.rs
 @@ -205,7 +205,7 @@ fn encrypt_dictionary_entries_read_the_same_by_reference() {
@@ -540,6 +585,37 @@ index 836b8a0..a82d2f4 100644
      }
  }
  
+@@ -1632,6 +1632,30 @@ fn object_numbers_merge_source_and_overlay_in_order() {
+     assert_eq!(doc.object_numbers(), vec![5]);
+ }
+ 
++/// The stored parse of an encrypted file's object resolves an indirect `/Length` as a load of it
++/// does: a `/Length` naming the object itself reads as missing, so the object is refused without
++/// being loaded, and so decrypted, on the way.
++#[test]
++fn a_refused_object_is_not_loaded_through_its_own_length() {
++    let mut protected = Document::new_empty();
++    protected
++        .set_encryption(&crate::crypt::NewEncryption {
++            algorithm: crate::crypt::Algorithm::Aes256,
++            user_password: "",
++            owner_password: "owner",
++            permissions: -4,
++            encrypt_metadata: true,
++            seed: [9; 32],
++        })
++        .unwrap();
++    let protected = Document::open(Arc::new(crate::cos::write_full(&protected, &crate::cos::SaveOptions::default()).unwrap())).unwrap();
++    let mut doc = Document::open(Arc::new(build(&["<< /Type /Catalog >>", "<< /Length 2 0 R >>\nstream\nabc\nendstream"], "/Root 1 0 R"))).unwrap();
++    doc.security = protected.security.clone();
++    assert!(doc.security.is_some());
++    assert!(doc.refused_before_decryption(2, &|o| !matches!(o, Object::Stream(_))));
++    assert!(!doc.cache.lock().unwrap().contains_key(&2), "the object was loaded through its /Length");
++}
++
+ #[test]
+ fn full_object_scans_preserve_edits_without_retaining_the_scan() {
+     let mut bodies = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_owned(), "<< /Type /Pages /Kids [] /Count 0 >>".to_owned()];
 diff --git a/src/cos/security.rs b/src/cos/security.rs
 index 69b59f3..18cbcd4 100644
 --- a/src/cos/security.rs
