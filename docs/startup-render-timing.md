@@ -47,7 +47,7 @@ Measured 19 November 2026 (UTC). How long each viewer takes from being started w
 showing that file's first page in its window: the PlutarchPages app at `main` (`546192981`,
 version 0.21.1) against MuPDF's viewer `mupdf-gl` 1.28.6. Same machine and files as above.
 
-### Method
+### Method on screen
 
 - Both viewers ran in the same `archlinux:base-devel` image (20261025.0.616225) on the Ryzen 7
   4800H above, on an Xvfb 21.1.26 screen of 1920 by 1080 pixels at 24 bits, under openbox
@@ -83,7 +83,7 @@ version 0.21.1) against MuPDF's viewer `mupdf-gl` 1.28.6. Same machine and files
 - The PlutarchPages columns also give the time its control method `ui.first_page_paint` reported
   (`unix_ms` less the start time): when it painted the page, before the frame reached the screen.
 
-### Results
+### Results on screen
 
 Milliseconds from start to the first page on screen: median of 10 runs, then the interquartile
 range and the range.
