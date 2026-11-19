@@ -148,6 +148,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   their pull request paths, and each also runs weekly. Upstream runs both on every push, where
   FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
   `paths` and FreeBSD's `schedule` when a merge drops them.
+- `windows-it-nextest.yml` is this fork's own: on demand, it runs ui-egui's `it` tests 6 times under
+  nextest on a GPU-less `windows-latest`, so a test that crashes its process fails by name.
 - SonarCloud: `.sonarcloud.properties` excludes `vendor/` for the automatic analysis, and 7 hash lines
   carry `NOSONAR` for rust:S4790: 6 MD5 lines in `vendor/craft-pdf/src/crypt.rs` and the RIPEMD-160 line in
   `crates/sign/src/keys.rs`. A merge that changes those lines drops the marker, so add it back.
