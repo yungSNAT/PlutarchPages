@@ -121,10 +121,10 @@ fn malformed_metadata_is_reported_and_the_pages_are_still_audited() {
 /// Streams nothing refers to that show text are counted as `unreferenced-text`, a stream or a form
 /// alike: a redaction applied and saved without garbage collection leaves the page's old content
 /// so. So is one of a type that can be content, or one the audit doesn't know, a tiling pattern or
-/// a mistyped stream, and one of a text format that is no content, XMP metadata, a CMap or an
-/// object stream, since claiming one must not hide text. One that shows no text, and an image or
-/// a sound, however its data reads, are not; nor is any once the next save must write the document
-/// in full, which keeps only what it refers to.
+/// a mistyped stream, and a CMap or an object stream, whose syntax shows no text, so claiming
+/// either type must not hide it. One that shows no text, and an image, metadata or a sound,
+/// however its data reads, are not; nor is any once the next save must write the document in
+/// full, which keeps only what it refers to.
 #[test]
 fn unreferenced_streams_that_show_text_are_counted() {
     let mut b = Builder::new();
@@ -149,7 +149,7 @@ fn unreferenced_streams_that_show_text_are_counted() {
         assert!(report.page_findings.is_empty());
         report.document_findings.iter().map(|f| (f.kind, f.count)).collect()
     };
-    assert_eq!(kinds(&doc), [("unreferenced-text", 7)]);
+    assert_eq!(kinds(&doc), [("unreferenced-text", 6)]);
     doc.require_full_save();
     assert!(kinds(&doc).is_empty());
 }

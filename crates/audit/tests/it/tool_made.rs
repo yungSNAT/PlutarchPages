@@ -55,8 +55,8 @@ fn a_pdfjs_ink_stroke_over_text_is_flagged() {
 /// streams, one drawing `SECRET 4417`, the other `PUBLIC LINE`, in the file with nothing referring
 /// to them. The page shows and extracts no secret, but any reader of the file's objects recovers
 /// it: the audit counts both streams in a document finding, and no more when the file keeps its
-/// dictionaries in an object stream and its cross-reference table in a stream, which nothing
-/// refers to either. Saved with garbage collection, nothing is left to report.
+/// dictionaries in an object stream and its cross-reference table in a stream. Saved with garbage
+/// collection, nothing is left to report.
 #[test]
 fn an_applied_redaction_saved_without_garbage_collection_is_flagged() {
     let document_findings = |bytes: &[u8]| -> Vec<(&'static str, usize)> {
