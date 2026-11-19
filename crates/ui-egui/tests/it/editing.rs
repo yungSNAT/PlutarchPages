@@ -39,7 +39,11 @@ fn fixture(n: usize) -> Vec<u8> {
 }
 
 fn harness(pages: usize, setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
-    let mut builder = Harness::builder().with_size(egui::vec2(1400.0, 900.0));
+    harness_sized(egui::vec2(1400.0, 900.0), pages, setup)
+}
+
+fn harness_sized(size: egui::Vec2, pages: usize, setup: impl FnOnce(&mut PdfCraftApp) + 'static) -> Harness<'static, PdfCraftApp> {
+    let mut builder = Harness::builder().with_size(size);
     if std::env::var_os("PDFCRAFT_ORGANIZE_SNAPSHOT").is_some() {
         builder = builder.wgpu();
     }
@@ -10124,6 +10128,12 @@ fn mode_tab_cursors(h: &mut Harness<'static, PdfCraftApp>, text: egui::Rect) -> 
 const HAND_ON_EVERY_TAB: [(&str, egui::CursorIcon); 3] =
     [("Edit", egui::CursorIcon::PointingHand), ("Convert", egui::CursorIcon::PointingHand), ("E-Sign", egui::CursorIcon::PointingHand)];
 
+/// Wide enough that page 1's text ("Page 1", x 20 to 96 of 200 pt, the page fitted to the width)
+/// reaches under E-Sign. The in-window menu bar shares the row and pushes the tabs right; on macOS
+/// it starts with the app menu, titled with this fork's longer name, and at 1400 pt E-Sign's
+/// centre (x 671) passed the text's end (x 652). At 1600 pt the text ends near x 748.
+const MODE_TAB_WINDOW: egui::Vec2 = egui::vec2(1600.0, 900.0);
+
 /// Page 1's text block on screen, relative to the page's top edge, in the window as it is now.
 fn page_text(h: &Harness<'static, PdfCraftApp>) -> egui::Rect {
     let id = h.state().views[0].id;
@@ -10138,7 +10148,7 @@ fn page_text(h: &Harness<'static, PdfCraftApp>) -> egui::Rect {
 /// text layer showed its I-beam there, over chrome that hides the page.
 #[test]
 fn mode_tabs_keep_the_hand_over_page_text_scrolled_under_them() {
-    let mut h = harness(2, |app| app.set_option("left", "closed").unwrap());
+    let mut h = harness_sized(MODE_TAB_WINDOW, 2, |app| app.set_option("left", "closed").unwrap());
     let text = page_text(&h);
     // Where the page shows, its text takes the I-beam, once the page's text has arrived.
     h.state_mut().views[0].goto = Some((0, 0.3));
@@ -10160,7 +10170,7 @@ fn mode_tabs_keep_the_hand_over_page_text_scrolled_under_them() {
 /// The open paragraph's editor also covered the tabs and took their clicks.
 #[test]
 fn mode_tabs_keep_the_hand_over_a_paragraph_scrolled_under_them() {
-    let mut h = harness(2, |_| {});
+    let mut h = harness_sized(MODE_TAB_WINDOW, 2, |_| {});
     assert!(h.state_mut().execute("edit.edit_text"));
     h.state_mut().set_option("left", "closed").unwrap();
     h.run_steps(4);
