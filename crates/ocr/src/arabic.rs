@@ -9,7 +9,6 @@
 
 use std::path::Path;
 
-use rten::FloatOperators;
 use rten::ctc::CtcDecoder;
 use rten_imageproc::RectF;
 use rten_tensor::prelude::*;
@@ -72,17 +71,11 @@ impl ArabicReader {
         if w == 0 || h == 0 {
             return Ok(String::new());
         }
-        // Scaled to the model's height, keeping the line's proportions; values -1 (black) to 1.
-        let mut crop = Vec::with_capacity(w * h);
-        for y in top..bottom {
-            let row = grey.get(y * width + left..y * width + right).ok_or(OcrError::EmptyImage)?;
-            crop.extend(row.iter().map(|&v| f32::from(v) / 127.5 - 1.0));
-        }
+        // Scaled to the model's height, keeping the line's proportions.
         let scaled_width = (w * LINE_HEIGHT).div_ceil(h).clamp(LINE_HEIGHT / 3, MAX_LINE_WIDTH);
+        let plane = scale_line(grey, width, [left, top, w, h], scaled_width);
         let err = |e: &dyn std::fmt::Display| OcrError::Recognize(format!("Arabic line: {e}"));
-        let scaled = NdTensor::from_data([1, 1, h, w], crop).resize_image([LINE_HEIGHT, scaled_width]).map_err(|e| err(&e))?;
         // The model takes three colour channels; a grey line is the same in each.
-        let plane = scaled.to_vec();
         let input: Tensor<f32> = NdTensor::from_data([1, 3, LINE_HEIGHT, scaled_width], plane.repeat(3)).into();
         let output = self.model.run_one(input.view().into(), None).map_err(|e| err(&e))?;
         let output: NdTensor<f32, 3> = output.try_into().map_err(|e| err(&e))?;
@@ -93,6 +86,34 @@ impl ArabicReader {
         let visual: Vec<char> = steps.steps().iter().filter_map(|s| self.classes.get((s.label as usize).checked_sub(1)?).copied()).collect();
         Ok(to_logical(&visual))
     }
+}
+
+/// The `w` × `h` box at (`left`, `top`) of `grey` (`width` pixels a row), scaled bilinearly to
+/// `out_width` × [`LINE_HEIGHT`], with values -1 (black) to 1. Only the scaled line is allocated
+/// (at most [`MAX_LINE_WIDTH`] × [`LINE_HEIGHT`]); a pixel outside `grey` reads as white.
+fn scale_line(grey: &[u8], width: usize, [left, top, w, h]: [usize; 4], out_width: usize) -> Vec<f32> {
+    let pixel = |x: usize, y: usize| {
+        let at = top.saturating_add(y).saturating_mul(width).saturating_add(left.saturating_add(x));
+        grey.get(at).map_or(1.0, |&v| f32::from(v) / 127.5 - 1.0)
+    };
+    // Where output position `i` of `n` samples from in a run of `len` pixels: two neighbours and
+    // the weight of the second.
+    let source = |i: usize, n: usize, len: usize| {
+        let at = ((i as f32 + 0.5) * len as f32 / n as f32 - 0.5).clamp(0.0, len.saturating_sub(1) as f32);
+        let first = at as usize;
+        (first, (first + 1).min(len.saturating_sub(1)), at - first as f32)
+    };
+    let mut out = Vec::with_capacity(out_width * LINE_HEIGHT);
+    for oy in 0..LINE_HEIGHT {
+        let (y0, y1, fy) = source(oy, LINE_HEIGHT, h);
+        for ox in 0..out_width {
+            let (x0, x1, fx) = source(ox, out_width, w);
+            let top_row = pixel(x0, y0) * (1.0 - fx) + pixel(x1, y0) * fx;
+            let bottom_row = pixel(x0, y1) * (1.0 - fx) + pixel(x1, y1) * fx;
+            out.push(top_row * (1.0 - fy) + bottom_row * fy);
+        }
+    }
+    out
 }
 
 /// The `character_dict` list of a PaddleOCR `inference.yml`, one character per entry, with the
@@ -147,17 +168,18 @@ pub(crate) fn is_arabic(text: &str) -> bool {
 
 /// The words of an Arabic line read as `text` (typed order), placed on the boxes ocrs found for
 /// it (`found`, left to right as drawn, so its last box holds the first word). When the counts
-/// differ, the line is one word spanning them all.
-pub(crate) fn line_words(text: &str, found: &[Word]) -> Vec<Word> {
+/// differ, the line is one word spanning those boxes, or `line` (the box the line was found in)
+/// when ocrs read no word in it.
+pub(crate) fn line_words(text: &str, found: &[Word], line: [f32; 4]) -> Vec<Word> {
     let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
     if words.len() == found.len() {
         return words.iter().zip(found.iter().rev()).map(|(w, f)| Word::new(*w, f.rect, "ocrs")).collect();
     }
     let span = found.iter().map(|w| w.rect).reduce(|[l, t, r, b], [l2, t2, r2, b2]| [l.min(l2), t.min(t2), r.max(r2), b.max(b2)]);
-    match span {
-        Some(rect) if !words.is_empty() => vec![Word::new(words.join(" "), rect, "ocrs")],
-        _ => Vec::new(),
-    }
+    vec![Word::new(words.join(" "), span.unwrap_or(line), "ocrs")]
 }
 
 #[cfg(test)]
@@ -250,13 +272,28 @@ mod tests {
     #[test]
     fn words_take_the_boxes_found_for_them_from_the_right() {
         let found = [Word::new("x", [0.0, 0.0, 10.0, 5.0], "ocrs"), Word::new("y", [20.0, 0.0, 30.0, 5.0], "ocrs")];
-        let words = line_words("أول ثاني", &found);
+        let line = [-2.0, -1.0, 32.0, 6.0];
+        let words = line_words("أول ثاني", &found, line);
         assert_eq!(words.iter().map(|w| (w.text.as_str(), w.rect[0])).collect::<Vec<_>>(), [("أول", 20.0), ("ثاني", 0.0)]);
-        // A count that differs makes one word over the whole line.
-        let one = line_words("أ ب ج", &found);
+        // A count that differs makes one word over the words found.
+        let one = line_words("أ ب ج", &found, line);
         assert_eq!(one, [Word::new("أ ب ج", [0.0, 0.0, 30.0, 5.0], "ocrs")]);
-        assert!(line_words("", &found).is_empty());
-        assert!(line_words("أ ب", &[]).is_empty());
+        assert!(line_words("", &found, line).is_empty());
+        // A line ocrs read no word in keeps the Arabic reading, over the line's box.
+        assert_eq!(line_words("سلام عليكم", &[], line), [Word::new("سلام عليكم", line, "ocrs")]);
+    }
+
+    #[test]
+    fn a_line_is_scaled_to_the_model_height_within_its_box() {
+        // 4 × 2 pixels: the left half black, the right half white.
+        let grey = [0, 0, 255, 255, 0, 0, 255, 255];
+        let out = scale_line(&grey, 4, [0, 0, 4, 2], 4);
+        assert_eq!(out.len(), 4 * LINE_HEIGHT);
+        assert!(out.chunks(4).all(|row| row[0] == -1.0 && row[3] == 1.0), "{out:?}");
+        // A box reaching past the image reads white there, never out of bounds.
+        let out = scale_line(&grey, 4, [3, 1, 5, 5], 2);
+        assert_eq!(out.len(), 2 * LINE_HEIGHT);
+        assert!(out.iter().all(|v| (-1.0..=1.0).contains(v)));
     }
 
     #[test]

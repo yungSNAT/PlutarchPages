@@ -210,21 +210,23 @@ impl Ocr {
             .into_iter()
             .zip(before)
             .zip(arabic.into_iter().chain(std::iter::repeat(None)))
-            .filter_map(|((line, before), _arabic)| {
-                let words: Vec<Word> = line?
-                    .words()
+            .map(|((line, before), _arabic)| {
+                let words: Vec<Word> = line
+                    .iter()
+                    .flat_map(|line| line.words())
                     .map(|w| {
                         let r = w.bounding_rect();
                         Word::new(w.to_string(), clip([r.left() as f32, r.top() as f32, r.right() as f32, r.bottom() as f32], before), "ocrs")
                     })
                     .filter(|w| !w.text.trim().is_empty())
                     .collect();
+                // An Arabic reading replaces ocrs's, even where ocrs read nothing in the line.
                 #[cfg(feature = "arabic")]
-                let words = match _arabic {
-                    Some(text) => crate::arabic::line_words(&text, &words),
-                    None => words,
+                let words = match (_arabic, before) {
+                    (Some(text), Some(b)) => crate::arabic::line_words(&text, &words, [b.left(), b.top(), b.right(), b.bottom()]),
+                    _ => words,
                 };
-                Some(Line { words })
+                Line { words }
             })
             .filter(|l| !l.words.is_empty())
             .collect())
@@ -237,9 +239,9 @@ impl Ocr {
         let Some(reader) = &self.arabic else { return Ok(Vec::new()) };
         let (w, h) = (width as usize, height as usize);
         let channels = rgb.len() / w.saturating_mul(h).max(1);
-        let grey: Vec<u8> = match channels {
-            3 => rgb.as_chunks::<3>().0.iter().map(|p| ((u16::from(p[0]) + u16::from(p[1]) + u16::from(p[2])) / 3) as u8).collect(),
-            _ => rgb.to_vec(),
+        let grey: std::borrow::Cow<[u8]> = match channels {
+            3 => rgb.as_chunks::<3>().0.iter().map(|p| ((u16::from(p[0]) + u16::from(p[1]) + u16::from(p[2])) / 3) as u8).collect::<Vec<u8>>().into(),
+            _ => rgb.into(),
         };
         lines
             .iter()
