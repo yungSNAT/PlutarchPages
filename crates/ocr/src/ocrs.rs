@@ -39,7 +39,7 @@ pub const RECOGNITION_MODEL: &str = "text-recognition.onnx";
 pub const DETECTION_MODEL_SHA256: &str = "a917b23dbd9524b465df7e922641b3ff2981623df4ded5a0234004ef2fee7cfe";
 pub const RECOGNITION_MODEL_SHA256: &str = "86c145c2edb96c8caed5b1ebb8f44d706408922211451c309c625157dd6061c5";
 
-fn sha256_hex(bytes: &[u8]) -> String {
+pub(crate) fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -133,12 +133,21 @@ fn clip(rect: [f32; 4], to: Option<RectF>) -> [f32; 4] {
 /// A loaded recogniser. Loading takes a moment; keep one and reuse it.
 pub struct Ocr {
     engine: ocrs::OcrEngine,
+    /// Reads Arabic lines when its files are beside the models (`crate::arabic`).
+    #[cfg(feature = "arabic")]
+    arabic: Option<crate::arabic::ArabicReader>,
 }
 
 impl Ocr {
     pub fn load(models: &Models) -> Result<Ocr, OcrError> {
         let load = |p: &Path| rten::Model::load_file(p).map_err(|e| OcrError::Load(p.display().to_string(), e.to_string()));
-        Self::with_models(load(&models.detection)?, load(&models.recognition)?)
+        #[cfg_attr(not(feature = "arabic"), expect(unused_mut))]
+        let mut ocr = Self::with_models(load(&models.detection)?, load(&models.recognition)?)?;
+        #[cfg(feature = "arabic")]
+        if let Some(dir) = models.recognition.parent() {
+            ocr.arabic = crate::arabic::ArabicReader::in_dir(dir)?;
+        }
+        Ok(ocr)
     }
 
     /// Load the models from the contents of their files, where there is no file system (the web
@@ -161,7 +170,11 @@ impl Ocr {
             ..Default::default()
         };
         let engine = ocrs::OcrEngine::new(params).map_err(|e| OcrError::Load("ocr engine".into(), e.to_string()))?;
-        Ok(Ocr { engine })
+        Ok(Ocr {
+            engine,
+            #[cfg(feature = "arabic")]
+            arabic: None,
+        })
     }
 
     /// Load the models found by [`Models::find`].
@@ -188,23 +201,53 @@ impl Ocr {
         let mut lines = self.engine.find_text_lines(&input, &found);
         let before: Vec<Option<RectF>> = lines.iter_mut().map(|l| pad_line(l)).collect();
         let read = self.engine.recognize_text(&input, &lines).map_err(|e| err(&e))?;
+        #[cfg(feature = "arabic")]
+        let arabic = self.read_arabic(&rgb, width, height, &lines)?;
+        #[cfg(not(feature = "arabic"))]
+        let arabic: Vec<Option<String>> = Vec::new();
         use ocrs::TextItem;
         Ok(read
             .into_iter()
             .zip(before)
-            .filter_map(|(line, before)| line.map(|l| (l, before)))
-            .map(|(line, before)| Line {
-                words: line
+            .zip(arabic.into_iter().chain(std::iter::repeat(None)))
+            .filter_map(|((line, before), _arabic)| {
+                let words: Vec<Word> = line?
                     .words()
                     .map(|w| {
                         let r = w.bounding_rect();
                         Word::new(w.to_string(), clip([r.left() as f32, r.top() as f32, r.right() as f32, r.bottom() as f32], before), "ocrs")
                     })
                     .filter(|w| !w.text.trim().is_empty())
-                    .collect(),
+                    .collect();
+                #[cfg(feature = "arabic")]
+                let words = match _arabic {
+                    Some(text) => crate::arabic::line_words(&text, &words),
+                    None => words,
+                };
+                Some(Line { words })
             })
             .filter(|l| !l.words.is_empty())
             .collect())
+    }
+
+    /// The Arabic reading of each of `lines` that reads as Arabic (see `crate::arabic`); empty
+    /// without the Arabic model. `rgb` is the page in 1 or 3 channels.
+    #[cfg(feature = "arabic")]
+    fn read_arabic(&self, rgb: &[u8], width: u32, height: u32, lines: &[Vec<RotatedRect>]) -> Result<Vec<Option<String>>, OcrError> {
+        let Some(reader) = &self.arabic else { return Ok(Vec::new()) };
+        let (w, h) = (width as usize, height as usize);
+        let channels = rgb.len() / w.saturating_mul(h).max(1);
+        let grey: Vec<u8> = match channels {
+            3 => rgb.as_chunks::<3>().0.iter().map(|p| ((u16::from(p[0]) + u16::from(p[1]) + u16::from(p[2])) / 3) as u8).collect(),
+            _ => rgb.to_vec(),
+        };
+        lines
+            .iter()
+            .map(|line| match rten_imageproc::bounding_rect(line.iter()) {
+                Some(rect) => reader.read_line(&grey, w, h, rect).map(|text| crate::arabic::is_arabic(&text).then_some(text)),
+                None => Ok(None),
+            })
+            .collect()
     }
 }
 
