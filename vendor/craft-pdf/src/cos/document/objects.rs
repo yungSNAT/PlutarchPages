@@ -688,6 +688,44 @@ impl Document {
         })
     }
 
+    /// [`Self::scan_objects_checked`], keeping only the objects `keep` accepts and every read error.
+    ///
+    /// In an encrypted file, `keep` first sees each unedited object as the file stores it, and
+    /// an object it refuses there is never decrypted: a search for a few dictionaries would
+    /// otherwise decrypt every string and stream of the file. What it accepts is read again
+    /// decrypted and judged again, so `keep` must not read strings or stream data, which are all
+    /// that decryption changes (§7.6.2).
+    pub fn scan_objects_where<F: Fn(&Object) -> bool>(&self, keep: F) -> impl Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)> + use<F> {
+        let mut reader = self.object_reader();
+        self.object_numbers().into_iter().filter_map(move |num| {
+            if reader.document.refused_before_decryption(num, &keep) {
+                return None;
+            }
+            let reference = ObjRef::new(num, reader.document.generation(num));
+            let object = reader.try_get(reference);
+            match &object {
+                Ok(o) if !keep(o) => None,
+                _ => Some((reference, object)),
+            }
+        })
+    }
+
+    /// Whether `keep` refuses object `num` of an encrypted file as stored at its cross-reference
+    /// offset, undecrypted. Anything else (an edit, a member of an object stream, whose stream
+    /// is decrypted as a whole, or an object not at its offset) is left to a full read.
+    pub(super) fn refused_before_decryption(&self, num: u32, keep: &dyn Fn(&Object) -> bool) -> bool {
+        if self.security.is_none() || self.overlay.contains_key(&num) {
+            return false;
+        }
+        let Some(XrefEntry::InFile { offset, .. }) = self.entries.lookup(num, &self.data) else { return false };
+        let Ok(offset) = usize::try_from(offset) else { return false };
+        // As in a load of `num`: a `/Length` that leads back to `num` reads as missing, rather than
+        // loading, and so decrypting, the object being judged.
+        let Some(_loading) = LoadGuard::enter(num) else { return false };
+        let resolve = |r: ObjRef| self.stream_length(r);
+        matches!(parse_indirect_shared(&self.data, offset, &resolve, &self.endstreams), Ok((id, o)) if id.num == num && !keep(&o))
+    }
+
     /// Inspect selected objects in the immutable source, ignoring all unsaved edits. This
     /// allows a consumer to check an edit's dependencies without retaining an old document.
     pub fn scan_original_objects_subset(&self, numbers: Vec<u32>) -> impl Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)> + use<> {

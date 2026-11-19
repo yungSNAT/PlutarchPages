@@ -84,6 +84,12 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   the xtask; trademark-licensed assets still need a search.
   `LICENSES.toml` has no `docs/brand/LICENSE-brand.txt` document, and its `NOTICE` hash is the
   fork's `NOTICE`.
+- The app menu: `APP_NAME` in `crates/ui-egui/src/menus.rs` is `PlutarchPages`, which titles the
+  macOS app menu. Tests draw the in-window bar, which shares the mode tabs' row, so on macOS the
+  longer title moves the tabs right and folds menus into "…" sooner. The Preferences test in
+  `crates/ui-egui/tests/it/control.rs` looks for that title, the 2 `mode_tabs_keep_the_hand_over_*`
+  tests in `editing.rs` use a 1600 pt window and `long_view_menu_fits_a_short_window` in `view.rs`
+  a 1100 pt one. Keep them when a merge changes those tests: only Nightly macOS runs them on macOS.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages

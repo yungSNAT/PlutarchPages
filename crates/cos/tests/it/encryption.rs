@@ -155,6 +155,115 @@ fn incremental_edits_of_encrypted_documents_stay_encrypted() {
     }
 }
 
+/// The fixture under RC4-128 with an empty user password and every object in the file, as the
+/// ISO 32000-1 PDF stores them.
+fn rc4_in_file() -> Vec<u8> {
+    let mut doc = Document::open(Arc::new(fixture())).unwrap();
+    doc.set_encryption_legacy(&NewEncryption {
+        algorithm: Algorithm::Rc4_128,
+        user_password: "",
+        owner_password: "owner",
+        permissions: -1,
+        encrypt_metadata: true,
+        seed: [9; 32],
+    })
+    .unwrap();
+    write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap()
+}
+
+/// A filtered scan of an encrypted file judges each object first as stored, and decrypts and
+/// judges again only what it keeps; an edit is judged once, as it reads now, and a read error
+/// comes back whatever the filter says.
+#[test]
+fn a_filtered_scan_decrypts_only_what_it_keeps() {
+    let bytes = rc4_in_file();
+    let mut doc = Document::open(Arc::new(bytes.clone())).unwrap();
+    let info = doc.trailer().reference(b"Info").unwrap();
+    let seen = std::cell::RefCell::new(Vec::new());
+    let titled = |o: &Object| {
+        let title = o.as_dict().and_then(|d| d.get(b"Title")).and_then(Object::as_string);
+        seen.borrow_mut().extend(title.map(|t| t.bytes.clone()));
+        title.is_some()
+    };
+    let title = |kept: Vec<(ObjRef, Result<Arc<Object>, CosError>)>| match &kept[..] {
+        [(r, Ok(o))] if *r == info => o.as_dict().and_then(|d| d.get(b"Title")).and_then(Object::as_string).map(|t| t.bytes.clone()),
+        _ => None,
+    };
+    assert_eq!(title(doc.scan_objects_where(titled).collect()).as_deref(), Some(&b"Quarterly numbers"[..]));
+    let stored = seen.take();
+    assert_eq!(stored.len(), 2, "as stored, then decrypted");
+    assert_ne!(stored[0], b"Quarterly numbers");
+    assert_eq!(stored[1], b"Quarterly numbers");
+
+    doc.update_dict(info, |d| d.set(b"Title".to_vec(), Object::String(PdfString::literal("Revised")))).unwrap();
+    assert_eq!(title(doc.scan_objects_where(titled).collect()).as_deref(), Some(&b"Revised"[..]));
+    assert_eq!(seen.take(), vec![b"Revised".to_vec()]);
+
+    // The Info dictionary's `obj` keyword broken in place: it reads nowhere, before or after decryption.
+    let header = format!("\n{} 0 obj", info.num).into_bytes();
+    let at = bytes.windows(header.len()).position(|w| w == header).unwrap() + header.len() - 1;
+    let mut damaged = bytes;
+    damaged[at] = b'x';
+    let damaged = Document::open(Arc::new(damaged)).unwrap();
+    let errors: Vec<ObjRef> = damaged.scan_objects_where(|_| false).filter(|(_, o)| o.is_err()).map(|(r, _)| r).collect();
+    assert_eq!(errors, vec![info]);
+}
+
+/// The stored parse resolves an indirect `/Length` as a full read does, so a filtered scan returns
+/// what filtering a full scan returns and lists the same unreadable objects: here a stream whose
+/// `/Length` names an object that does not parse, and one whose `/Length` names itself.
+#[test]
+fn a_filtered_scan_reads_what_filtering_a_full_scan_reads() {
+    let mut bytes = rc4_in_file();
+    // An update appended by hand, its trailer the saved one's entries with a larger /Size and a /Prev.
+    let saved = Document::open(Arc::new(bytes.clone())).unwrap();
+    let entry = |key: &[u8]| saved.trailer().reference(key).map(|r| format!("{} {} R", r.num, r.generation)).unwrap();
+    let hex = |s: &Object| s.as_string().unwrap().bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+    let ids = saved.trailer().get(b"ID").and_then(Object::as_array).unwrap().iter().map(|s| format!("<{}>", hex(s))).collect::<Vec<_>>().join(" ");
+    let startxref = bytes.windows(9).rposition(|w| w == b"startxref").unwrap() + 9;
+    let prev = String::from_utf8_lossy(&bytes[startxref..]).split_whitespace().next().unwrap().to_string();
+    let size = u32::try_from(saved.trailer().int(b"Size").unwrap()).unwrap();
+    let (broken_length, broken, cycle) = (size, size + 1, size + 2);
+    let mut offsets = Vec::new();
+    for object in [
+        format!("{broken_length} 0 obj\n<< /Length {broken} 0 R >>\nstream\nabc\nendstream\nendobj"),
+        "not an object".to_string(),
+        format!("{cycle} 0 obj\n<< /Length {cycle} 0 R >>\nstream\nxyz\nendstream\nendobj"),
+    ] {
+        offsets.push(bytes.len() + 1);
+        bytes.extend_from_slice(format!("\n{object}\n").as_bytes());
+    }
+    let xref = bytes.len();
+    let mut update = format!("xref\n{size} 3\n");
+    for offset in offsets {
+        update.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    update.push_str(&format!(
+        "trailer\n<< /Size {} /Root {} /Info {} /Encrypt {} /ID [{ids}] /Prev {prev} >>\nstartxref\n{xref}\n%%EOF\n",
+        size + 3,
+        entry(b"Root"),
+        entry(b"Info"),
+        entry(b"Encrypt"),
+    ));
+    bytes.extend_from_slice(update.as_bytes());
+    let bytes = Arc::new(bytes);
+    let read = |scan: &mut dyn Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)>| {
+        scan.map(|(r, o)| (r, o.map_err(|e| e.to_string()))).collect::<Vec<_>>()
+    };
+    let keeps: [fn(&Object) -> bool; 3] = [|o| !matches!(o, Object::Stream(_)), |_| false, |_| true];
+    for keep in keeps {
+        let full = Document::open(bytes.clone()).unwrap();
+        let expected = read(&mut full.scan_objects_checked().filter(|(_, o)| !matches!(o, Ok(o) if !keep(o))));
+        let filtered = Document::open(bytes.clone()).unwrap();
+        assert_eq!(read(&mut filtered.scan_objects_where(keep)), expected);
+        assert_eq!(filtered.unreadable_objects(), full.unreadable_objects());
+        assert!(full.unreadable_objects().iter().any(|line| line.starts_with(&format!("object {broken} "))), "{:?}", full.unreadable_objects());
+    }
+    let full = Document::open(bytes.clone()).unwrap();
+    assert!(full.scan_objects_checked().any(|(r, o)| r.num == broken_length && matches!(o.as_deref(), Ok(Object::Stream(_)))));
+    assert!(full.scan_objects_checked().any(|(r, o)| r.num == cycle && matches!(o.as_deref(), Ok(Object::Stream(_)))));
+}
+
 #[test]
 fn changing_and_removing_passwords() {
     let bytes = protect(Algorithm::Rc4_128, "old", "old-owner", -1);

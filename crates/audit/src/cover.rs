@@ -145,9 +145,48 @@ struct Gs {
     /// A box in page user space that holds the clip.
     clip: [f64; 4],
     /// The clip is that box exactly: every clip set was a box on the page (a path of one `re` or one
-    /// four-cornered subpath, or a `/BBox`, whose corners land on a box). Only then can a stroke's
-    /// band within `clip` be taken as what it paints.
+    /// four-cornered subpath, or a `/BBox`, whose corners land on a box), and no text was shown in a
+    /// clipping render mode. Only then can what is painted within `clip` be taken as what shows.
     clip_exact: bool,
+    /// The text render mode (`Tr`) is one that adds the glyphs' outlines to the clip (4 to 7).
+    text_clip: bool,
+    /// The kind of the font text is shown in, set by `Tf` or an ExtGState's `/Font`.
+    font: FontKind,
+}
+
+/// What a font's glyphs add to the clip in a clipping render mode (ISO 32000-1 §9.3.6).
+#[derive(Clone, Copy)]
+enum FontKind {
+    /// A simple font (`Type1`, `MMType1` or `TrueType`) whose encoding leaves code 20h the space,
+    /// which has no outline.
+    Spaced,
+    /// Any byte may draw a glyph: a Type 0 font, a simple font that gives 20h another glyph, a font
+    /// of another or no subtype, or one not selected or found, which a viewer replaces with one of
+    /// its own.
+    Drawn,
+    /// A Type 3 font: only mode 3 affects its glyphs, so it adds nothing.
+    Type3,
+}
+
+impl FontKind {
+    /// Whether the text-showing operator `op` shows a glyph in this font that adds to the clip: a
+    /// string, or a string in a `TJ` array, with a byte other than a space in a [`FontKind::Spaced`]
+    /// font, or any byte in a [`FontKind::Drawn`] one. Another glyph without an outline is taken to
+    /// clip.
+    fn clips(self, op: &Op) -> bool {
+        let shows = |s: &Object| {
+            s.as_string().is_some_and(|s| match self {
+                FontKind::Spaced => s.bytes.iter().any(|&b| b != b' '),
+                FontKind::Drawn => !s.bytes.is_empty(),
+                FontKind::Type3 => false,
+            })
+        };
+        match op.back(0) {
+            Some(Object::Array(parts)) => parts.iter().any(shows),
+            Some(last) => shows(last),
+            None => false,
+        }
+    }
 }
 
 impl Gs {
@@ -167,6 +206,8 @@ impl Gs {
             grouped: false,
             clip,
             clip_exact: true,
+            text_clip: false,
+            font: FontKind::Drawn,
         }
     }
 }
@@ -406,6 +447,8 @@ impl<'a> Walker<'a> {
         let mut path_box: Option<[f64; 4]> = None;
         let mut subpaths = 0;
         let mut clipping: Option<bool> = None;
+        // Text shown since `BT` in a clipping render mode: at `ET` its glyphs become part of the clip.
+        let mut glyph_clip = false;
         for (i, op) in ops.enumerate() {
             self.bump()?;
             let op = &op;
@@ -533,12 +576,19 @@ impl<'a> Walker<'a> {
                     if let Some(unplaced) = self.inside {
                         return Err(AuditError::UncheckedText(self.page, unplaced.what()));
                     }
+                    glyph_clip |= gs.text_clip && gs.font.clips(op);
                 }
+                b"Tr" => gs.text_clip = op.nums::<1>().map_or(gs.text_clip, |[mode]| (4.0..=7.0).contains(&mode)),
+                b"BT" => glyph_clip = false,
+                // The glyphs' outlines are no box, so what is painted after may not show where its box
+                // says. With none shown nothing is clipped.
+                b"ET" => gs.clip_exact &= !glyph_clip,
                 b"Tf" => {
                     let fonts = resources.get(b"Font").map(|o| self.doc.resolve(o));
-                    if let Some(entry) = op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
-                        self.walk_type3(entry, i, res, calls)?;
-                    }
+                    gs.font = match op.name(0).and_then(|name| fonts.as_deref().and_then(Object::as_dict)?.get(name)) {
+                        Some(entry) => self.walk_type3(entry, i, res, calls)?,
+                        None => FontKind::Drawn,
+                    };
                 }
                 b"S" | b"s" => {
                     path = Path::Empty;
@@ -638,7 +688,7 @@ impl<'a> Walker<'a> {
                     gs.dashed = set.dashed.unwrap_or(gs.dashed);
                     gs.blended = set.blended.unwrap_or(gs.blended);
                     gs.masked = set.masked.unwrap_or(gs.masked);
-                    self.walk_state_font(name, i, res, calls)?;
+                    gs.font = self.walk_state_font(name, i, res, calls)?.unwrap_or(gs.font);
                 }
             }
             _ => {}
@@ -787,30 +837,36 @@ impl<'a> Walker<'a> {
     }
 
     /// Walk the font an ExtGState's `/Font` sets (ISO 32000-2 §8.4.5) as [`Walker::walk_type3`]
-    /// walks one `Tf` selects: the `gs` at index `at` names the ExtGState.
-    fn walk_state_font(&mut self, name: &[u8], at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+    /// walks one `Tf` selects: the `gs` at index `at` names the ExtGState. Returns the font's kind, if
+    /// the state sets one.
+    fn walk_state_font(&mut self, name: &[u8], at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<Option<FontKind>, AuditError> {
         // Borrowed, not copied: a `gs` must not cost the size of the whole ExtGState table.
         let states = res.dict.get(b"ExtGState").map(|o| self.doc.resolve(o));
-        let Some(state) = states.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| self.doc.resolve(o)) else { return Ok(()) };
+        let Some(state) = states.as_deref().and_then(Object::as_dict).and_then(|d| d.get(name)).map(|o| self.doc.resolve(o)) else { return Ok(None) };
         let font = state.as_dict().and_then(|d| d.get(b"Font")).map(|o| self.doc.resolve(o));
         match font.as_deref().and_then(Object::as_array).and_then(|a| a.first()) {
-            Some(entry) => self.walk_type3(entry, at, res, calls),
-            None => Ok(()),
+            Some(entry) => self.walk_type3(entry, at, res, calls).map(Some),
+            None => Ok(None),
         }
     }
 
     /// Walk the glyph procedures of the Type 3 font `entry`, selected at index `at`, as unplaced
-    /// content, once a page for each set of resources they read.
-    fn walk_type3(&mut self, entry: &Object, at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<(), AuditError> {
+    /// content, once a page for each set of resources they read. Returns the font's kind.
+    fn walk_type3(&mut self, entry: &Object, at: usize, res: Res<'_>, calls: &mut Vec<usize>) -> Result<FontKind, AuditError> {
         let font = self.doc.resolve(entry);
-        let Some(font) = font.as_dict() else { return Ok(()) };
+        let Some(font) = font.as_dict() else { return Ok(FontKind::Drawn) };
+        let kind = match crate::subtype(self.doc, font)?.as_deref() {
+            Some(b"Type3") => FontKind::Type3,
+            Some(b"Type1" | b"MMType1" | b"TrueType") if !space_remapped(self.doc, font) => FontKind::Spaced,
+            _ => FontKind::Drawn,
+        };
         // A font without `/Resources` reads those where it is selected (PDF 1.1), as its glyphs
         // are drawn there: a glyph drawing a form that only some of them name shows its text there
         // alone.
         let own = font.get(b"Resources").map(|o| (o, self.doc.resolve(o)));
         let glyph = own_resources(own.as_ref(), entry.as_ref()).unwrap_or(res);
-        if !self.first_walk(entry, glyph.owner) || crate::subtype(self.doc, font)?.as_deref() != Some(b"Type3") {
-            return Ok(());
+        if !matches!(kind, FontKind::Type3) || !self.first_walk(entry, glyph.owner) {
+            return Ok(kind);
         }
         let procs = font.get(b"CharProcs").map(|o| self.doc.resolve(o));
         for (_, proc) in procs.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
@@ -821,7 +877,7 @@ impl<'a> Walker<'a> {
                 self.walk_unplaced(Unplaced::Glyph, s, at, glyph, calls)?;
             }
         }
-        Ok(())
+        Ok(kind)
     }
 
     /// Walk the cell of the tiling pattern `scn` paints with at index `at` as unplaced content,
@@ -867,6 +923,23 @@ impl<'a> Walker<'a> {
         self.inside = outer;
         Ok(())
     }
+}
+
+/// Whether a simple font's `/Encoding` `/Differences` gives code 20h a glyph other than `/space`:
+/// every standard base encoding leaves it the space.
+fn space_remapped(doc: &Document, font: &Dict) -> bool {
+    let encoding = font.get(b"Encoding").map(|o| doc.resolve(o));
+    let differences = encoding.as_deref().and_then(Object::as_dict).and_then(|d| d.get(b"Differences")).map(|o| doc.resolve(o));
+    let (mut code, mut remapped) = (None, false);
+    for item in differences.as_deref().and_then(Object::as_array).into_iter().flatten() {
+        if let Some(name) = item.as_name() {
+            remapped = if code == Some(32.0) { name != b"space" } else { remapped };
+            code = code.map(|c| c + 1.0);
+        } else {
+            code = item.as_f64();
+        }
+    }
+    remapped
 }
 
 /// The resources a stream has of its own, `own` being its `/Resources` entry and what that
