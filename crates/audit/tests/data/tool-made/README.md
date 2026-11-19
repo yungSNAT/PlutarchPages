@@ -12,6 +12,7 @@ the text's box, PDF user space [100 692.824 257.392 725.8]; every cover below is
 | --- | --- |
 | `pymupdf-applied-no-garbage.pdf` | PyMuPDF: `add_redact_annot(box, fill=(0, 0, 0))`, then `apply_redactions()`, saved with `save()` |
 | `pymupdf-applied.pdf` | PyMuPDF: `pymupdf-applied-no-garbage.pdf` saved again with `save(garbage=4)` |
+| `pymupdf-applied-objstm-no-garbage.pdf` | PyMuPDF: the same redaction as `pymupdf-applied-no-garbage.pdf`, saved with `save(use_objstms=1)`, so its dictionaries are in an object stream and its cross-reference table is a stream; made on 19 November 2026 (UTC) with PyMuPDF 2.1 (MuPDF 1.28.6) on CPython 3.14 |
 | `pymupdf-mark-unapplied.pdf` | PyMuPDF: `add_redact_annot(box, fill=(0, 0, 0))`, saved without applying it |
 | `pymupdf-drawn-box.pdf` | PyMuPDF: `draw_rect(box, color=None, fill=(0, 0, 0))`, into the page content |
 | `pymupdf-square-annot.pdf` | PyMuPDF: `add_rect_annot(box)`, stroke and fill black, `update()` |
@@ -25,7 +26,7 @@ the text's box, PDF user space [100 692.824 257.392 725.8]; every cover below is
 The 2 pdf.js files are `base.pdf` with an incremental update appended. The `mutool` files start
 from `base.pdf` too.
 
-Both `-no-garbage` files were saved without garbage collection. Their page no longer shows or
+The 3 `-no-garbage` files were saved without garbage collection. Their page no longer shows or
 extracts `SECRET 4417`, but object 6, the page's original content stream, is still in the file with
 nothing referring to it. The 2 `-applied` files were saved with garbage collection and hold no object
 with the secret.

@@ -4,7 +4,7 @@
 
 Every asset PdfCraft includes, bundles or uses to build its published material, with its author, source and licence. The policy is in [AGENTS.md](AGENTS.md) §1. The machine-readable list, with the SHA-256 of every asset, is [ATTRIBUTION.toml](ATTRIBUTION.toml). Licence texts are kept beside the assets and summarised in [NOTICE](NOTICE).
 
-## In this repository (302)
+## In this repository (303)
 
 | Asset | Title | Author | Licence | Source | Used for |
 |---|---|---|---|---|---|
@@ -242,6 +242,7 @@ Every asset PdfCraft includes, bundles or uses to build its published material, 
 | `crates/audit/tests/data/tool-made/base.pdf` | Base page for the tool-made redaction files | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
 | `crates/audit/tests/data/tool-made/pymupdf-applied.pdf` | Redaction applied with PyMuPDF's apply_redactions, saved with garbage collection | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
 | `crates/audit/tests/data/tool-made/pymupdf-applied-no-garbage.pdf` | Redaction applied with PyMuPDF's apply_redactions, saved without garbage collection | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
+| `crates/audit/tests/data/tool-made/pymupdf-applied-objstm-no-garbage.pdf` | Redaction applied with PyMuPDF's apply_redactions, saved with object streams and without garbage collection | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
 | `crates/audit/tests/data/tool-made/pymupdf-mark-unapplied.pdf` | Redaction mark left unapplied by PyMuPDF | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
 | `crates/audit/tests/data/tool-made/pymupdf-drawn-box.pdf` | Black box PyMuPDF drew over text | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |
 | `crates/audit/tests/data/tool-made/pymupdf-square-annot.pdf` | Black Square annotation PyMuPDF added over text | PdfCraft contributors | MIT OR Apache-2.0 | Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md) | Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs) |

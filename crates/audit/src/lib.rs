@@ -201,9 +201,10 @@ pub fn audit_document(doc: &Document) -> Result<AuditReport, AuditError> {
 }
 
 /// The `/Type` and `/Subtype` values of the streams that are never content: images, the font
-/// programs `/FontFile3` names, XMP metadata, cross-reference and object streams, embedded files,
-/// CMaps, 3D artwork and halftones. Their bytes, read as content, can show text operators that
-/// are no text, as a font program's often do.
+/// programs `/FontFile3` names, XMP metadata, cross-reference streams, embedded files, sounds, 3D
+/// artwork and halftones. Their bytes, read as content, can show text operators that are no text,
+/// as a font program's and most XMP packets' do. CMaps and object streams are read: their syntax
+/// shows no such operator, so claiming either type hides nothing.
 const NOT_CONTENT: &[&[u8]] = &[
     b"Image",
     b"Type1C",
@@ -212,9 +213,8 @@ const NOT_CONTENT: &[&[u8]] = &[
     b"Metadata",
     b"XML",
     b"XRef",
-    b"ObjStm",
     b"EmbeddedFile",
-    b"CMap",
+    b"Sound",
     b"3D",
     b"U3D",
     b"PRC",
