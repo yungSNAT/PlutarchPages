@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 
 use crate::{Args, Automation, Result, ToolError, failed, write_atomic};
 
+mod type3;
+
 /// The job's two-sided setting for `doc_print`'s `duplex`: `printer` sends none, so the printer's
 /// own default applies (as the Print dialog's Printer default, #2422), except that cut and stack
 /// needs single-sided sheets.
@@ -355,18 +357,7 @@ impl Automation {
         } else {
             None
         };
-        // The pages that draw with Type 3 fonts as pictures and the others as they are: by default
-        // when printing to a Windows printer, whose print component can crash on them (#2684).
-        let type3_raster = match a.opt_bool("type3_as_image")?.unwrap_or(spool::TYPE3_AS_IMAGE && printer.is_some()) {
-            true if raster.is_none() => {
-                let dpi = a.opt_num("dpi")?.unwrap_or(300.0);
-                if !(72.0..=600.0).contains(&dpi) {
-                    return Err(bad("dpi must be between 72 and 600"));
-                }
-                Some(print::Raster { dpi, grayscale: a.opt_bool("grayscale")?.unwrap_or(false), colour: None })
-            }
-            _ => None,
-        };
+        let type3_raster = type3::raster(a, printer.is_some(), raster.as_ref())?;
         let sizes: Vec<(f64, f64)> = self.doc(a)?.info.pages.iter().map(|p| (p.width as f64, p.height as f64)).collect();
         // Print a selected area: points from the top-left of the displayed page, as other tools
         // take rectangles; the print crate takes it y up.
@@ -408,9 +399,7 @@ impl Automation {
         let printed = self.session.print_source(id).and_then(|source| source.print(&settings)).map_err(failed)?;
         let bytes = printed.bytes;
         let mut out = json!({ "sheets": sheets, "pages": settings.pages.len(), "bytes": bytes.len() });
-        if !printed.type3_pages.is_empty() {
-            out["type3_as_image"] = json!(printed.type3_pages.iter().map(|p| p.saturating_add(1)).collect::<Vec<_>>());
-        }
+        type3::report(&mut out, &printed.type3_pages);
         if let Some(c) = settings.raster.as_ref().and_then(|r| r.colour.as_ref()) {
             out["color_management"] =
                 json!({ "profile": c.profile.name(), "rendering_intent": c.intent.id(), "black_point_compensation": c.black_point });
