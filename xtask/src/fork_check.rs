@@ -733,6 +733,10 @@ fn vendored_craft_pdf_base(tree: &Tree) -> Vec<String> {
 /// Cargo lists an optional dependency only when a feature enables it. Without --no-deps Cargo
 /// resolves the workspace, so the root's committed lockfile is kept (--locked) and a detached
 /// workspace's ignored one is written.
+// shortcut: --all-features turns on the workspace's own features, not every feature of its
+// dependencies, so a build asking for `--features <dependency>/<feature>` can reach a craft-pdf
+// this misses (Cargo.lock leaves it out too). No build here does; resolving each dependency
+// feature as well would close it.
 fn resolve_craft_pdf(root: &Path, manifest: &str) -> Result<Vec<String>> {
     let file = root.join(manifest);
     let file = file.to_str().context("workspace manifest path is not UTF-8")?;
