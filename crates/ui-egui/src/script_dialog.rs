@@ -349,7 +349,16 @@ mod review13_ui_tests {
     #[test]
     fn non_active_comparison_document_completes_native_script() {
         for request in ["", "app.execMenuItem('SaveAs');", "print();"] {
-            let (mut app, old) = app();
+            // Save As writes a clean copy stamped with `/ModDate`, and a rewrite that changes the
+            // bytes replaces the document's script realm (`mark_saved`). On the system clock,
+            // `comparisonKept` survived only when the source was created and saved in the same
+            // second; a fixed clock keeps the rewrite byte for byte the same.
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.session = std::mem::take(&mut app.session).with_clock(|| 1_700_000_000);
+            let bytes = app.session.create_blank(200.0, 300.0, 2).unwrap();
+            app.open_bytes("synthetic.pdf", None, bytes.to_vec()).unwrap();
+            let old = app.active_ids().unwrap().1;
             app.views.iter_mut().find(|v| v.id == old).unwrap().current = 1;
             let bytes = app.session.create_blank(200.0, 300.0, 1).unwrap();
             app.open_bytes("new.pdf", None, bytes.to_vec()).unwrap();
