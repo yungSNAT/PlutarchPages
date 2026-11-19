@@ -350,6 +350,23 @@ fn face(family: &str) -> Option<&'static pdfcraft_fonts::CraftFont> {
     pdfcraft_fonts::CRAFT_FONTS.iter().find(|f| f.family == family && f.style == "Regular")
 }
 
+/// An Arabic paragraph edited into two rows keeps both right-aligned at the line's right edge.
+#[test]
+fn arabic_paragraph_rows_stay_right_aligned() {
+    let Some(face) = face("Noto Sans Arabic") else {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    };
+    let mut doc = producer_page(face.bytes, "ArialMT", "مرحبا بالعالم", true);
+    replace_block(&mut doc, 0, 0, "مرحبا يا صديقي\nبالعالم").unwrap();
+    let (reopened, _) = saved(&doc);
+    let lines = crate::text::text_lines(&reopened, 0).unwrap();
+    assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), ["مرحبا يا صديقي", "بالعالم"]);
+    for l in &lines {
+        assert!((l.rect[2] - RIGHT).abs() < 1.0, "{:?} ends at {}, not {RIGHT}", l.text, l.rect[2]);
+    }
+}
+
 /// Every case, each failure named, so one run shows them all. Arabic letters take their forms
 /// from their neighbours, so a line edit, which redraws one character at a time, refuses them and
 /// leaves the page as it was; the paragraph edit shapes them, with the bundled Arabic face when
