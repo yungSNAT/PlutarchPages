@@ -2944,6 +2944,17 @@ usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it
 sha256 = "ed35538ca08760b61e1d489df62dabe3efc63e2d6262af20ec414ae933b78bfe"
 
 [[asset]]
+path = "crates/audit/tests/data/tool-made/pymupdf-applied-objstm-no-garbage.pdf"
+title = "Redaction applied with PyMuPDF's apply_redactions, saved with object streams and without garbage collection"
+author = "PdfCraft contributors"
+source = "Contributor-original: written with PyMuPDF 2.1 (see crates/audit/tests/data/tool-made/README.md)"
+licence = "MIT OR Apache-2.0"
+licence_file = "LICENSE-MIT"
+kind = "document"
+usage = "Redaction audit tests on files other tools wrote (crates/audit/tests/it/tool_made.rs)"
+sha256 = "b32c5ade558dcdc0eb3741962ee39624c2520e95114651ff98089f49958bac9c"
+
+[[asset]]
 path = "crates/audit/tests/data/tool-made/pymupdf-mark-unapplied.pdf"
 title = "Redaction mark left unapplied by PyMuPDF"
 author = "PdfCraft contributors"
