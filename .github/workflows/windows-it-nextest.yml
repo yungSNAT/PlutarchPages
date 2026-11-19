@@ -43,4 +43,5 @@ jobs:
         done
         echo "$failed of 6 runs failed"
         test "$failed" -eq 0
-      timeout-minutes: 180
+      # The build and the 6 runs took 39 minutes on 19 Nov 2026 (each run about 3 minutes).
+      timeout-minutes: 90
