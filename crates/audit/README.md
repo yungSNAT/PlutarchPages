@@ -106,11 +106,11 @@ Limits, by design and documented rather than hidden:
 - the retained-advance check considers forward `TJ` adjustments larger than a quarter em;
   it cannot establish which text originally occupied a gap or whether all redaction tools
   leave one. The audit counts earlier revisions without reading their content;
-- the unreferenced-text check reads every stream but the binary ones that are never content:
-  not those typed as an image, a `/FontFile3` font program, a cross-reference stream, an embedded
-  file, a sound, 3D artwork or a halftone, nor one without `/Type` or `/Subtype` that a font
-  descriptor names as its `/FontFile` or `/FontFile2`. XMP metadata, CMaps and object streams
-  are read, as is an embedded file without the `/Type` the standard leaves optional. It counts each that shows text with
+- the unreferenced-text check reads only streams that can be content: not those typed as an
+  image, a `/FontFile3` font program, XMP metadata, a cross-reference stream, an embedded file, a
+  sound, 3D artwork or a halftone, nor one without `/Type` or `/Subtype` that a font descriptor
+  names as its `/FontFile` or `/FontFile2`. CMaps and object streams are read, as is an embedded
+  file without the `/Type` the standard leaves optional. It counts each that shows text with
   `Tj`, `TJ`, `'` or `"`, whatever the text says. An object only an earlier revision holds is not
   counted there: the earlier-revisions count covers it. So a file built to hide text can still
   get past it: an unreferenced stream typed as one of those is not read, nor is one with neither
