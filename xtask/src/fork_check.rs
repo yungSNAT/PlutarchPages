@@ -115,15 +115,7 @@ impl Tree {
         let workspaces = text.iter().filter(|(p, t)| {
             (*p == "Cargo.toml" || p.ends_with("/Cargo.toml")) && t.parse::<toml::Table>().is_ok_and(|m| m.contains_key("workspace"))
         });
-        let mut craft_pdf = BTreeMap::new();
-        for (manifest, _) in workspaces {
-            let file = root.join(manifest);
-            let file = file.to_str().context("workspace manifest path is not UTF-8")?;
-            // Without --no-deps Cargo resolves the workspace, writing a detached one's ignored lockfile.
-            let metadata = crate::gates::metadata_of(&["--manifest-path", file])
-                .map_err(|_| anyhow::anyhow!("cargo metadata failed for {manifest}; run `cargo metadata --manifest-path {manifest}` locally"))?;
-            craft_pdf.insert(manifest.clone(), craft_pdf_sources(&metadata, root).with_context(|| format!("resolving {manifest}"))?);
-        }
+        let craft_pdf = workspaces.map(|(manifest, _)| Ok((manifest.clone(), resolve_craft_pdf(root, manifest)?))).collect::<Result<_>>()?;
         Ok(Self { paths, text, workspace_manifests, craft_pdf })
     }
 
@@ -737,6 +729,22 @@ fn vendored_craft_pdf_base(tree: &Tree) -> Vec<String> {
     }
 }
 
+/// Where the workspace of `manifest` (relative to `root`) takes craft-pdf, with every feature on:
+/// Cargo lists an optional dependency only when a feature enables it. Without --no-deps Cargo
+/// resolves the workspace, so the root's committed lockfile is kept (--locked) and a detached
+/// workspace's ignored one is written.
+fn resolve_craft_pdf(root: &Path, manifest: &str) -> Result<Vec<String>> {
+    let file = root.join(manifest);
+    let file = file.to_str().context("workspace manifest path is not UTF-8")?;
+    let mut args = vec!["--all-features", "--manifest-path", file];
+    if manifest == "Cargo.toml" {
+        args.push("--locked");
+    }
+    let metadata = crate::gates::metadata_of(&args)
+        .map_err(|_| anyhow::anyhow!("cargo metadata failed for {manifest}; run `cargo metadata {}` locally", args.join(" ")))?;
+    craft_pdf_sources(&metadata, root).with_context(|| format!("resolving {manifest}"))
+}
+
 /// Where a resolved `cargo metadata` takes each package named craft-pdf: its manifest relative to
 /// `root` for a path source inside the repository, else its source (`git+...`, `registry+...`) or,
 /// for a path outside, its manifest.
@@ -1133,6 +1141,27 @@ mod tests {
             [VENDORED_CRAFT_PDF, "git+https://github.com/storytold/craft-libs?rev=1#1", "/elsewhere/craft-pdf/Cargo.toml"]
         );
         assert!(craft_pdf_sources(&serde_json::json!({}), root).is_err());
+    }
+
+    /// Cargo itself, on a detached workspace whose craft-pdf, from another copy, only a feature
+    /// that isn't on by default enables.
+    #[test]
+    fn an_optional_craft_pdf_is_resolved_too() {
+        let root = std::env::temp_dir().join(format!("pdfcraft-fork-check-{}", std::process::id()));
+        let crate_at = |dir: &str, manifest: &str| {
+            std::fs::create_dir_all(root.join(dir).join("src")).unwrap();
+            std::fs::write(root.join(dir).join("Cargo.toml"), manifest).unwrap();
+            std::fs::write(root.join(dir).join("src/lib.rs"), "").unwrap();
+        };
+        crate_at("other/craft-pdf", "[package]\nname = \"craft-pdf\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n");
+        crate_at(
+            "fuzz",
+            "[package]\nname = \"fuzz\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n\n[features]\npdf = [\"dep:craft-pdf\"]\n\n[dependencies]\ncraft-pdf = { path = \"../other/craft-pdf\", optional = true }\n",
+        );
+        let sources = resolve_craft_pdf(&root, "fuzz/Cargo.toml");
+        std::fs::remove_dir_all(&root).unwrap();
+        let sources = sources.unwrap();
+        assert!(matches!(sources.as_slice(), [s] if s.replace('\\', "/").ends_with("other/craft-pdf/Cargo.toml")), "{sources:?}");
     }
 
     #[test]
