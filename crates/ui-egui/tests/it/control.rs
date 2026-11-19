@@ -2305,8 +2305,9 @@ fn first_page_paint(h: &mut Harness<'static, PdfCraftApp>, c: &ControlClient) ->
 
 #[test]
 fn first_page_paint_reports_the_active_documents_first_painted_page_once() {
-    let (mut h, c) = first_paint_harness(1, None);
+    // Before the app exists, so any pass that could paint comes after it.
     let before = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let (mut h, c) = first_paint_harness(1, None);
     let paint = first_page_paint(&mut h, &c);
     let after = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
     let active = ok(&mut h, &c, "ui.state", json!({}))["active"]["doc"].clone();
@@ -2349,5 +2350,7 @@ fn first_page_paint_follows_the_active_document() {
     let first = first_page_paint(&mut h, &c);
     assert_ne!(first["doc"], second["doc"], "the newly active document, not the last one's paint: {first}");
     assert_eq!(first["doc"], ok(&mut h, &c, "ui.state", json!({}))["active"]["doc"]);
-    assert!(first["unix_ms"].as_u64() >= second["unix_ms"].as_u64(), "painted after the tab switch: {first} {second}");
+    // Each document keeps its own record: switching back reports the second one's as it was.
+    ok(&mut h, &c, "ui.command", json!({"id": "view.next_tab"}));
+    assert_eq!(ok(&mut h, &c, "ui.first_page_paint", json!({})), second);
 }

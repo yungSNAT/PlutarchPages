@@ -402,7 +402,7 @@ pub struct PdfCraftApp {
     pub language: String,
     /// Preferences ▸ Interface size as a factor, or `None` to follow [`Self::system_text_scale`].
     pub ui_scale: Option<f32>,
-    /// When the desktop app's `main` started, for `ui.first_frame` (`None` in tests and on the web).
+    /// When the desktop app's `main` started, for `ui.first_page_paint` (`None` in tests and on the web).
     pub launched_at: Option<web_time::Instant>,
     /// The desktop's text scaling (GNOME's text scaling factor), which the desktop app reads at
     /// launch. 1.0 elsewhere, so tests and screenshots don't depend on the machine.

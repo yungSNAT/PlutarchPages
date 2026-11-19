@@ -52,8 +52,8 @@
 //!   they complete and are listed in `ui.state.pending_opens`; only a failed open replies `Err`.
 //! - `ui.screenshot {region?}`: PNG of the window (base64), optionally cropped to a rect.
 //! - `ui.first_page_paint {}`: when the active document first had a page raster painted inside
-//!   the viewport (a tiled page's low-resolution backdrop counts; an error page or 'Rendering…'
-//!   does not). `{"drawn": false}` until then; afterwards `drawn: true`, `doc`, the 1-based
+//!   the viewport (a tiled page's low-resolution backdrop or one of its tiles counts; an error
+//!   page, 'Rendering…' or a raster waiting for its replacement does not). `{"drawn": false}` until then; afterwards `drawn: true`, `doc`, the 1-based
 //!   `page`, `since_launch_ms` from the start of the desktop app's `main` (`null` where there is
 //!   none) and `unix_ms`, the wall clock then, for a harness timing from its own spawn. It is the
 //!   UI pass that painted it: GPU submission and presentation follow, so it is not proof the page

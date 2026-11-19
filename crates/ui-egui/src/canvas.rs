@@ -483,7 +483,7 @@ pub(crate) fn snapshot_tab_name(title: &str, file_name: &str, snapshot: &Snapsho
 /// Markup quadrilaterals in user space, one entry per page: (page, quads).
 pub type PageMarks = Vec<(usize, Vec<[f64; 8]>)>;
 
-/// The UI pass that first painted a page raster of a document inside the viewport. GPU
+/// The UI pass that first painted a page raster or tile of a document inside the viewport. GPU
 /// submission and presentation follow the pass, so this is not when the page reached the screen.
 #[derive(Clone, Copy)]
 pub(crate) struct FirstPaint {
@@ -577,7 +577,7 @@ pub struct DocView {
     cut_notice_dismissed: std::collections::BTreeSet<usize>,
     /// When each still-missing page was first shown, to flag unusually slow renders.
     waiting_since: HashMap<usize, f64>,
-    /// The UI pass that first painted one of this document's page rasters in view (`ui.first_frame`).
+    /// The UI pass that first painted one of this document's page rasters in view (`ui.first_page_paint`).
     pub(crate) first_paint: Option<FirstPaint>,
     thumbs: HashMap<usize, PageTex>,
     /// This frame's consumers, with visible cells ahead of prefetch.
@@ -1646,10 +1646,9 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
         } else {
             None
         };
-        // A tiled page's backdrop counts: it is the page's content, if not yet sharp.
-        if view.first_paint.is_none() && view.pages.contains_key(&i) && r.intersects(visible) {
-            view.first_paint = Some(FirstPaint { page: i, at: web_time::Instant::now(), wall: web_time::SystemTime::now() });
-        }
+        // The page's current content on screen, if not yet sharp: its whole-page raster (a tiled
+        // page's backdrop too) or one of its tiles, but not one waiting for its replacement.
+        let mut painted = view.pages.get(&i).is_some_and(|p| p.tag != STALE_TAG);
         match view.pages.get(&i) {
             Some(p) => {
                 if !tiled && p.tag == want_tag {
@@ -1667,13 +1666,17 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
             }
         }
         if tiled && r.intersects(visible) {
-            paint_page_tiles(ui, view, frame, slot, (pw_pt, ph_pt, max_side), active_drag_suppress);
+            painted |= paint_page_tiles(ui, view, frame, slot, (pw_pt, ph_pt, max_side), active_drag_suppress);
+        }
+        if painted && view.first_paint.is_none() && r.intersects(visible) {
+            view.first_paint = Some(FirstPaint { page: i, at: web_time::Instant::now(), wall: web_time::SystemTime::now() });
         }
     }
 }
 
 /// Paints the tiles of a page too big to draw whole: the tiles of earlier zooms first, stretched,
 /// then the visible tiles of this one, nearest the viewport centre first, asking for those missing.
+/// Whether it painted a visible tile of this zoom that is not waiting for its replacement.
 fn paint_page_tiles(
     ui: &egui::Ui,
     view: &mut DocView,
@@ -1681,7 +1684,7 @@ fn paint_page_tiles(
     slot: &PageSlot,
     (pw_pt, ph_pt, max_side): (f32, f32, f32),
     active_drag_suppress: Option<[f32; 4]>,
-) {
+) -> bool {
     let PageEnv { ppp, scale, tag, .. } = frame.env;
     let PageSlot { i, r, xf } = *slot;
     let visible = frame.visible;
@@ -1716,6 +1719,7 @@ fn paint_page_tiles(
     // page interpret, so the workers sharpen what is looked at before the edges.
     let (vcx, vcy) = ((vx0 + vx1) as f32 / 2.0, (vy0 + vy1) as f32 / 2.0);
     let mut coords: Vec<(u32, u32)> = Vec::new();
+    let mut painted = false;
     for ty in vy0 / ts..=(vy1.saturating_sub(1)) / ts {
         for tx in vx0 / ts..=(vx1.saturating_sub(1)) / ts {
             coords.push((tx, ty));
@@ -1734,6 +1738,7 @@ fn paint_page_tiles(
         }
         frame.wanted.push((i, scale, tag, Some(Tile { x, y, w, h })));
         if let Some(tex) = view.tiles.get(&(i, tag, x, y)) {
+            painted |= !view.stale_tiles.contains(&(i, tag, x, y));
             let (fw, fh) = (dw as f32, dh as f32);
             paint_image_suppressed(
                 &xf.texel_aligned([dw as usize, dh as usize], ppp),
@@ -1748,6 +1753,7 @@ fn paint_page_tiles(
             );
         }
     }
+    painted
 }
 
 /// Images parsed once per page and document edit generation, shared by painting and menus.
