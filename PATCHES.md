@@ -95,6 +95,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `mark_saved` gives a full rewrite. Upstream's copy expects the realm to survive, which holds only
   when the source is created and saved in the same second (about 1 run in 30 failed). Keep the
   fork's version when a merge changes that test.
+- `buttons_take_presses_as_the_scripts_show_them` in `crates/ui-egui/tests/it/view.rs` waits up to
+  about 6 s for the page's open action before pressing (`6a0b7055b`). Upstream's copy runs a fixed
+  2 frames, which failed 2 of 3 Windows gates when the action had not yet run. Keep the fork's wait
+  when a merge changes that test.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
@@ -275,6 +279,10 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
   part is upstream's `4aad36cf1`, already merged.
 
 ## Merging upstream
+
+No schedule sets when to merge. Upstream merges have landed 1 to 9 days apart since 30 October
+2026 (#25, #32, #69, #136, #155), and `upstream-drift.yml` updates an 'Upstream drift report'
+issue each Monday (cron 04:43 UTC) with how far `main` trails upstream.
 
 1. `git merge --no-ff` upstream's `main` on a `ryan/` branch. Never rewrite history.
 2. Run `cargo xtask fork-check`. It fails when the merge brings back an ArtCraft name, a
