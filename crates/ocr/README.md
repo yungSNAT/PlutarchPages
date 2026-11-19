@@ -34,7 +34,7 @@ let layer = visible_text_layer(&placed, &plan);          // visible text: the ed
   from the URL in ATTRIBUTION.toml (or its `mirror_url`) into the models folder; without them
   nothing changes, and the release packages leave them out. On a 200 dpi scan of 6 lines of
   public-domain Arabic (`tests/data/arabic-scan.png`), 96.97% of the characters are read right,
-  against 11.52% by ocrs alone (`cargo test -p pdfcraft-ocr --features arabic
+  against 11.52% by ocrs alone (measured 19 November 2026; `cargo test -p pdfcraft-ocr --features arabic
   reads_an_arabic_scan -- --nocapture`, with the models fetched). Every line is read twice, so
   pages take longer. A build turns it on with `-p pdfcraft-ocr --features pdfcraft-ocr/arabic`
   (for example `cargo build --release -p pdfcraft -p pdfcraft-ocr --features
