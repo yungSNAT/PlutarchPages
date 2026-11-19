@@ -1151,7 +1151,8 @@ mod tests {
     /// that isn't on by default enables.
     #[test]
     fn an_optional_craft_pdf_is_resolved_too() {
-        let root = std::env::temp_dir().join(format!("pdfcraft-fork-check-{}", std::process::id()));
+        // Under the target directory, which Cargo already writes to, not the shared temporary one.
+        let root = crate::gates::target_dir().join(format!("fork-check-test-{}", std::process::id()));
         let crate_at = |dir: &str, manifest: &str| {
             std::fs::create_dir_all(root.join(dir).join("src")).unwrap();
             std::fs::write(root.join(dir).join("Cargo.toml"), manifest).unwrap();
