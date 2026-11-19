@@ -119,6 +119,7 @@ pub fn ci(_: &[String]) -> anyhow::Result<()> {
         ("clippy", Box::new(|| run_args(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
         ("cli-no-default-features", Box::new(|| run_args(&["check", "-p", "pdfcraft-cli", "--no-default-features"]))),
         ("test", Box::new(|| test(&[]))),
+        ("craft-pdf", Box::new(vendored_craft_pdf)),
         ("i18n-report", Box::new(|| i18n_report(&["--workspace".to_string()]))),
         ("layers", Box::new(|| layers(&[]))),
         ("wasm", Box::new(|| wasm(&[]))),
@@ -181,6 +182,21 @@ pub fn deny(_: &[String]) -> anyhow::Result<()> {
         return Ok(());
     }
     run_args(&["deny", "--log-level", "error", "check"])
+}
+
+/// The vendored craft-pdf's own unit tests, the fork's fixes' among them, which no workspace test
+/// reaches: it is outside the workspace (vendor/craft-pdf/PATCHES.md, 'Its unit tests'). Its
+/// lockfile is made afresh from the root's, so the crates it shares with the workspace build at
+/// the workspace's versions; Cargo adds the test-only crates the root lacks afresh, and
+/// no licence, source or advisory check covers those. Cargo runs in its folder, so its
+/// `.cargo/config.toml` patches hayro-syntax and hayro-jbig2.
+fn vendored_craft_pdf() -> anyhow::Result<()> {
+    let dir = root().join("vendor/craft-pdf");
+    std::fs::copy(root().join("Cargo.lock"), dir.join("Cargo.lock")).context("copying Cargo.lock into vendor/craft-pdf")?;
+    let mut test = cargo();
+    test.current_dir(&dir).env("CARGO_TARGET_DIR", target_dir()).args(["test", "--features", "content", "--lib"]);
+    run(test, "cargo test --features content --lib (in vendor/craft-pdf)")
+        .context("a craft-pdf test failed, or Cargo could not fetch the test-only crates the root lockfile lacks (offline, run `cargo fetch` in vendor/craft-pdf first)")
 }
 
 fn run_args(args: &[&str]) -> anyhow::Result<()> {
