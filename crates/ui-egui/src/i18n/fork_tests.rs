@@ -28,20 +28,15 @@ fn overlay_rows<'a>(code: &'a str, text: &'a str) -> impl Iterator<Item = [Strin
         .map(move |line| line.split('\t').map(unescape).collect::<Vec<_>>().try_into().unwrap_or_else(|_| panic!("{code}: not 3 columns: {line:?}")))
 }
 
-/// A key belongs to the fork while at least one overlay carries it. Count actual lookups,
-/// including a translation already present in the pinned upstream catalogue for another locale.
-#[test]
-fn fork_translation_gaps_report() {
-    const START: &str = "=== translation gaps ===";
-    const END: &str = "=== end of translation gaps ===";
-    if !catalogs_embedded() {
-        println!("{START}\nFork translation gaps: skipped, built without craft-i18n (set CRAFT_I18N_DIR)\n{END}");
-        return;
-    }
+/// The fork's translation gaps: the overlay key count, then each language's missing keys. A key
+/// belongs to the fork while at least one overlay carries it. Count actual lookups, including a
+/// translation already present in the pinned upstream catalogue for another locale.
+fn fork_translation_gaps() -> String {
+    use std::fmt::Write;
     let overlays = overlays();
     let keys: BTreeSet<(String, String)> =
         overlays.iter().flat_map(|(code, text)| overlay_rows(code, text).map(|[context, source, _]| (context, source))).collect();
-    println!("{START}\nFork translation gaps: {} overlay keys", keys.len());
+    let mut out = format!("Fork translation gaps: {} overlay keys\n", keys.len());
     for lang in Lang::all().filter(|lang| *lang != Lang::EN) {
         let mut kept = 0;
         let missing: Vec<_> = keys
@@ -54,16 +49,38 @@ fn fork_translation_gaps_report() {
                 None => true,
             })
             .collect();
-        println!("  {:<8} {:>3} missing, {kept:>3} kept in English", lang.code(), missing.len());
+        let _ = writeln!(out, "  {:<8} {:>3} missing, {kept:>3} kept in English", lang.code(), missing.len());
         for (context, source) in missing {
-            if context.is_empty() {
-                println!("    {source:?}");
-            } else {
-                println!("    {context:?} / {source:?}");
-            }
+            let _ = if context.is_empty() { writeln!(out, "    {source:?}") } else { writeln!(out, "    {context:?} / {source:?}") };
         }
     }
-    println!("{END}");
+    out
+}
+
+/// What `cargo xtask i18n-report --fork` prints.
+#[test]
+fn fork_translation_gaps_report() {
+    const START: &str = "=== translation gaps ===";
+    const END: &str = "=== end of translation gaps ===";
+    if !catalogs_embedded() {
+        println!("{START}\nFork translation gaps: skipped, built without craft-i18n (set CRAFT_I18N_DIR)\n{END}");
+        return;
+    }
+    print!("{START}\n{}{END}\n", fork_translation_gaps());
+}
+
+/// `docs/translation-gaps.md` gives translators the fork's gaps as they are: a change to an
+/// overlay, a fork string or the craft-i18n pin that moves them fails here until the document's
+/// report is replaced with a new run of `cargo xtask i18n-report --fork`.
+#[test]
+fn the_translation_gaps_document_is_current() {
+    if !needs_catalogs() {
+        return;
+    }
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/translation-gaps.md");
+    let doc = std::fs::read_to_string(path).expect("docs/translation-gaps.md").replace("\r\n", "\n");
+    let block = doc.split_once("```text\n").and_then(|(_, rest)| rest.split_once("```")).map(|(block, _)| block).expect("a text block");
+    assert_eq!(block, fork_translation_gaps(), "docs/translation-gaps.md: replace its report with `cargo xtask i18n-report --fork`");
 }
 
 /// Every overlay locale is one PlutarchPages offers and embeds, each overlay row is what a lookup

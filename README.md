@@ -164,7 +164,8 @@ from public specifications like the rest of PdfCraft.
   (Simplified Chinese and Korean included), not by embedding the whole face. Arabic paragraphs are
   shaped with the bundled Arabic face when the page's subset can't shape them, and right-to-left
   paragraphs and lines keep their right edge. A line edit refuses Arabic letters and names the
-  paragraph edit. Checked on one-line pages written as PDF producers write them.
+  paragraph edit. Checked on one-line test pages built the way PDF producers write them, not on
+  producers' own files.
 
 Not implemented, and why: cloud storage connectors (Box, Dropbox, Google Drive, OneDrive,
 SharePoint need registered OAuth apps), FileOpen and Azure RMS DRM (proprietary vendor SDKs), the

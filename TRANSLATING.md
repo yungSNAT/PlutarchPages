@@ -7,7 +7,8 @@ craft-i18n.
 
 1. Set `CRAFT_I18N_DIR` to a checkout at the pinned revision and run
    `cargo xtask i18n-report --fork`. The report lists every missing fork key for each
-   shipped language. A row deliberately kept in English has its own count.
+   shipped language. A row deliberately kept in English has its own count. The last run is in
+   [docs/translation-gaps.md](docs/translation-gaps.md).
 2. Copy the context and English source from another locale's overlay. Add the row to
    your locale's UTF-8 TSV with 3 tab-separated columns: context, English source and
    translation. For a plain string, leave the first column empty. Keep placeholders
