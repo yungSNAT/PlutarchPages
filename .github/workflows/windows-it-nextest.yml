@@ -1,0 +1,47 @@
+name: Windows UI tests under nextest
+
+# ui-egui's `it` tests under cargo-nextest on windows-latest, 6 times in one job. The hosted runner
+# has no GPU. nextest gives each test its own process, so a test that brings its process down fails
+# alone, by name, instead of taking the rest of the binary with it. ci.yml's Windows leg runs the
+# same tests once with `cargo test`, in one process. Runs on demand, and on a pull request that
+# changes this file.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/windows-it-nextest.yml
+
+# The token is only used to check out the code: no job writes to the repository.
+permissions:
+  contents: read
+
+# A newer run replaces one still queued or running.
+concurrency:
+  group: windows-it-nextest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
+    with:
+      os: '["windows-latest"]'
+      # Required by the gate, which installs these on Linux legs only.
+      packages: ""
+      # Same craft-fonts commit as ci.yml, release.yml and freebsd.yml.
+      craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
+      # Same nextest as ci.yml (.config/nextest.toml requires it).
+      tools: cargo-nextest@0.9.150
+      # All 6 runs, then fail if any did.
+      command: |
+        cargo nextest run --locked -p pdfcraft-ui-egui --test it --no-run
+        failed=0
+        for run in 1 2 3 4 5 6; do
+          echo "::group::Run $run of 6"
+          cargo nextest run --locked -p pdfcraft-ui-egui --test it --no-fail-fast || failed=$((failed + 1))
+          echo "::endgroup::"
+        done
+        echo "$failed of 6 runs failed"
+        test "$failed" -eq 0
+      # The build and the 6 runs took 39 minutes on 19 Nov 2026 (each run about 3 minutes).
+      timeout-minutes: 90
