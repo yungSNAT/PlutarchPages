@@ -215,12 +215,14 @@ fn a_filtered_scan_decrypts_only_what_it_keeps() {
 #[test]
 fn a_filtered_scan_reads_what_filtering_a_full_scan_reads() {
     let mut bytes = rc4_in_file();
-    // An update appended by hand: its trailer is the saved one with a larger /Size and a /Prev.
-    let text = String::from_utf8_lossy(&bytes).into_owned();
-    let trailer = text.rfind("trailer").unwrap();
-    let startxref = text.rfind("startxref").unwrap();
-    let prev: usize = text[startxref + 9..].split_whitespace().next().unwrap().parse().unwrap();
-    let size: u32 = text[trailer..].split("/Size ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    // An update appended by hand, its trailer the saved one's entries with a larger /Size and a /Prev.
+    let saved = Document::open(Arc::new(bytes.clone())).unwrap();
+    let entry = |key: &[u8]| saved.trailer().reference(key).map(|r| format!("{} {} R", r.num, r.generation)).unwrap();
+    let hex = |s: &Object| s.as_string().unwrap().bytes.iter().map(|b| format!("{b:02X}")).collect::<String>();
+    let ids = saved.trailer().get(b"ID").and_then(Object::as_array).unwrap().iter().map(|s| format!("<{}>", hex(s))).collect::<Vec<_>>().join(" ");
+    let startxref = bytes.windows(9).rposition(|w| w == b"startxref").unwrap() + 9;
+    let prev = String::from_utf8_lossy(&bytes[startxref..]).split_whitespace().next().unwrap().to_string();
+    let size = u32::try_from(saved.trailer().int(b"Size").unwrap()).unwrap();
     let (broken_length, broken, cycle) = (size, size + 1, size + 2);
     let mut offsets = Vec::new();
     for object in [
@@ -236,8 +238,13 @@ fn a_filtered_scan_reads_what_filtering_a_full_scan_reads() {
     for offset in offsets {
         update.push_str(&format!("{offset:010} 00000 n \n"));
     }
-    let dict = text[trailer + 7..startxref].trim().replace(&format!("/Size {size}"), &format!("/Size {}", size + 3));
-    update.push_str(&format!("trailer\n{} /Prev {prev} >>\nstartxref\n{xref}\n%%EOF\n", dict.strip_suffix(">>").unwrap()));
+    update.push_str(&format!(
+        "trailer\n<< /Size {} /Root {} /Info {} /Encrypt {} /ID [{ids}] /Prev {prev} >>\nstartxref\n{xref}\n%%EOF\n",
+        size + 3,
+        entry(b"Root"),
+        entry(b"Info"),
+        entry(b"Encrypt"),
+    ));
     bytes.extend_from_slice(update.as_bytes());
     let bytes = Arc::new(bytes);
     let read = |scan: &mut dyn Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)>| {
