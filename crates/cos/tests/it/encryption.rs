@@ -155,11 +155,9 @@ fn incremental_edits_of_encrypted_documents_stay_encrypted() {
     }
 }
 
-/// A filtered scan of an encrypted file judges each object first as stored, and decrypts and
-/// judges again only what it keeps; an edit is judged once, as it reads now, and a read error
-/// comes back whatever the filter says.
-#[test]
-fn a_filtered_scan_decrypts_only_what_it_keeps() {
+/// The fixture under RC4-128 with an empty user password and every object in the file, as the
+/// ISO 32000-1 PDF stores them.
+fn rc4_in_file() -> Vec<u8> {
     let mut doc = Document::open(Arc::new(fixture())).unwrap();
     doc.set_encryption_legacy(&NewEncryption {
         algorithm: Algorithm::Rc4_128,
@@ -170,7 +168,15 @@ fn a_filtered_scan_decrypts_only_what_it_keeps() {
         seed: [9; 32],
     })
     .unwrap();
-    let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap()
+}
+
+/// A filtered scan of an encrypted file judges each object first as stored, and decrypts and
+/// judges again only what it keeps; an edit is judged once, as it reads now, and a read error
+/// comes back whatever the filter says.
+#[test]
+fn a_filtered_scan_decrypts_only_what_it_keeps() {
+    let bytes = rc4_in_file();
     let mut doc = Document::open(Arc::new(bytes.clone())).unwrap();
     let info = doc.trailer().reference(b"Info").unwrap();
     let seen = std::cell::RefCell::new(Vec::new());
@@ -201,6 +207,54 @@ fn a_filtered_scan_decrypts_only_what_it_keeps() {
     let damaged = Document::open(Arc::new(damaged)).unwrap();
     let errors: Vec<ObjRef> = damaged.scan_objects_where(|_| false).filter(|(_, o)| o.is_err()).map(|(r, _)| r).collect();
     assert_eq!(errors, vec![info]);
+}
+
+/// The stored parse resolves an indirect `/Length` as a full read does, so a filtered scan returns
+/// what filtering a full scan returns and lists the same unreadable objects: here a stream whose
+/// `/Length` names an object that does not parse, and one whose `/Length` names itself.
+#[test]
+fn a_filtered_scan_reads_what_filtering_a_full_scan_reads() {
+    let mut bytes = rc4_in_file();
+    // An update appended by hand: its trailer is the saved one with a larger /Size and a /Prev.
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    let trailer = text.rfind("trailer").unwrap();
+    let startxref = text.rfind("startxref").unwrap();
+    let prev: usize = text[startxref + 9..].split_whitespace().next().unwrap().parse().unwrap();
+    let size: u32 = text[trailer..].split("/Size ").nth(1).unwrap().split_whitespace().next().unwrap().parse().unwrap();
+    let (broken_length, broken, cycle) = (size, size + 1, size + 2);
+    let mut offsets = Vec::new();
+    for object in [
+        format!("{broken_length} 0 obj\n<< /Length {broken} 0 R >>\nstream\nabc\nendstream\nendobj"),
+        "not an object".to_string(),
+        format!("{cycle} 0 obj\n<< /Length {cycle} 0 R >>\nstream\nxyz\nendstream\nendobj"),
+    ] {
+        offsets.push(bytes.len() + 1);
+        bytes.extend_from_slice(format!("\n{object}\n").as_bytes());
+    }
+    let xref = bytes.len();
+    let mut update = format!("xref\n{size} 3\n");
+    for offset in offsets {
+        update.push_str(&format!("{offset:010} 00000 n \n"));
+    }
+    let dict = text[trailer + 7..startxref].trim().replace(&format!("/Size {size}"), &format!("/Size {}", size + 3));
+    update.push_str(&format!("trailer\n{} /Prev {prev} >>\nstartxref\n{xref}\n%%EOF\n", dict.strip_suffix(">>").unwrap()));
+    bytes.extend_from_slice(update.as_bytes());
+    let bytes = Arc::new(bytes);
+    let read = |scan: &mut dyn Iterator<Item = (ObjRef, Result<Arc<Object>, CosError>)>| {
+        scan.map(|(r, o)| (r, o.map_err(|e| e.to_string()))).collect::<Vec<_>>()
+    };
+    let keeps: [fn(&Object) -> bool; 3] = [|o| !matches!(o, Object::Stream(_)), |_| false, |_| true];
+    for keep in keeps {
+        let full = Document::open(bytes.clone()).unwrap();
+        let expected = read(&mut full.scan_objects_checked().filter(|(_, o)| !matches!(o, Ok(o) if !keep(o))));
+        let filtered = Document::open(bytes.clone()).unwrap();
+        assert_eq!(read(&mut filtered.scan_objects_where(keep)), expected);
+        assert_eq!(filtered.unreadable_objects(), full.unreadable_objects());
+        assert!(full.unreadable_objects().iter().any(|line| line.starts_with(&format!("object {broken} "))), "{:?}", full.unreadable_objects());
+    }
+    let full = Document::open(bytes.clone()).unwrap();
+    assert!(full.scan_objects_checked().any(|(r, o)| r.num == broken_length && matches!(o.as_deref(), Ok(Object::Stream(_)))));
+    assert!(full.scan_objects_checked().any(|(r, o)| r.num == cycle && matches!(o.as_deref(), Ok(Object::Stream(_)))));
 }
 
 #[test]
