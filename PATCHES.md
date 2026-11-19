@@ -90,6 +90,11 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/ui-egui/tests/it/control.rs` looks for that title, the 2 `mode_tabs_keep_the_hand_over_*`
   tests in `editing.rs` use a 1600 pt window and `long_view_menu_fits_a_short_window` in `view.rs`
   a 1100 pt one. Keep them when a merge changes those tests: only Nightly macOS runs them on macOS.
+- `non_active_comparison_document_completes_native_script` in `crates/ui-egui/src/script_dialog.rs`
+  pins the session clock after creating its source and expects a fresh realm after Save As, as
+  `mark_saved` gives a full rewrite. Upstream's copy expects the realm to survive, which holds only
+  when the source is created and saved in the same second (about 1 run in 30 failed). Keep the
+  fork's version when a merge changes that test.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
