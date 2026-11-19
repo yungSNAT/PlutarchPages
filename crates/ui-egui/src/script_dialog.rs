@@ -353,7 +353,8 @@ mod review13_ui_tests {
             let (mut app, old) = app();
             // The clean copy is stamped with `/ModDate`. A source created and saved in the same
             // second would be rewritten byte for byte and keep its realm, which a file opened from
-            // disk never is: a clock other than the source's makes every Save As a real rewrite.
+            // disk practically never is: a clock other than the source's makes every Save As a
+            // real rewrite.
             app.session = std::mem::take(&mut app.session).with_clock(|| 1_700_000_000);
             app.views.iter_mut().find(|v| v.id == old).unwrap().current = 1;
             let bytes = app.session.create_blank(200.0, 300.0, 1).unwrap();
