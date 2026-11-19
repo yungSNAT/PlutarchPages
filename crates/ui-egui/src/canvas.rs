@@ -1676,7 +1676,7 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
 
 /// Paints the tiles of a page too big to draw whole: the tiles of earlier zooms first, stretched,
 /// then the visible tiles of this one, nearest the viewport centre first, asking for those missing.
-/// Whether it painted a tile that is not waiting for its replacement.
+/// Whether it painted, inside the viewport, a tile that is not waiting for its replacement.
 fn paint_page_tiles(
     ui: &egui::Ui,
     view: &mut DocView,
@@ -1706,15 +1706,21 @@ fn paint_page_tiles(
     let (vx1, vy1) = (((u1.min(1.0) * dw as f32).ceil() as u32).min(dw), ((v1.min(1.0) * dh as f32).ceil() as u32).min(dh));
     // Tiles of earlier zooms first, stretched, the nearest scale last (on top):
     // until the current tiles arrive, a zoom shows them rather than the backdrop.
-    let mut older: Vec<(f32, u32, u32, &TextureHandle)> =
-        view.tiles.iter().filter(|((p, t, _, _), _)| *p == i && *t != tag).map(|((_, t, ox, oy), tex)| (tag_scale(*t), *ox, *oy, tex)).collect();
+    let mut older: Vec<(f32, u32, u32, &TextureHandle, bool)> = view
+        .tiles
+        .iter()
+        .filter(|((p, t, _, _), _)| *p == i && *t != tag)
+        .map(|(key, tex)| (tag_scale(key.1), key.2, key.3, tex, !view.stale_tiles.contains(key)))
+        .collect();
     older.sort_by(|a, b| (b.0 / scale).ln().abs().total_cmp(&(a.0 / scale).ln().abs()));
-    let mut painted = view.tiles.keys().any(|key| key.0 == i && key.1 != tag && !view.stale_tiles.contains(key));
-    for (s, ox, oy, tex) in older {
+    let mut painted = false;
+    for (s, ox, oy, tex, current) in older {
         let (ow, oh) = (device_pixels(pw_pt, s) as f32, device_pixels(ph_pt, s) as f32);
         let [w, h] = tex.size();
         let (x, y) = (ox as f32, oy as f32);
-        paint_image_suppressed(&xf, painter, tex.id(), x / ow, y / oh, (x + w as f32) / ow, (y + h as f32) / oh, active_drag_suppress, false);
+        let uv = [x / ow, y / oh, (x + w as f32) / ow, (y + h as f32) / oh];
+        painted |= current && uv_overlap(uv, [u0, v0, u1, v1]);
+        paint_image_suppressed(&xf, painter, tex.id(), uv[0], uv[1], uv[2], uv[3], active_drag_suppress, false);
     }
     // Visible tiles, nearest the viewport centre first: each tile costs a full
     // page interpret, so the workers sharpen what is looked at before the edges.
@@ -1754,6 +1760,11 @@ fn paint_page_tiles(
         }
     }
     painted
+}
+
+/// Whether 2 rectangles in page texture coordinates (`[u0, v0, u1, v1]`) share any area.
+fn uv_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 /// Images parsed once per page and document edit generation, shared by painting and menus.
