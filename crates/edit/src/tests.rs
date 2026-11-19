@@ -2830,11 +2830,15 @@ fn japanese_replacement_missing_a_glyph_after_240_changes_nothing() {
     if without_craft_fonts("japanese_replacement_missing_a_glyph_after_240_changes_nothing") {
         return;
     }
-    // The first CJK character that no face draws: the 242nd unique character, in a second font.
+    // The first CJK character that no face draws, the Chinese and Korean ones included: the 242nd
+    // unique character, in a second font.
     let faces = pdfcraft_fonts::document_japanese_fonts_for_style(false, false);
     let missing = (0x4E00u32..0x9FFF)
         .filter_map(char::from_u32)
-        .find(|ch| faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_err()))
+        .find(|ch| {
+            faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_err())
+                && pdfcraft_fonts::CRAFT_FONTS.iter().all(|face| !pdfcraft_fonts::embedding::covers(face.bytes, &ch.to_string()))
+        })
         .expect("some CJK character is outside every face");
     let replacement = format!("{}{missing}", covered_japanese_chars(241));
     let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");

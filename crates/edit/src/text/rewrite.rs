@@ -1,8 +1,8 @@
 use super::blocks::{BlockStyle, TextBlock, paragraph_separator, row_break, wrap};
 use super::fallback::{
-    Encoder, MAX_TYPE3_GLYPHS, Type3Fallback, Type3Run, drop_unused_fallback_fonts, is_variation_selector, needs_type3, no_japanese_font,
-    source_character_advance, source_encodes, source_fallback_runs, source_family, source_program_completes, source_runs, source_show, source_space,
-    source_width, type3_encode, type3_font,
+    Encoder, MAX_TYPE3_GLYPHS, Type3Fallback, Type3Run, drop_unused_fallback_fonts, has_arabic_letters, is_chinese, is_variation_selector,
+    needs_type3, no_japanese_font, source_character_advance, source_encodes, source_fallback_runs, source_family, source_program_completes,
+    source_runs, source_show, source_space, source_width, type3_encode, type3_font,
 };
 use super::interp::{Carry, Origin, TextState, interpret};
 use super::lines::{
@@ -56,6 +56,13 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
     let mut drops = coincident_ops(&lines, &[&target]);
     drops.extend(target.ops.iter().copied());
     refuse_clipping_text(&lines, &drops)?;
+    // One line is redrawn character by character, which cannot give Arabic letters the forms
+    // their neighbours call for; the paragraph edit shapes them.
+    if has_arabic_letters(&text) {
+        return Err(EditError::Invalid(
+            "Arabic letters change shape with their neighbours, which a line edit cannot redraw: edit the paragraph instead".into(),
+        ));
+    }
     let p = page_dict(doc, page)?;
     let mut res = p.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
     let mut fonts_res = res.get(b"Font").map(|f| doc.resolve(f)).and_then(|f| f.as_dict().cloned()).unwrap_or_default();
@@ -74,6 +81,7 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
     let mut replacement: Vec<Op> = Vec::new();
     // ' and " also move to the next line (and " sets the spacing); keep that.
     replacement.extend(ops.get(first).map(show_side_effects).unwrap_or_default());
+    let moved = replacement.len();
     match reused {
         Some(metrics) => replacement.extend(source_show(
             metrics,
@@ -86,7 +94,7 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
         None => {
             let fallback_shown = crate::bidi::to_visual(&text);
             if needs_type3(&text) {
-                let fallback = type3_font(doc, &mut fonts_res, &text, source_family(&target.base_font), target.bold, max_glyphs)?;
+                let fallback = type3_font(doc, &mut fonts_res, &text, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
                 let runs = type3_encode(&fallback, &fallback_shown)
                     .ok_or_else(|| EditError::Invalid(format!("\"{text}\" can't be shown by the {} fallback", fallback.family)))?;
                 let size = font_size_before(&ops, first).unwrap_or(target.size);
@@ -170,6 +178,15 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
                 f.set(b"Encoding".to_vec(), Object::name("WinAnsiEncoding"));
                 fonts_res.set(substitute_name.into_bytes(), Object::Dict(f));
             }
+        }
+    }
+    // A right-to-left line ends at its right edge, so the replacement starts where the new
+    // text, drawn at its own width, ends there too.
+    if crate::bidi::rtl_base(&target.text) {
+        let mut measured = res.clone();
+        measured.set(b"Font".to_vec(), Object::Dict(fonts_res.clone()));
+        if let Some(gap) = right_edge_gap(doc, &ops, &res, &target, &measured, replacement.get(moved..).unwrap_or_default()) {
+            replacement.insert(moved, Op::new("TJ", vec![Object::Array(vec![pdfcraft_content::num(gap)])]));
         }
     }
     // A line an earlier replacement wrote in two fonts is in a `/PCEdLine` sequence of its own,
@@ -256,6 +273,26 @@ fn matching_emc(ops: &[Op], open: usize) -> Option<usize> {
         }
     }
     None
+}
+
+/// The `TJ` adjustment, in thousandths of the font size, that moves `replacement` (shown where
+/// `line` starts) so it ends where `line` ended. Both are measured along the line's baseline from
+/// where it starts, so runs drawn out of order count by their extent.
+fn right_edge_gap(doc: &Document, ops: &[Op], res: &Dict, line: &TextLine, measured: &Dict, replacement: &[Op]) -> Option<f64> {
+    let old = interpret(doc, ops, res, None, &mut HashMap::new(), &mut Carry::new(), None, None).ok()?;
+    let old: Vec<_> = old.into_iter().filter(|s| line.ops.contains(&s.op)).collect();
+    let start = old.iter().min_by_key(|s| s.op)?;
+    let [a, b, _, _, e, f] = start.tm.0;
+    let along = |tm: &Matrix| ((tm.0[4] - e) * a + (tm.0[5] - f) * b) / (a * a + b * b);
+    let old_end = old.iter().map(|s| along(&s.tm) + s.advance).fold(f64::NEG_INFINITY, f64::max);
+    let mut probe = vec![Op::new("BT", Vec::new())];
+    probe.extend(line.origin.state.ops());
+    probe.extend(replacement.iter().cloned());
+    probe.push(Op::new("ET", Vec::new()));
+    let new = interpret(doc, &probe, measured, None, &mut HashMap::new(), &mut Carry::new(), None, None).ok()?;
+    let new_end = new.iter().map(|s| s.tm.0[4] + s.advance).fold(f64::NEG_INFINITY, f64::max);
+    let gap = -1000.0 * (old_end - new_end) / (start.state.size * start.state.scale);
+    (gap.is_finite() && gap.abs() > 1e-3).then_some(gap)
 }
 
 /// The size of the last `Tf` before operator `at`.
@@ -1060,7 +1097,7 @@ pub(crate) fn rewrite_block_from(
     let tm = emit_text_matrix(o, emit)?;
     let type3 = if !reuse && needs_type3(&flat) {
         let missing: String = flat.chars().filter(|ch| !source_chars.contains(ch)).collect();
-        Some(type3_font(doc, &mut fonts_res, &missing, family, bold, max_glyphs)?)
+        Some(type3_font(doc, &mut fonts_res, &missing, family, bold, is_chinese(&flat), max_glyphs)?)
     } else {
         None
     };

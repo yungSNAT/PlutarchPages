@@ -159,6 +159,12 @@ from public specifications like the rest of PdfCraft.
   `見`), Arabic presentation forms their letters, Persian yeh and kaf their Arabic letters, and
   Arabic-Indic digits ASCII digits; Arabic vowel marks and kashida are ignored. Always on; redaction
   word search finds these as well as every literal match.
+- **Editing existing Chinese, Japanese, Korean, Arabic and Hebrew text.** New characters in a CJK
+  subset are drawn with outlines of just those characters from the matching craft-fonts face
+  (Simplified Chinese and Korean included), not by embedding the whole face. Arabic paragraphs are
+  shaped with the bundled Arabic face when the page's subset can't shape them, and right-to-left
+  paragraphs and lines keep their right edge. A line edit refuses Arabic letters and names the
+  paragraph edit. Checked on one-line pages written as PDF producers write them.
 
 Not implemented, and why: cloud storage connectors (Box, Dropbox, Google Drive, OneDrive,
 SharePoint need registered OAuth apps), FileOpen and Azure RMS DRM (proprietary vendor SDKs), the
@@ -512,7 +518,7 @@ PdfCraft is young and moving fast. The aim is a workbench where you can view, or
 
 - **Good today:** viewing and search; organizing, combining and splitting; most kinds of comment; filling and authoring forms (with sandboxed JavaScript); passwords, redaction and sanitizing; basic digital signatures; printing; the Accessibility Checker; agent control through the CLI and MCP.
 - **Still borrowed:** pages are drawn by the `hayro` crate while our own renderer is built.
-- **Thin or missing:** reliable editing of existing text (especially CJK and right-to-left), OCR beyond Latin script, office document import/export, signature tokens and online long-term validation, Preflight and PDF/X/UA, printing from the web build, physical printer fidelity, and full XFA forms.
+- **Thin or missing:** reliable editing of existing text beyond the tested one-line Chinese, Japanese, Korean, Arabic and Hebrew pages (Arabic by paragraph only; vertical and mixed-direction text untested), OCR beyond Latin script, office document import/export, signature tokens and online long-term validation, Preflight and PDF/X/UA, printing from the web build, physical printer fidelity, and full XFA forms.
 - **Hardening:** fuzzing still turns up crashes and hangs on hostile files; each one is fixed with a regression test. Quality has not yet been benchmarked side by side.
 
 **Next, in order:** office-document-to-PDF and a .docx export that keeps layout, the reported bugs and the Chinese interface font, a fidelity harness against a reference renderer, editing existing content, then professional workflows (OCR, office formats, Preflight, signatures, accessibility tagging) and 1.0 polish.
