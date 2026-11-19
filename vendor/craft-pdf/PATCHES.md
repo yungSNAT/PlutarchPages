@@ -45,13 +45,17 @@ own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstr
 ## Its unit tests
 
 Like the rest of `vendor/`, this crate is outside the workspace: as a member, every optional
-dependency of its other features would join `Cargo.lock` and the licence and source checks. So the
-gate runs only the tests that reach it through the facades (`crates/cos/tests`, `crates/crypt/tests`
-and the others), and its own unit tests, the fixes' among them, run from the repository root with
-the workspace's hayro-syntax and hayro-jbig2:
+dependency of its other features would join the root `Cargo.lock`. It has its own `Cargo.lock`
+instead, and `cargo xtask ci`'s `craft-pdf` step runs its unit tests, the fixes' among them, on that
+lockfile and checks it with cargo-deny against the root `deny.toml`. Cargo run from this folder
+takes the workspace's hayro-syntax and hayro-jbig2 from `.cargo/config.toml`:
 
 ```sh
-CARGO_TARGET_DIR=target cargo test --manifest-path vendor/craft-pdf/Cargo.toml --features content --lib \
-  --config 'patch.crates-io.hayro-syntax.path="vendor/hayro-syntax"' \
-  --config 'patch.crates-io.hayro-jbig2.path="vendor/hayro-jbig2"'
+cd vendor/craft-pdf
+CARGO_TARGET_DIR=../../target cargo test --locked --features content --lib
+cargo deny --locked --features content check
 ```
+
+After a move to another revision, refresh the lockfile from the root's, so shared crates keep the
+workspace's versions: copy `../../Cargo.lock` here and run `cargo metadata --format-version 1 >
+/dev/null`, which drops what craft-pdf does not use and adds what it needs.

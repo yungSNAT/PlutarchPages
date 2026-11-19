@@ -113,6 +113,7 @@ pub fn ci(_: &[String]) -> anyhow::Result<()> {
         ("clippy", Box::new(|| run_args(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
         ("cli-no-default-features", Box::new(|| run_args(&["check", "-p", "pdfcraft-cli", "--no-default-features"]))),
         ("test", Box::new(|| test(&[]))),
+        ("craft-pdf", Box::new(vendored_craft_pdf)),
         ("i18n-report", Box::new(|| i18n_report(&["--workspace".to_string()]))),
         ("layers", Box::new(|| layers(&[]))),
         ("wasm", Box::new(|| wasm(&[]))),
@@ -166,15 +167,39 @@ pub fn i18n_report(args: &[String]) -> anyhow::Result<()> {
 /// Dependency licences, bans, sources and advisories (`deny.toml`). Skipped with a hint when
 /// cargo-deny is not installed, except under CI (`CI` set), where it is required.
 pub fn deny(_: &[String]) -> anyhow::Result<()> {
+    if !deny_installed("deny")? {
+        return Ok(());
+    }
+    run_args(&["deny", "--log-level", "error", "check"])
+}
+
+/// Whether cargo-deny is installed; CI requires it, elsewhere `step` is skipped without it.
+fn deny_installed(step: &str) -> anyhow::Result<bool> {
     let installed = Command::new("cargo-deny").arg("--version").output().is_ok_and(|o| o.status.success());
     if !installed {
         if std::env::var_os("CI").is_some() {
             bail!("cargo-deny is required in CI: cargo install cargo-deny --locked");
         }
-        eprintln!("deny: SKIPPED, cargo-deny is not installed (cargo install cargo-deny --locked)");
+        eprintln!("{step}: SKIPPED, cargo-deny is not installed (cargo install cargo-deny --locked)");
+    }
+    Ok(installed)
+}
+
+/// The vendored craft-pdf's own unit tests, the fork's fixes' among them, which no workspace test
+/// reaches: it is outside the workspace (vendor/craft-pdf/PATCHES.md, 'Its unit tests'). They
+/// run on its own `Cargo.lock`, which cargo-deny then checks against `deny.toml` as the root's is.
+/// Cargo runs in its folder, so its `.cargo/config.toml` patches hayro-syntax and hayro-jbig2.
+fn vendored_craft_pdf() -> anyhow::Result<()> {
+    let dir = root().join("vendor/craft-pdf");
+    let mut test = cargo();
+    test.current_dir(&dir).env("CARGO_TARGET_DIR", target_dir()).args(["test", "--locked", "--features", "content", "--lib"]);
+    run(test, "cargo test --locked --features content --lib (in vendor/craft-pdf)")?;
+    if !deny_installed("craft-pdf deny")? {
         return Ok(());
     }
-    run_args(&["deny", "--log-level", "error", "check"])
+    let mut deny = cargo();
+    deny.current_dir(&dir).args(["deny", "--locked", "--features", "content", "--log-level", "error", "check"]);
+    run(deny, "cargo deny --locked --features content --log-level error check (in vendor/craft-pdf)")
 }
 
 fn run_args(args: &[&str]) -> anyhow::Result<()> {
