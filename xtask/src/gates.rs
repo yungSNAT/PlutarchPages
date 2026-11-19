@@ -193,7 +193,8 @@ fn deny_installed(step: &str) -> anyhow::Result<bool> {
 
 /// The vendored craft-pdf's own unit tests, the fork's fixes' among them, which no workspace test
 /// reaches: it is outside the workspace (vendor/craft-pdf/PATCHES.md, 'Its unit tests'). They
-/// run on its own `Cargo.lock`, which cargo-deny then checks against `deny.toml` as the root's is.
+/// run on its own `Cargo.lock`, and cargo-deny checks the graph they build (`--features content`)
+/// against `deny.toml`; the lockfile's entries for other features are neither built nor checked.
 /// Cargo runs in its folder, so its `.cargo/config.toml` patches hayro-syntax and hayro-jbig2.
 fn vendored_craft_pdf() -> anyhow::Result<()> {
     let dir = root().join("vendor/craft-pdf");

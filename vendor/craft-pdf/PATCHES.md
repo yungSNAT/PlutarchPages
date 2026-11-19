@@ -47,8 +47,11 @@ own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstr
 Like the rest of `vendor/`, this crate is outside the workspace: as a member, every optional
 dependency of its other features would join the root `Cargo.lock`. It has its own `Cargo.lock`
 instead, and `cargo xtask ci`'s `craft-pdf` step runs its unit tests, the fixes' among them, on that
-lockfile and checks it with cargo-deny against the root `deny.toml`. Cargo run from this folder
-takes the workspace's hayro-syntax and hayro-jbig2 from `.cargo/config.toml`:
+lockfile and checks the graph it builds (`--features content`) with cargo-deny against the root
+`deny.toml`. The lockfile also holds the crates of craft-pdf's other features (krilla, fontdb and
+the storytold/vectorcraft git source among them); the step neither builds nor checks those.
+Cargo run from this folder takes the workspace's hayro-syntax and hayro-jbig2 from
+`.cargo/config.toml`:
 
 ```sh
 cd vendor/craft-pdf
