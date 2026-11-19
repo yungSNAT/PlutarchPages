@@ -26,6 +26,19 @@ let layer = visible_text_layer(&placed, &plan);          // visible text: the ed
   `tesseract::TesseractCli`, which drives an installed `tesseract` binary as an external
   process: never linked, bundled or downloaded. Implementations are shared across threads
   (`Send + Sync`); nothing spawns on wasm32.
+- **Arabic lines (cargo feature `arabic`, off by default).** With it, `OcrsRecognizer` also
+  runs PaddleOCR's Arabic text-line recogniser (`arabic_PP-OCRv5_mobile_rec`, Apache-2.0, the
+  publisher's 8 MB ONNX export, run by rten: still pure Rust) on every line ocrs's detector
+  finds. A line it reads as mostly Arabic letters takes that reading, in typed order; every
+  other line keeps ocrs's. `cargo xtask models --arabic` fetches its 2 files, pinned by SHA-256,
+  from the URL in ATTRIBUTION.toml (or its `mirror_url`) into the models folder; without them
+  nothing changes, and the release packages leave them out. On a 200 dpi scan of 6 lines of
+  public-domain Arabic (`tests/data/arabic-scan.png`), 96.97% of the characters are read right,
+  against 11.52% by ocrs alone (measured 19 November 2026; `cargo test -p pdfcraft-ocr --features arabic
+  reads_an_arabic_scan -- --nocapture`, with the models fetched). Every line is read twice, so
+  pages take longer. A build turns it on with `-p pdfcraft-ocr --features pdfcraft-ocr/arabic`
+  (for example `cargo build --release -p pdfcraft -p pdfcraft-ocr --features
+  pdfcraft-ocr/arabic`). Untested: Latin words inside Arabic lines, vowel marks, other scans.
 - **The tesseract process is fenced in.** The program comes from a user-configured location or
   the PATH, never from document data (the engine validates a configured path as an absolute
   path to an existing executable file before it is used). The language code is allow-listed
@@ -97,7 +110,8 @@ or discards the result. Empty corrections remove words. Searchable acceptance is
 step; editable acceptance writes a separate file. `ocr_dictionary` reads or atomically
 updates the UI's per-language dictionary format through an explicitly root-confined path.
 
-Not yet: languages beyond the tested set (the `ocrs` models read only unaccented Latin; the
+Not yet: languages beyond the tested set (the `ocrs` models read only unaccented Latin, and
+Arabic with the `arabic` feature; the
 Tesseract side is bounded by its allow-list and whatever its installed language packs cover),
 OCR in the browser (the tesseract module is compiled out for wasm32), the deep scan-cleanup
 options (descreen, background removal, edge-shadow removal), and editable glyph coverage

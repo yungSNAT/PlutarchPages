@@ -470,24 +470,30 @@ mod mirror_tests {
     }
 }
 
-/// `cargo xtask models [DIR]`: fetch the OCR models (`kind = "model"`) into `assets/models/` (git-ignored),
+/// `cargo xtask models [--arabic] [DIR]`: fetch the OCR models (`kind = "model"`) into `assets/models/` (git-ignored),
 /// where the app and tests look for them. Each comes with its licence (`<file>.LICENCE.txt`), and
 /// `ATTRIBUTION.txt` credits them all, so the release packages can ship the directory as it is.
+/// `--arabic` adds the Arabic model (`kind = "arabic-model"`), which only a build with
+/// `pdfcraft-ocr`'s `arabic` feature reads; the packages leave it out.
 pub fn models(args: &[String]) -> Result<()> {
     let root = root();
     let m = load(&root)?;
-    let dir = args.first().map(PathBuf::from).unwrap_or_else(|| root.join("assets/models"));
-    for p in fetch_all(&m, &dir, "model")? {
-        println!("models: {}", p.display());
+    let arabic = args.iter().any(|a| a == "--arabic");
+    let dir = args.iter().find(|a| *a != "--arabic").map(PathBuf::from).unwrap_or_else(|| root.join("assets/models"));
+    let kinds: &[&str] = if arabic { &["model", "arabic-model"] } else { &["model"] };
+    for kind in kinds {
+        for p in fetch_all(&m, &dir, kind)? {
+            println!("models: {}", p.display());
+        }
     }
-    std::fs::write(dir.join("ATTRIBUTION.txt"), models_attribution(&m))?;
+    std::fs::write(dir.join("ATTRIBUTION.txt"), models_attribution(&m, kinds))?;
     Ok(())
 }
 
-/// The credits shipped beside the models (their licences require attribution).
-fn models_attribution(m: &Manifest) -> String {
+/// The credits shipped beside the models of `kinds` (their licences require attribution).
+fn models_attribution(m: &Manifest, kinds: &[&str]) -> String {
     let mut s = String::from("PdfCraft's text recognition (Scan & OCR) uses these models, unmodified.\n");
-    for f in m.fetched.iter().filter(|f| f.kind == "model") {
+    for f in m.fetched.iter().filter(|f| kinds.contains(&f.kind.as_str())) {
         let _ = write!(
             s,
             "\n{}\n  {}\n  by {}\n  from {}\n  licence: {} ({}; full text in {}.LICENCE.txt)\n",
@@ -571,12 +577,19 @@ mod tests {
     #[test]
     fn models_attribution_credits_every_model() {
         let m = load(&root()).unwrap();
-        let text = models_attribution(&m);
-        let models: Vec<_> = m.fetched.iter().filter(|f| f.kind == "model").collect();
-        assert!(!models.is_empty());
-        for f in models {
-            assert!(text.contains(&f.file) && text.contains(&f.author) && text.contains(&f.licence), "{}", f.file);
+        for kinds in [&["model"][..], &["model", "arabic-model"]] {
+            let text = models_attribution(&m, kinds);
+            let models: Vec<_> = m.fetched.iter().filter(|f| kinds.contains(&f.kind.as_str())).collect();
+            assert!(!models.is_empty());
+            for f in models {
+                assert!(text.contains(&f.file) && text.contains(&f.author) && text.contains(&f.licence), "{}", f.file);
+            }
         }
+        // The packages' models (no --arabic) credit no model they leave out.
+        let arabic: Vec<_> = m.fetched.iter().filter(|f| f.kind == "arabic-model").collect();
+        assert!(!arabic.is_empty());
+        let text = models_attribution(&m, &["model"]);
+        assert!(arabic.iter().all(|f| !text.contains(&f.file)));
     }
 
     fn asset(path: &str, author: &str, kind: &str, licence: &str) -> Asset {
