@@ -1632,6 +1632,30 @@ fn object_numbers_merge_source_and_overlay_in_order() {
     assert_eq!(doc.object_numbers(), vec![5]);
 }
 
+/// The stored parse of an encrypted file's object resolves an indirect `/Length` as a load of it
+/// does: a `/Length` naming the object itself reads as missing, so the object is refused without
+/// being loaded, and so decrypted, on the way.
+#[test]
+fn a_refused_object_is_not_loaded_through_its_own_length() {
+    let mut protected = Document::new_empty();
+    protected
+        .set_encryption(&crate::crypt::NewEncryption {
+            algorithm: crate::crypt::Algorithm::Aes256,
+            user_password: "",
+            owner_password: "owner",
+            permissions: -4,
+            encrypt_metadata: true,
+            seed: [9; 32],
+        })
+        .unwrap();
+    let protected = Document::open(Arc::new(crate::cos::write_full(&protected, &crate::cos::SaveOptions::default()).unwrap())).unwrap();
+    let mut doc = Document::open(Arc::new(build(&["<< /Type /Catalog >>", "<< /Length 2 0 R >>\nstream\nabc\nendstream"], "/Root 1 0 R"))).unwrap();
+    doc.security = protected.security.clone();
+    assert!(doc.security.is_some());
+    assert!(doc.refused_before_decryption(2, &|o| !matches!(o, Object::Stream(_))));
+    assert!(!doc.cache.lock().unwrap().contains_key(&2), "the object was loaded through its /Length");
+}
+
 #[test]
 fn full_object_scans_preserve_edits_without_retaining_the_scan() {
     let mut bodies = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_owned(), "<< /Type /Pages /Kids [] /Count 0 >>".to_owned()];

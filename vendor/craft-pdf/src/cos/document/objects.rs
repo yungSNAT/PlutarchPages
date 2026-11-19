@@ -713,12 +713,15 @@ impl Document {
     /// Whether `keep` refuses object `num` of an encrypted file as stored at its cross-reference
     /// offset, undecrypted. Anything else (an edit, a member of an object stream, whose stream
     /// is decrypted as a whole, or an object not at its offset) is left to a full read.
-    fn refused_before_decryption(&self, num: u32, keep: &dyn Fn(&Object) -> bool) -> bool {
+    pub(super) fn refused_before_decryption(&self, num: u32, keep: &dyn Fn(&Object) -> bool) -> bool {
         if self.security.is_none() || self.overlay.contains_key(&num) {
             return false;
         }
         let Some(XrefEntry::InFile { offset, .. }) = self.entries.lookup(num, &self.data) else { return false };
         let Ok(offset) = usize::try_from(offset) else { return false };
+        // As in a load of `num`: a `/Length` that leads back to `num` reads as missing, rather than
+        // loading, and so decrypting, the object being judged.
+        let Some(_loading) = LoadGuard::enter(num) else { return false };
         let resolve = |r: ObjRef| self.stream_length(r);
         matches!(parse_indirect_shared(&self.data, offset, &resolve, &self.endstreams), Ok((id, o)) if id.num == num && !keep(&o))
     }
