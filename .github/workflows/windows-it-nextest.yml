@@ -1,10 +1,10 @@
 name: Windows UI tests under nextest
 
 # ui-egui's `it` tests under cargo-nextest on windows-latest, 6 times in one job. The hosted runner
-# has no GPU, so rendering takes Windows' software path. nextest gives each test its own process,
-# so a test that brings its process down fails alone, by name, instead of taking the rest of the
-# binary with it. ci.yml's Windows leg runs the same tests once with `cargo test`, in one process.
-# Runs on demand, and on a pull request that changes this file.
+# has no GPU. nextest gives each test its own process, so a test that brings its process down fails
+# alone, by name, instead of taking the rest of the binary with it. ci.yml's Windows leg runs the
+# same tests once with `cargo test`, in one process. Runs on demand, and on a pull request that
+# changes this file.
 on:
   workflow_dispatch:
   pull_request:
