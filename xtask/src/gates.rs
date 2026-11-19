@@ -39,7 +39,13 @@ fn run(mut cmd: Command, what: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) fn metadata() -> anyhow::Result<serde_json::Value> {
-    let out = cargo().args(["metadata", "--format-version", "1", "--no-deps"]).output().context("cargo metadata")?;
+    metadata_of(&["--no-deps"])
+}
+
+/// `cargo metadata` with `args` after the format version: `--manifest-path <file>` without
+/// `--no-deps` resolves that workspace's dependencies.
+pub(crate) fn metadata_of(args: &[&str]) -> anyhow::Result<serde_json::Value> {
+    let out = cargo().args(["metadata", "--format-version", "1"]).args(args).output().context("cargo metadata")?;
     if !out.status.success() {
         bail!("cargo metadata failed:\n{}", String::from_utf8_lossy(&out.stderr));
     }
