@@ -173,40 +173,30 @@ pub fn i18n_report(args: &[String]) -> anyhow::Result<()> {
 /// Dependency licences, bans, sources and advisories (`deny.toml`). Skipped with a hint when
 /// cargo-deny is not installed, except under CI (`CI` set), where it is required.
 pub fn deny(_: &[String]) -> anyhow::Result<()> {
-    if !deny_installed("deny")? {
-        return Ok(());
-    }
-    run_args(&["deny", "--log-level", "error", "check"])
-}
-
-/// Whether cargo-deny is installed; CI requires it, elsewhere `step` is skipped without it.
-fn deny_installed(step: &str) -> anyhow::Result<bool> {
     let installed = Command::new("cargo-deny").arg("--version").output().is_ok_and(|o| o.status.success());
     if !installed {
         if std::env::var_os("CI").is_some() {
             bail!("cargo-deny is required in CI: cargo install cargo-deny --locked");
         }
-        eprintln!("{step}: SKIPPED, cargo-deny is not installed (cargo install cargo-deny --locked)");
+        eprintln!("deny: SKIPPED, cargo-deny is not installed (cargo install cargo-deny --locked)");
+        return Ok(());
     }
-    Ok(installed)
+    run_args(&["deny", "--log-level", "error", "check"])
 }
 
 /// The vendored craft-pdf's own unit tests, the fork's fixes' among them, which no workspace test
-/// reaches: it is outside the workspace (vendor/craft-pdf/PATCHES.md, 'Its unit tests'). They
-/// run on its own `Cargo.lock`, and cargo-deny checks the graph they build (`--features content`)
-/// against `deny.toml`; the lockfile's entries for other features are neither built nor checked.
-/// Cargo runs in its folder, so its `.cargo/config.toml` patches hayro-syntax and hayro-jbig2.
+/// reaches: it is outside the workspace (vendor/craft-pdf/PATCHES.md, 'Its unit tests'). Its
+/// lockfile is made afresh from the root's, so the crates it shares with the workspace build at
+/// the workspace's versions; Cargo adds the test-only crates the root lacks afresh, and
+/// no licence, source or advisory check covers those. Cargo runs in its folder, so its
+/// `.cargo/config.toml` patches hayro-syntax and hayro-jbig2.
 fn vendored_craft_pdf() -> anyhow::Result<()> {
     let dir = root().join("vendor/craft-pdf");
+    std::fs::copy(root().join("Cargo.lock"), dir.join("Cargo.lock")).context("copying Cargo.lock into vendor/craft-pdf")?;
     let mut test = cargo();
-    test.current_dir(&dir).env("CARGO_TARGET_DIR", target_dir()).args(["test", "--locked", "--features", "content", "--lib"]);
-    run(test, "cargo test --locked --features content --lib (in vendor/craft-pdf)")?;
-    if !deny_installed("craft-pdf deny")? {
-        return Ok(());
-    }
-    let mut deny = cargo();
-    deny.current_dir(&dir).args(["deny", "--locked", "--features", "content", "--log-level", "error", "check"]);
-    run(deny, "cargo deny --locked --features content --log-level error check (in vendor/craft-pdf)")
+    test.current_dir(&dir).env("CARGO_TARGET_DIR", target_dir()).args(["test", "--features", "content", "--lib"]);
+    run(test, "cargo test --features content --lib (in vendor/craft-pdf)")
+        .context("a craft-pdf test failed, or Cargo could not fetch the test-only crates the root lockfile lacks (offline, run `cargo fetch` in vendor/craft-pdf first)")
 }
 
 fn run_args(args: &[&str]) -> anyhow::Result<()> {

@@ -45,20 +45,21 @@ own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstr
 ## Its unit tests
 
 Like the rest of `vendor/`, this crate is outside the workspace: as a member, every optional
-dependency of its other features would join the root `Cargo.lock`. It has its own `Cargo.lock`
-instead, and `cargo xtask ci`'s `craft-pdf` step runs its unit tests, the fixes' among them, on that
-lockfile and checks the graph it builds (`--features content`) with cargo-deny against the root
-`deny.toml`. The lockfile also holds the crates of craft-pdf's other features (krilla, fontdb and
-the storytold/vectorcraft git source among them); the step neither builds nor checks those.
-Cargo run from this folder takes the workspace's hayro-syntax and hayro-jbig2 from
+dependency of its other features would join the root `Cargo.lock` and its licence, source and
+advisory checks. `cargo xtask ci`'s `craft-pdf` step runs its unit tests, the fixes' among them, in
+the gate instead. It copies the root `Cargo.lock` here (git-ignored) and lets Cargo add what the
+`content` tests need, so the crates craft-pdf shares with the workspace build at the workspace's
+versions. Cargo run from this folder takes the workspace's hayro-syntax and hayro-jbig2 from
 `.cargo/config.toml`:
 
 ```sh
+cp Cargo.lock vendor/craft-pdf/Cargo.lock
 cd vendor/craft-pdf
-CARGO_TARGET_DIR=../../target cargo test --locked --features content --lib
-cargo deny --locked --features content check
+CARGO_TARGET_DIR=../../target cargo test --features content --lib
 ```
 
-After a move to another revision, refresh the lockfile from the root's, so shared crates keep the
-workspace's versions: copy `../../Cargo.lock` here and run `cargo metadata --format-version 1 >
-/dev/null`, which drops what craft-pdf does not use and adds what it needs.
+What this does not cover: Cargo resolves the test-only crates the root lockfile lacks afresh, at
+the newest versions their requirements allow, and no licence, source or advisory check reads them. Known on 19 November 2026:
+ttf-parser, a dev-dependency built for these tests, is unmaintained (RUSTSEC-2026-0192), and
+rustybuzz, which only craft-pdf's unbuilt `write` features reach, is too (RUSTSEC-2026-0206).
+Without the network the step fails until `cargo fetch` in this folder has fetched those crates.
