@@ -90,6 +90,15 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/ui-egui/tests/it/control.rs` looks for that title, the 2 `mode_tabs_keep_the_hand_over_*`
   tests in `editing.rs` use a 1600 pt window and `long_view_menu_fits_a_short_window` in `view.rs`
   a 1100 pt one. Keep them when a merge changes those tests: only Nightly macOS runs them on macOS.
+- `non_active_comparison_document_completes_native_script` in `crates/ui-egui/src/script_dialog.rs`
+  pins the session clock after creating its source and expects a fresh realm after Save As, as
+  `mark_saved` gives a full rewrite. Upstream's copy expects the realm to survive, which holds only
+  when the source is created and saved in the same second (about 1 run in 30 failed). Keep the
+  fork's version when a merge changes that test.
+- `buttons_take_presses_as_the_scripts_show_them` in `crates/ui-egui/tests/it/view.rs` waits up to
+  about 6 s for the page's open action before pressing (`6a0b7055b`). Upstream's copy runs a fixed
+  2 frames, which failed 2 of 3 Windows gates when the action had not yet run. Keep the fork's wait
+  when a merge changes that test.
 - Update check and repository links point at yungSNAT. `new_updater` in
   `crates/ui-egui/src/platform/updates.rs` ignores ArtCraft Launcher's version pins, which are keyed
   by the `pdfcraft` id. Don't give `UPDATE_APP` another id to avoid them: it also names the packages
@@ -101,6 +110,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   are overlay rows (Translations).
 - Translations: the interface catalogues are craft-i18n's, at `craft-i18n.rev`, as upstream's are.
   [Translating PlutarchPages](TRANSLATING.md) explains how to report and fill the fork's gaps.
+  [docs/translation-gaps.md](docs/translation-gaps.md) (fork only) holds the last fork report, and
+  `the_translation_gaps_document_is_current` in `crates/ui-egui/src/i18n/fork_tests.rs` fails when
+  a merge moves it: run `cargo xtask i18n-report --fork` then, replace the document's block and
+  update the commit and craft-i18n revision it names (the test checks only the block).
   The fork's rows that craft-i18n doesn't have are in `crates/ui-egui/i18n-fork/<locale>.tsv`, and
   `crates/ui-egui/build_i18n_fork.rs` embeds each before craft-i18n's `pdfcraft.tsv`; 2 calls in
   `build.rs` reach it, so keep them when a merge changes `craft_i18n` or `locales`.
@@ -148,6 +161,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   their pull request paths, and each also runs weekly. Upstream runs both on every push, where
   FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
   `paths` and FreeBSD's `schedule` when a merge drops them.
+- `windows-it-nextest.yml` is this fork's own: on demand, and on a pull request that changes it, it
+  runs ui-egui's `it` tests 6 times under nextest on a GPU-less `windows-latest`, so a test that
+  crashes its process fails by name.
 - SonarCloud: `.sonarcloud.properties` excludes `vendor/` for the automatic analysis, and 7 hash lines
   carry `NOSONAR` for rust:S4790: 6 MD5 lines in `vendor/craft-pdf/src/crypt.rs` and the RIPEMD-160 line in
   `crates/sign/src/keys.rs`. A merge that changes those lines drops the marker, so add it back.
@@ -270,6 +286,10 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
   part is upstream's `4aad36cf1`, already merged.
 
 ## Merging upstream
+
+No schedule sets when to merge. Upstream merges have landed 1 to 9 days apart since 30 October
+2026 (#25, #32, #69, #136, #155), and `upstream-drift.yml` updates an 'Upstream drift report'
+issue each Monday (cron 04:43 UTC) with how far `main` trails upstream.
 
 1. `git merge --no-ff` upstream's `main` on a `ryan/` branch. Never rewrite history.
 2. Run `cargo xtask fork-check`. It fails when the merge brings back an ArtCraft name, a
