@@ -1676,7 +1676,7 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
 
 /// Paints the tiles of a page too big to draw whole: the tiles of earlier zooms first, stretched,
 /// then the visible tiles of this one, nearest the viewport centre first, asking for those missing.
-/// Whether it painted a visible tile of this zoom that is not waiting for its replacement.
+/// Whether it painted a tile that is not waiting for its replacement.
 fn paint_page_tiles(
     ui: &egui::Ui,
     view: &mut DocView,
@@ -1709,6 +1709,7 @@ fn paint_page_tiles(
     let mut older: Vec<(f32, u32, u32, &TextureHandle)> =
         view.tiles.iter().filter(|((p, t, _, _), _)| *p == i && *t != tag).map(|((_, t, ox, oy), tex)| (tag_scale(*t), *ox, *oy, tex)).collect();
     older.sort_by(|a, b| (b.0 / scale).ln().abs().total_cmp(&(a.0 / scale).ln().abs()));
+    let mut painted = view.tiles.keys().any(|key| key.0 == i && key.1 != tag && !view.stale_tiles.contains(key));
     for (s, ox, oy, tex) in older {
         let (ow, oh) = (device_pixels(pw_pt, s) as f32, device_pixels(ph_pt, s) as f32);
         let [w, h] = tex.size();
@@ -1719,7 +1720,6 @@ fn paint_page_tiles(
     // page interpret, so the workers sharpen what is looked at before the edges.
     let (vcx, vcy) = ((vx0 + vx1) as f32 / 2.0, (vy0 + vy1) as f32 / 2.0);
     let mut coords: Vec<(u32, u32)> = Vec::new();
-    let mut painted = false;
     for ty in vy0 / ts..=(vy1.saturating_sub(1)) / ts {
         for tx in vx0 / ts..=(vx1.saturating_sub(1)) / ts {
             coords.push((tx, ty));
