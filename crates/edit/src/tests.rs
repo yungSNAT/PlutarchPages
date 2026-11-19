@@ -2830,11 +2830,15 @@ fn japanese_replacement_missing_a_glyph_after_240_changes_nothing() {
     if without_craft_fonts("japanese_replacement_missing_a_glyph_after_240_changes_nothing") {
         return;
     }
-    // The first CJK character that no face draws: the 242nd unique character, in a second font.
+    // The first CJK character that no face draws, the Chinese and Korean ones included: the 242nd
+    // unique character, in a second font.
     let faces = pdfcraft_fonts::document_japanese_fonts_for_style(false, false);
     let missing = (0x4E00u32..0x9FFF)
         .filter_map(char::from_u32)
-        .find(|ch| faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_err()))
+        .find(|ch| {
+            faces.iter().all(|face| pdfcraft_fonts::japanese_glyph_from(face, *ch).is_err())
+                && pdfcraft_fonts::CRAFT_FONTS.iter().all(|face| !pdfcraft_fonts::embedding::covers(face.bytes, &ch.to_string()))
+        })
         .expect("some CJK character is outside every face");
     let replacement = format!("{}{missing}", covered_japanese_chars(241));
     let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
@@ -6928,6 +6932,37 @@ fn hebrew_edits_are_drawn_right_to_left_and_keep_their_right_edge() {
     text::rewrite_block(&mut doc, 0, 0, Some("דוב"), &left).unwrap();
     let line = text::text_lines(&reopen(&doc), 0).unwrap().swap_remove(0);
     assert!((line.rect[0] - before[0]).abs() < 0.5, "left-aligned: {:?} vs {before:?}", line.rect);
+}
+
+/// A right-to-left line edit keeps the line's right edge (its end along the baseline) however
+/// the line is drawn: scaled or turned by its text matrix, or in several showing operators, and
+/// the text after it in the same text object stays where it was.
+#[test]
+fn hebrew_line_edits_keep_the_right_edge_under_any_text_matrix() {
+    // The end of a line's baseline in page space: the right edge, or the top when turned.
+    let end = |l: &text::TextLine, turned: bool| if turned { l.rect[3] } else { l.rect[2] };
+    for (content, turned) in [
+        ("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET", false),
+        ("BT /F1 12 Tf 2 0 0 1.5 200 700 Tm 110 Tz (EDCBA) Tj ET", false),
+        ("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (EDCBA) Tj ET", true),
+        ("BT /F1 12 Tf 300 700 Td (EDC) Tj (BA) Tj ET", false),
+    ] {
+        for typed in ["שלום בדיוק", "דוב"] {
+            let mut doc = hebrew_page(content);
+            let before = text::text_lines(&doc, 0).unwrap().swap_remove(0);
+            assert_eq!(text::replace_line(&mut doc, 0, 0, typed).unwrap().substituted, None, "{content}");
+            let after = text::text_lines(&reopen(&doc), 0).unwrap().swap_remove(0);
+            assert_eq!(after.text, typed, "{content}");
+            assert!((end(&after, turned) - end(&before, turned)).abs() < 0.5, "{content}, {typed}: {:?} → {:?}", before.rect, after.rect);
+        }
+    }
+    // The next line moves from where the edited line started, not from where its text ended.
+    let mut doc = hebrew_page("BT /F1 12 Tf 300 700 Td (EDCBA) Tj 0 -20 Td (ADB) Tj ET");
+    let next = text::text_lines(&doc, 0).unwrap()[1].rect;
+    text::replace_line(&mut doc, 0, 0, "שלום בדיוק").unwrap();
+    let lines = text::text_lines(&reopen(&doc), 0).unwrap();
+    assert_eq!(lines[1].text, "דוב");
+    assert!(lines[1].rect.iter().zip(next).all(|(a, b)| (a - b).abs() < 0.01), "{:?} vs {next:?}", lines[1].rect);
 }
 
 /// A generated Type 3 font numbers its glyphs from 1, so code 32 is a character, not the space:

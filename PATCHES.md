@@ -240,6 +240,20 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Font metrics: a page's walk reads each font once by `FontKey` (`select_font` in
   `crates/edit/src/text/interp.rs`). Upstream's v0.21.1 shares metrics between aliases of one font
   object its own way (`by_font`, `METRICS_BUILT`); its test counts `FONT_READS` here.
+- Editing existing Chinese, Japanese, Korean, Arabic and Hebrew text, checked by
+  `crates/edit/src/script_edit_tests.rs`. The Type 3 fallback (`type3_faces` in
+  `crates/edit/src/text/fallback.rs`) also holds the craft-fonts Simplified Chinese and Korean
+  faces, the Chinese one first for text only it draws (`is_chinese`). A matching bundled CJK face
+  completes a subset with outlines of the new characters, not embedded whole (`encodable_font` and
+  `FallbackBuilder::prepare` in `crates/edit/src/text_regions/styled.rs`). Arabic spans that no
+  complete program shapes use the bundled Arabic outlines (`arabic_outlines` in
+  `crates/edit/src/text_regions/styled/scripts.rs`, and `outline_glyph_resources` in
+  `crates/edit/src/added/draw.rs`). Right-to-left styled paragraphs
+  are right-aligned and a single row grows to the left (`paragraph_geometry`). `replace_line`
+  refuses Arabic letters and keeps a right-to-left line's right edge (`right_edge_gap` in
+  `crates/edit/src/text/rewrite.rs`). `japanese_replacement_missing_a_glyph_after_240_changes_nothing`
+  picks a character no bundled face draws. Keep these at the next merge unless upstream covers the
+  same pages.
 
 ## Fixed differently upstream
 

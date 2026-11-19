@@ -2,10 +2,14 @@ use super::super::interp::TextState;
 use super::grouping::{across, is_centred, row_rect};
 use super::{
     BlockStyle, CraftFont, Dict, Document, EditError, HashMap, LineEdit, MAX_TYPE3_GLYPHS, Matrix, Metrics, Object, Op, PdfString, Pieces,
-    RangeStyle, TextBlock, TextLine, Type3Glyph, builtin_thai_choice, coincident_ops, content_streams, fallback_face, japanese_glyph_from,
-    needs_type3, no_fallback_font, no_glyph_for, page_dict, reveal_ops, rewritten_contents, row_break, source_encodes, source_family, source_program,
-    source_show, source_space, source_width, splice, type3_faces, type3_glyph, write_type3_glyphs,
+    RangeStyle, TextBlock, TextLine, Type3Glyph, builtin_thai_choice, coincident_ops, content_streams, fallback_face, is_chinese,
+    japanese_glyph_from, needs_type3, no_fallback_font, no_glyph_for, page_dict, reveal_ops, rewritten_contents, row_break, source_encodes,
+    source_family, source_program, source_show, source_space, source_width, splice, type3_faces, type3_glyph, write_type3_glyphs,
 };
+use scripts::{arabic_outlines, is_cjk_face, shape_arabic};
+
+#[path = "styled/scripts.rs"]
+mod scripts;
 
 // The draft is capped at 4 MiB; also bound the outline data prepared across all fallback faces.
 // A glyph budget worth 64 full batches (15,360 glyphs with the production batch size).
@@ -21,7 +25,7 @@ struct FallbackGroup {
 
 struct FallbackBuilder {
     groups: Vec<FallbackGroup>,
-    names: std::collections::BTreeMap<(String, bool, char), usize>,
+    names: std::collections::BTreeMap<(String, bool, bool, char), usize>,
     glyphs: usize,
     per_font: usize,
     budget: usize,
@@ -55,8 +59,12 @@ impl FontResolver<'_> {
         }) {
             return Ok(Some(name.clone()));
         }
-        if let Some(face) =
-            pdfcraft_fonts::embedding::matching_faces(&source.base_font).into_iter().find(|face| pdfcraft_fonts::embedding::covers(face.bytes, text))
+        // A bundled CJK face is megabytes: what a subset of it lacks is drawn from that face's
+        // outlines instead ([`FallbackBuilder::prepare`]), so an edit adds only the glyphs it needs.
+        if let Some(face) = pdfcraft_fonts::embedding::matching_faces(&source.base_font)
+            .into_iter()
+            .filter(|face| !is_cjk_face(face))
+            .find(|face| pdfcraft_fonts::embedding::covers(face.bytes, text))
         {
             return self.embed_face(face.name(), face.bytes, face.family, "the full source font could not be loaded").map(Some);
         }
@@ -134,6 +142,8 @@ struct PreparedCharacters {
 struct ThaiShaping {
     /// Draft-only names drawn with the bundled Thai outlines.
     outlined: std::collections::HashSet<String>,
+    /// Draft-only names drawn with the bundled Arabic outlines ([`arabic_outlines`]).
+    arabic: std::collections::HashSet<String>,
     /// Source faces shaped in their existing codes, by resource name.
     legacy: HashMap<String, LegacyFace>,
     /// Draft-only names whose rows, Latin ones included, are shaped and embedded with the
@@ -199,7 +209,12 @@ impl CharacterPreparation<'_> {
             if use_thai_outlines {
                 substituted = pdfcraft_fonts::document_thai_font().map(|f| f.family.to_owned());
             }
-            let existing_thai = if !use_thai_outlines {
+            let use_arabic_outlines =
+                !use_thai_outlines && selected_resource.is_none() && arabic_outlines(resolver.doc, resolver.fonts, source, span);
+            if use_arabic_outlines {
+                substituted = pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned());
+            }
+            let existing_thai = if !use_thai_outlines && !use_arabic_outlines {
                 let chosen = match selected_resource {
                     None => Some(source.clone()),
                     Some(resource) => resolver.fonts.get(resource.as_bytes()).and_then(|f| resolver.doc.dict(f)).map(|font| {
@@ -216,10 +231,10 @@ impl CharacterPreparation<'_> {
             } else {
                 None
             };
-            let outline_name = if use_thai_outlines {
+            let outline_name = if use_thai_outlines || use_arabic_outlines {
                 // A draft-only name prevents this choice from affecting another style span that
                 // explicitly selects the original resource. It is never saved into the PDF.
-                let mut name = format!("PCOutlineThai{index}");
+                let mut name = format!("PCOutline{}{index}", if use_arabic_outlines { "Arabic" } else { "Thai" });
                 while resolver.metrics.contains_key(&name) {
                     name.push('_');
                 }
@@ -231,7 +246,11 @@ impl CharacterPreparation<'_> {
                 {
                     resolver.metrics.insert(name.clone(), m);
                 }
-                thai.outlined.insert(name.clone());
+                if use_arabic_outlines {
+                    thai.arabic.insert(name.clone());
+                } else {
+                    thai.outlined.insert(name.clone());
+                }
                 Some(name)
             } else {
                 None
@@ -253,6 +272,7 @@ impl CharacterPreparation<'_> {
                 None => (None, None),
             };
             let start = range.start;
+            let mut chinese = None;
             for (offset, ch) in draft.get(range).unwrap_or_default().char_indices() {
                 // A row break moves to the next row instead of asking a font for a glyph. The CR
                 // of a CRLF stays a `\r` the rows skip, so the pair is one break; every other break
@@ -273,7 +293,8 @@ impl CharacterPreparation<'_> {
                 } else if let Some(name) = resolver.encodable_font(source, &text, requested)? {
                     name
                 } else if needs_type3(&text) {
-                    fallback.prepare(source, ch, &text, chars.len())?
+                    let chinese = *chinese.get_or_insert_with(|| is_chinese(span));
+                    fallback.prepare(source, ch, &text, chinese, chars.len())?
                 } else {
                     let name = resolver.substitute_font(source);
                     substituted = Some(source_family(&source.base_font).base_font(source.bold, source.italic).to_owned());
@@ -315,12 +336,16 @@ impl FallbackBuilder {
         }
     }
 
-    fn prepare(&mut self, source: &TextLine, ch: char, text: &str, position: usize) -> Result<String, EditError> {
-        let key = (source.base_font.clone(), source.bold, ch);
+    /// `chinese`: whether the paragraph is Chinese ([`is_chinese`]).
+    fn prepare(&mut self, source: &TextLine, ch: char, text: &str, chinese: bool, position: usize) -> Result<String, EditError> {
+        let key = (source.base_font.clone(), source.bold, chinese, ch);
         let group_index = if let Some(index) = self.names.get(&key) {
             *index
         } else {
-            let (faces, _) = type3_faces(text, source_family(&source.base_font), source.bold)?;
+            let (faces, _) = type3_faces(text, source_family(&source.base_font), source.bold, chinese)?;
+            // The bundled face the source font is a subset of comes first: its outlines match
+            // the glyphs the subset kept.
+            let faces: Vec<&CraftFont> = pdfcraft_fonts::embedding::matching_faces(&source.base_font).into_iter().chain(faces).collect();
             let face = fallback_face(&faces, &[ch], |face, ch| japanese_glyph_from(face, ch).is_ok()).ok_or_else(|| no_fallback_font(text))?;
             let index = self.groups.iter().position(|group| std::ptr::eq(group.face, face)).unwrap_or_else(|| {
                 let index = self.groups.len();
@@ -374,6 +399,7 @@ enum ShapedFont {
     Existing(Vec<(String, Vec<u8>)>),
     Program { bytes: Vec<u8>, family: String },
     ThaiOutlines,
+    ArabicOutlines,
 }
 struct ShapedText {
     run: pdfcraft_fonts::source_shaping::ShapedRun,
@@ -424,6 +450,7 @@ fn embed_shaped_resources(doc: &mut Document, fonts: &mut Dict, runs: &ShapedRun
         let glyphs = match &shaped.font {
             ShapedFont::Existing(codes) => codes.clone(),
             ShapedFont::ThaiOutlines => crate::added::thai_glyph_resources(doc, fonts, &shaped.run)?,
+            ShapedFont::ArabicOutlines => crate::added::outline_glyph_resources(doc, fonts, &shaped.run, pdfcraft_fonts::ShapedScript::Arabic)?,
             ShapedFont::Program { bytes, family } => {
                 let mappings: Vec<_> = shaped.run.glyphs.iter().map(|glyph| (glyph.text.clone(), glyph.id)).collect();
                 let resource = pdfcraft_fonts::embedding::embed_mapping(doc, fonts, bytes, family, &mappings).map_err(EditError::Invalid)?;
@@ -671,7 +698,14 @@ fn page_font_metrics(
     (fonts, metrics)
 }
 
-fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextBlock, style: &BlockStyle) -> Result<(f64, f64, f64), EditError> {
+/// `rtl`: the replacement is right-to-left, so a single row grows to the left, keeping its right edge.
+fn paragraph_geometry(
+    doc: &Document,
+    page: &pdfcraft_model::Page,
+    block: &TextBlock,
+    style: &BlockStyle,
+    rtl: bool,
+) -> Result<(f64, f64, f64), EditError> {
     if [style.size, style.line_spacing, style.char_spacing, style.scale, style.width].iter().flatten().any(|value| !value.is_finite())
         || style.color.is_some_and(|color| color.iter().any(|value| !value.is_finite()))
     {
@@ -681,7 +715,9 @@ fn paragraph_geometry(doc: &Document, page: &pdfcraft_model::Page, block: &TextB
     if !dx.is_finite() || !dy.is_finite() || style.width.is_some_and(|width| !width.is_finite()) {
         return Err(EditError::Invalid("the paragraph's position and width must be finite".into()));
     }
-    let natural = if block.invisible || block.rows.len() == 1 {
+    let natural = if rtl && block.rows.len() == 1 {
+        (block.rect[2] + dx - (page.crop(doc)[0] + 36.0)).max(block.rect[2] - block.rect[0])
+    } else if block.invisible || block.rows.len() == 1 {
         (page.crop(doc)[2] - 36.0 - (block.rect[0] + dx)).max(block.rect[2] - block.rect[0])
     } else {
         block.rect[2] - block.rect[0]
@@ -1237,6 +1273,9 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
         let shaped = shape_thai_row(text)?;
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::ThaiOutlines }));
     }
+    if thai.arabic.contains(name) {
+        return Ok(Some(ShapedText { run: shape_arabic(text)?, font: ShapedFont::ArabicOutlines }));
+    }
     if let Some(resource) = thai.program.get(name) {
         let font = fonts
             .get(resource.as_bytes())
@@ -1636,7 +1675,9 @@ pub(crate) fn rewrite_styled_block(
     let p = page_dict(doc, page)?;
     let mut res = p.dict.get(b"Resources").and_then(|resource| doc.resolve(resource).as_dict().cloned()).unwrap_or_default();
     let (mut fonts, mut metrics) = page_font_metrics(doc, &res, block, lines);
-    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style)?;
+    // Right-to-left text is right-aligned unless an alignment is asked for, as in a single-style rewrite.
+    let rtl = crate::bidi::rtl_base(draft);
+    let (dx, dy, width) = paragraph_geometry(doc, &p, block, style, rtl)?;
     let prepared = CharacterPreparation {
         doc,
         first,
@@ -1772,7 +1813,7 @@ pub(crate) fn rewrite_styled_block(
     let marked = kept.iter().all(|row| !*row);
     push_whole_paragraph_marker(&mut block_ops, marked, "BMC");
     let crop = p.crop(doc);
-    let centered = is_centred(block, lines, (crop[0] + crop[2]) / 2.0, first.size);
+    let centered = !rtl && is_centred(block, lines, (crop[0] + crop[2]) / 2.0, first.size);
     let source_leading = block
         .rows
         .windows(2)
@@ -1817,7 +1858,13 @@ pub(crate) fn rewrite_styled_block(
         let w = measured.get(row_index).copied().unwrap_or(0.0);
         // The row's own alignment, or the paragraph's.
         let asked = row_lines.get(row_index).and_then(|l| style.aligns.get(*l)).copied().flatten().or(style.align);
-        let align = asked.unwrap_or(if centered { crate::added::Align::Center } else { crate::added::Align::Left });
+        let align = asked.unwrap_or(if centered {
+            crate::added::Align::Center
+        } else if rtl {
+            crate::added::Align::Right
+        } else {
+            crate::added::Align::Left
+        });
         let original_rect = block.rows.get(row_index).and_then(|row| row_rect(row, lines)).unwrap_or(block.rect);
         let left = if style.width.is_none() && asked.is_none() { original_rect[0] } else { block.rect[0] };
         let available = if style.width.is_none() && asked.is_none() { original_rect[2] - original_rect[0] } else { width };

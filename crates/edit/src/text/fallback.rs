@@ -45,12 +45,16 @@ const HEBREW_FONT_NAME: &str = "PCHebrew";
 /// The `/Name` of the Type 3 fonts generated from the bundled Latin (Inter) face.
 const LATIN_FONT_NAME: &str = "PCLatin";
 
-/// Whether `font` is one of those generated fonts (Latin, Japanese, Hebrew or Thai): a replacement longer
+/// Whether `font` is one of those generated fonts (Latin, Japanese, Hebrew, Thai or Arabic): a replacement longer
 /// than one of them is split across several, which read back as one line (see [`same_font`]).
 pub(super) fn is_type3_fallback(font: &Dict) -> bool {
     font.name(b"Subtype") == Some(b"Type3")
         && font.name(b"Name").is_some_and(|n| {
-            n == JAPANESE_FONT_NAME.as_bytes() || n == HEBREW_FONT_NAME.as_bytes() || n == LATIN_FONT_NAME.as_bytes() || n == b"PCThai"
+            n == JAPANESE_FONT_NAME.as_bytes()
+                || n == HEBREW_FONT_NAME.as_bytes()
+                || n == LATIN_FONT_NAME.as_bytes()
+                || n == b"PCThai"
+                || n == b"PCArabic"
         })
 }
 
@@ -383,12 +387,19 @@ fn no_hebrew_font() -> EditError {
 /// Hebrew face first (its Latin and digits too, so a line keeps one look), then the Japanese faces
 /// and the bundled Latin one for anything it lacks; other text takes the Japanese faces, and the
 /// bundled Latin face behind them, which covers the Latin, Greek and Cyrillic letters they lack
-/// (#2593: the Japanese faces have no қ, ғ, ҳ, ә, ө, ү, ұ or һ).
-pub(crate) fn type3_faces(text: &str, family: crate::added::Family, bold: bool) -> Result<(Vec<&'static CraftFont>, bool), EditError> {
+/// (#2593: the Japanese faces have no қ, ғ, ҳ, ә, ө, ү, ұ or һ). The Korean and Simplified Chinese
+/// faces come last, for the Hangul and the simplified characters the others lack; in a `chinese`
+/// paragraph ([`is_chinese`]) the Simplified Chinese face comes first instead, so its characters
+/// keep one face rather than taking the Japanese forms of those the Japanese faces also have.
+pub(crate) fn type3_faces(text: &str, family: crate::added::Family, bold: bool, chinese: bool) -> Result<(Vec<&'static CraftFont>, bool), EditError> {
     let japanese = pdfcraft_fonts::document_japanese_fonts_for_style(family == crate::added::Family::Times, bold);
     let latin = pdfcraft_fonts::document_latin_fonts(bold);
+    let korean = pdfcraft_fonts::CRAFT_FONTS.iter().filter(|f| f.covers("Kore") || f.covers("Hang"));
+    let hans: Vec<&'static CraftFont> = pdfcraft_fonts::CRAFT_FONTS.iter().filter(|f| f.covers("Hans")).collect();
+    let (first, last) = if chinese { (hans, Vec::new()) } else { (Vec::new(), hans) };
+    let cjk = first.into_iter().chain(japanese).chain(latin).chain(korean).chain(last);
     if !text.chars().any(crate::bidi::is_hebrew) {
-        return Ok((japanese.into_iter().chain(latin).collect(), false));
+        return Ok((cjk.collect(), false));
     }
     // Points are drawn on their letter with the font's positioning, which a one-glyph-per-
     // character Type 3 font can't do; refuse rather than print them beside the letter.
@@ -396,7 +407,31 @@ pub(crate) fn type3_faces(text: &str, family: crate::added::Family, bold: bool) 
         return Err(EditError::Invalid("Hebrew points (niqqud) can't be written into a PDF yet; type the text without them".into()));
     }
     let hebrew = pdfcraft_fonts::document_hebrew_font(bold).ok_or_else(no_hebrew_font)?;
-    Ok((std::iter::once(hebrew).chain(japanese).chain(latin).collect(), true))
+    Ok((std::iter::once(hebrew).chain(cjk).collect(), true))
+}
+
+/// Whether `text` has Arabic-script letters, which take a form that depends on their neighbours.
+/// Digits, punctuation and presentation forms (already in their final form) do not count.
+pub(crate) fn has_arabic_letters(text: &str) -> bool {
+    text.chars()
+        .any(|c| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff))
+}
+
+/// Whether `text` is Chinese rather than Japanese, as far as its characters tell: it has no kana,
+/// and a Han character none of the Japanese faces draws that the Simplified Chinese face does
+/// (这, 们, 发). Han text that tells nothing either way stays with the Japanese faces.
+pub(crate) fn is_chinese(text: &str) -> bool {
+    let kana = |c: char| matches!(u32::from(c), 0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F);
+    if text.chars().any(kana) {
+        return false;
+    }
+    let Some(hans) = pdfcraft_fonts::CRAFT_FONTS.iter().find(|f| f.covers("Hans")) else { return false };
+    let japanese: Vec<&CraftFont> = pdfcraft_fonts::CRAFT_FONTS.iter().filter(|f| f.covers("Jpan")).collect();
+    let han: std::collections::BTreeSet<char> = text.chars().filter(|&c| needs_japanese(c)).collect();
+    han.into_iter().any(|c| {
+        let c = c.to_string();
+        pdfcraft_fonts::embedding::covers(hans.bytes, &c) && !japanese.iter().any(|f| pdfcraft_fonts::embedding::covers(f.bytes, &c))
+    })
 }
 
 pub(super) fn type3_font(
@@ -405,9 +440,10 @@ pub(super) fn type3_font(
     text: &str,
     family: crate::added::Family,
     bold: bool,
+    chinese: bool,
     max_glyphs: usize,
 ) -> Result<Type3Fallback, EditError> {
-    let (faces, hebrew) = type3_faces(text, family, bold)?;
+    let (faces, hebrew) = type3_faces(text, family, bold, chinese)?;
     // Each unique character once, in order of first appearance.
     let mut chars = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -675,12 +711,16 @@ pub(super) fn source_fallback_runs<'a>(mut text: &'a str, source_chars: Option<&
 /// its mapping there after the subsetter dropped its outline.
 pub(crate) fn source_program(doc: &Document, fonts: &Dict, name: &str) -> Option<Vec<u8>> {
     let font = fonts.get(name.as_bytes()).and_then(|f| doc.resolve(f).as_dict().cloned())?;
-    let base = Metrics::from_dict(doc, &font).base_font;
-    if base.split_once('+').is_some_and(|(tag, _)| tag.len() == 6 && tag.bytes().all(|b| b.is_ascii_uppercase())) {
+    if is_subset(&Metrics::from_dict(doc, &font).base_font) {
         return None;
     }
     let bytes = pdfcraft_fonts::pdf::embedded_sfnt(doc, &font)?;
     pdfcraft_fonts::embedding::validate(&bytes).is_ok().then_some(bytes)
+}
+
+/// Whether a font's name carries a subset tag (`ABCDEF+`).
+pub(crate) fn is_subset(base_font: &str) -> bool {
+    base_font.split_once('+').is_some_and(|(tag, _)| tag.len() == 6 && tag.bytes().all(|b| b.is_ascii_uppercase()))
 }
 
 /// Whether `text` has characters `line`'s font can't encode that its own program can draw.
