@@ -345,11 +345,17 @@ mod review13_ui_tests {
             }
         }
     }
-    /// Comparison completion preserves globals and sends Save As/Print to its source document.
+    /// Comparison completion keeps the script's globals and sends Save As/Print to its source
+    /// document. Save As writes a clean copy, which starts a fresh realm (`Session::mark_saved`).
     #[test]
     fn non_active_comparison_document_completes_native_script() {
         for request in ["", "app.execMenuItem('SaveAs');", "print();"] {
             let (mut app, old) = app();
+            // The clean copy is stamped with `/ModDate`. A source created and saved in the same
+            // second would be rewritten byte for byte and keep its realm, which a file opened from
+            // disk practically never is: a clock other than the source's makes every Save As a
+            // real rewrite.
+            app.session = std::mem::take(&mut app.session).with_clock(|| 1_700_000_000);
             app.views.iter_mut().find(|v| v.id == old).unwrap().current = 1;
             let bytes = app.session.create_blank(200.0, 300.0, 1).unwrap();
             app.open_bytes("new.pdf", None, bytes.to_vec()).unwrap();
@@ -376,7 +382,8 @@ mod review13_ui_tests {
                 std::thread::sleep(Duration::from_millis(5));
             }
             assert!(app.script_pending.is_none());
-            assert_eq!(app.session.run_javascript(old, "comparisonKept", None).unwrap().result.as_deref(), Some("42"));
+            let kept = app.session.run_javascript(old, "typeof comparisonKept == 'undefined' ? 'fresh' : comparisonKept", None).unwrap();
+            assert_eq!(kept.result.as_deref(), Some(if request.contains("SaveAs") { "fresh" } else { "42" }), "{request}");
             assert_eq!(app.session.save_bytes(new).unwrap(), new_before);
             assert!(app.session.get(new).unwrap().path.is_none());
             if request.contains("SaveAs") {
