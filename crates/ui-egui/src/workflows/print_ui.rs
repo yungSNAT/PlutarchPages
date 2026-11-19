@@ -95,6 +95,9 @@ pub(crate) struct PrintTasks {
     /// (`read_type3_pages_in_background`). A later read replaces this one, whose answer is dropped.
     #[cfg(not(target_arch = "wasm32"))]
     type3_pages: Option<std::sync::mpsc::Receiver<Vec<usize>>>,
+    /// That read's thread, which asks for a frame as it ends, after its answer was sent.
+    #[cfg(not(target_arch = "wasm32"))]
+    type3_thread: Option<std::thread::JoinHandle<()>>,
     /// The driver options being read, per printer (`read_options_in_background`).
     #[cfg(not(target_arch = "wasm32"))]
     options: Vec<(String, std::sync::mpsc::Receiver<Vec<spool::PrinterOption>>)>,
@@ -331,10 +334,11 @@ impl PdfCraftApp {
     }
 
     /// `true` while the Type 3 note is being read, whose thread asks for a frame as it ends (used
-    /// by tests).
+    /// by tests). The answer is taken before that frame is asked for, so the read is pending until
+    /// its thread has ended too.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn type3_read_pending(&self) -> bool {
-        self.print_tasks.type3_pages.is_some()
+        self.print_tasks.type3_pages.is_some() || self.print_tasks.type3_thread.as_ref().is_some_and(|t| !t.is_finished())
     }
 
     /// Where the pages that draw with Type 3 fonts print as images, the dialog says so (#2684): read
@@ -359,8 +363,9 @@ impl PdfCraftApp {
             let _ = tx.send(source.type3_pages(&(0..count).collect::<Vec<_>>(), Content::DocumentAndMarkups));
         });
         // No thread to read them on: no note, and printing still reads them for itself.
-        if spawned.is_ok() {
+        if let Ok(thread) = spawned {
             self.print_tasks.type3_pages = Some(rx);
+            self.print_tasks.type3_thread = Some(thread);
         }
     }
 
