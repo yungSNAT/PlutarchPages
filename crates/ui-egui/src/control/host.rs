@@ -55,6 +55,19 @@ impl Host for crate::PdfCraftApp {
         self.request_quit(ctx)
     }
 
+    fn first_page_paint(&self) -> Value {
+        let Some((doc, paint)) = self.active.and_then(|i| self.views.get(i)).and_then(|v| Some((v.id.0, v.first_paint?))) else {
+            return json!({ "drawn": false });
+        };
+        json!({
+            "drawn": true,
+            "doc": doc,
+            "page": paint.page + 1,
+            "since_launch_ms": self.launched_at.map(|t| paint.at.saturating_duration_since(t).as_secs_f64() * 1000.0),
+            "unix_ms": paint.wall.duration_since(web_time::UNIX_EPOCH).ok().and_then(|d| u64::try_from(d.as_millis()).ok()),
+        })
+    }
+
     fn state(&self) -> Value {
         let active = self.active.and_then(|i| self.views.get(i));
         let docs: Vec<Value> = self
