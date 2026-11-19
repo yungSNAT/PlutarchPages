@@ -99,4 +99,6 @@ mod find_replace_rows_tests;
 #[cfg(test)]
 mod marked_isolation_tests;
 #[cfg(test)]
+mod script_edit_tests;
+#[cfg(test)]
 mod tests;

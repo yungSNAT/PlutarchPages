@@ -45,7 +45,10 @@ reconstructed from a glyph the PDF does not contain. **Load font…** imports an
 embeddable standalone `.ttf` or `.otf` face. **Installed fonts…** discovers eligible user-installed
 faces on request, off the UI thread; the document-font menu selects resources already on the
 page. Select **Keep source fonts** to preserve each run's original face. A matching full face
-completes its subsets automatically, including new Chinese characters. When the PDF itself embeds
+completes its subsets automatically. A matching craft-fonts Chinese, Japanese or Korean face adds
+outlines of only the new characters, as Type 3 glyphs, rather than the whole face (megabytes).
+Text with a Chinese character only the Simplified Chinese face draws (`这`, `们`) takes that face
+before the Japanese ones, and Korean takes the Korean face. When the PDF itself embeds
 the complete program of a paragraph's font (not a subset) and its licence allows editable
 embedding, a character the font's encoding can't show is drawn with that same program. A
 character no available face has is refused with an error that names it, and a CJK character
@@ -59,7 +62,7 @@ no open-licence declaration are refused. Interface fallback fonts are never expo
 The full selected program, glyph mappings, widths and Unicode text are embedded in the PDF.
 Saving and reopening therefore needs no locally installed font. Editing the same text again
 reuses the font resource the page already has, and every resource made from one program
-shares a single copy of it. The Type 3 fonts generated for Japanese or Hebrew characters the
+shares a single copy of it. The Type 3 fonts generated for Chinese, Japanese, Korean or Hebrew characters the
 page's fonts lack are made anew by each edit; after an edit, those nothing on the page shows any
 more leave the page's resources, unless some content that could name them can't be read.
 Original subset bytes are
@@ -67,6 +70,17 @@ preserved. Optional matching faces from `CRAFT_FONTS_DIR` can also complete sour
 this works only when that build input actually contains the full face. This change does not
 add a font binary or change the release font pin. Fonts shared by releases belong in
 `storytold/craft-fonts` under the repository's asset rules.
+
+Arabic letters take their form from their neighbours. A paragraph edit shapes them with the
+page's font when the PDF embeds its complete program, and otherwise with the craft-fonts Arabic
+face, drawn as outlines. A line edit redraws text one character at a time, so it refuses Arabic
+letters and names the paragraph edit instead, leaving the page unchanged. Right-to-left
+paragraphs are right-aligned unless an alignment is asked for, and a right-to-left line, edited
+alone or as a one-row paragraph, keeps its right edge as it grows or shrinks.
+`crates/edit/src/script_edit_tests.rs` checks Chinese, Japanese, Korean, Arabic and Hebrew edits on
+one-line pages written as producers write them (a Type 0 subset that keeps glyph ids, with and
+without its layout tables): the text reads back as typed after a save, draws as typed, and adds
+only the glyphs it needs.
 
 With **Keep source fonts**, an upright single-style paragraph can combine its source font
 with a fallback even when the replacement has no explicit line break (#2750). Characters
