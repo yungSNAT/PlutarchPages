@@ -246,8 +246,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   faces, the Chinese one first for text only it draws (`is_chinese`). A matching bundled CJK face
   completes a subset with outlines of the new characters, not embedded whole (`encodable_font` and
   `FallbackBuilder::prepare` in `crates/edit/src/text_regions/styled.rs`). Arabic spans that no
-  complete program shapes use the bundled Arabic outlines (`arabic_outlines`, and
-  `outline_glyph_resources` in `crates/edit/src/added/draw.rs`). Right-to-left styled paragraphs
+  complete program shapes use the bundled Arabic outlines (`arabic_outlines` in
+  `crates/edit/src/text_regions/styled/scripts.rs`, and `outline_glyph_resources` in
+  `crates/edit/src/added/draw.rs`). Right-to-left styled paragraphs
   are right-aligned and a single row grows to the left (`paragraph_geometry`). `replace_line`
   refuses Arabic letters and keeps a right-to-left line's right edge (`right_edge_gap` in
   `crates/edit/src/text/rewrite.rs`). `japanese_replacement_missing_a_glyph_after_240_changes_nothing`

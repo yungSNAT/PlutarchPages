@@ -1,12 +1,15 @@
-use super::super::fallback::is_subset;
 use super::super::interp::TextState;
 use super::grouping::{across, is_centred, row_rect};
 use super::{
     BlockStyle, CraftFont, Dict, Document, EditError, HashMap, LineEdit, MAX_TYPE3_GLYPHS, Matrix, Metrics, Object, Op, PdfString, Pieces,
-    RangeStyle, TextBlock, TextLine, Type3Glyph, builtin_thai_choice, coincident_ops, content_streams, fallback_face, has_arabic_letters, is_chinese,
+    RangeStyle, TextBlock, TextLine, Type3Glyph, builtin_thai_choice, coincident_ops, content_streams, fallback_face, is_chinese,
     japanese_glyph_from, needs_type3, no_fallback_font, no_glyph_for, page_dict, reveal_ops, rewritten_contents, row_break, source_encodes,
     source_family, source_program, source_show, source_space, source_width, splice, type3_faces, type3_glyph, write_type3_glyphs,
 };
+use scripts::{arabic_outlines, is_cjk_face, shape_arabic};
+
+#[path = "styled/scripts.rs"]
+mod scripts;
 
 // The draft is capped at 4 MiB; also bound the outline data prepared across all fallback faces.
 // A glyph budget worth 64 full batches (15,360 glyphs with the production batch size).
@@ -1177,27 +1180,6 @@ fn matching_thai_outline(doc: &Document, fonts: &Dict, source: &TextLine, span: 
     })
 }
 
-/// Whether `span` (of `source`'s paragraph) is Arabic that the bundled Arabic face draws, and no
-/// complete program of the source's face on the page can shape it. A subset can't: shaping picks
-/// the letters' joining forms, which it may not have kept, and its character map may still name
-/// glyphs whose outlines it dropped. Its letters are then shaped with the bundled face and drawn
-/// from its outlines, as Add text draws Arabic, and the edit says the font was substituted.
-fn arabic_outlines(doc: &Document, fonts: &Dict, source: &TextLine, span: &str) -> bool {
-    let Some(face) = pdfcraft_fonts::document_arabic_font() else { return false };
-    if !has_arabic_letters(span) || !covers_rows(face.bytes, span) {
-        return false;
-    }
-    let Some(font) = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)) else { return true };
-    !program_candidates(doc, fonts, &source.font, font, &source.base_font).into_iter().any(|(_, font)| {
-        !is_subset(&Metrics::from_dict(doc, &font).base_font) && span.split(row_break).all(|row| shape_with_program(doc, &font, row).is_some())
-    })
-}
-
-/// Whether a bundled face is for Chinese, Japanese or Korean.
-fn is_cjk_face(face: &CraftFont) -> bool {
-    ["Jpan", "Hani", "Hans", "Hant", "Kore", "Hang"].iter().any(|script| face.covers(script))
-}
-
 /// Whether a complete program draws every row of `span`. [`row_break`] characters move to the next
 /// row and are never drawn, so they need no glyph (#6272); `embedding::covers` exempts only CR and LF.
 fn covers_rows(bytes: &[u8], span: &str) -> bool {
@@ -1292,9 +1274,7 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::ThaiOutlines }));
     }
     if thai.arabic.contains(name) {
-        let face = pdfcraft_fonts::document_arabic_font().ok_or_else(|| EditError::Invalid("the bundled Arabic font is not in this build".into()))?;
-        let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, text).map_err(EditError::Invalid)?;
-        return Ok(Some(ShapedText { run: shaped, font: ShapedFont::ArabicOutlines }));
+        return Ok(Some(ShapedText { run: shape_arabic(text)?, font: ShapedFont::ArabicOutlines }));
     }
     if let Some(resource) = thai.program.get(name) {
         let font = fonts
