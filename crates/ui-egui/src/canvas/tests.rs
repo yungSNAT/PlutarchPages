@@ -3564,3 +3564,14 @@ fn waiting_marks_are_dropped_when_their_pages_change() {
     assert_eq!(v.tool_marks(QuickTool::Redact, false, Some(0), true, &now), ToolMarks::None, "nothing marked");
     assert_eq!(app.session.get(id).unwrap().redaction_marks(), 0);
 }
+
+#[test]
+fn an_earlier_zoom_tile_counts_as_painted_only_inside_the_viewport() {
+    let view = [0.0, 0.5, 1.0, 1.0];
+    // The top half of the page, off screen: painted and clipped, but nothing shows.
+    assert!(!super::uv_overlap([0.0, 0.0, 1.0, 0.5], view));
+    // Reaching into the viewport.
+    assert!(super::uv_overlap([0.0, 0.25, 0.5, 0.75], view));
+    // Touching the edge only.
+    assert!(!super::uv_overlap([0.0, 0.0, 0.5, 0.5], [0.5, 0.5, 1.0, 1.0]));
+}

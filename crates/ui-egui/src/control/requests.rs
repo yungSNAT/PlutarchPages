@@ -15,6 +15,10 @@ impl Control {
                 state["window"] = json!({ "width": size.x, "height": size.y, "pixels_per_point": geometry.pixels_per_point });
                 Ok(Handled::Now(Ok(state)))
             }
+            "ui.first_page_paint" => {
+                only_params(p, method, &[])?;
+                Ok(Handled::Now(Ok(host.first_page_paint())))
+            }
             "ui.commands" => Ok(Handled::Now(Ok(host.commands()))),
             "ui.panel" | "ui.dock.reset" => Ok(Handled::Now(host.panel(method == "ui.dock.reset", p))),
             "ui.command" if str_param("id")? == "ui.panel" => Ok(Handled::Now(host.panel(false, p.get("params").unwrap_or(p)))),
@@ -88,7 +92,7 @@ impl Control {
                 Ok(Handled::Screenshot(region))
             }
             other => Err(format!(
-                "unknown method {other:?} (ui.state, ui.inspect, ui.click, ui.focus, ui.resize, ui.quit, ui.move, ui.drag, ui.type, ui.key, ui.command, ui.commands, ui.set, ui.open, ui.screenshot)"
+                "unknown method {other:?} (ui.state, ui.inspect, ui.click, ui.focus, ui.resize, ui.quit, ui.move, ui.drag, ui.type, ui.key, ui.command, ui.commands, ui.set, ui.open, ui.screenshot, ui.first_page_paint)"
             )),
         })();
         r.unwrap_or_else(|e| Handled::Now(Err(e)))

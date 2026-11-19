@@ -483,6 +483,16 @@ pub(crate) fn snapshot_tab_name(title: &str, file_name: &str, snapshot: &Snapsho
 /// Markup quadrilaterals in user space, one entry per page: (page, quads).
 pub type PageMarks = Vec<(usize, Vec<[f64; 8]>)>;
 
+/// The UI pass that first painted a page raster or tile of a document inside the viewport. GPU
+/// submission and presentation follow the pass, so this is not when the page reached the screen.
+#[derive(Clone, Copy)]
+pub(crate) struct FirstPaint {
+    /// 0-based.
+    pub(crate) page: usize,
+    pub(crate) at: web_time::Instant,
+    pub(crate) wall: web_time::SystemTime,
+}
+
 pub struct DocView {
     /// Where the tab shows (split view's panes) and the key that tells two
     /// views of one document apart (`crate::panes`).
@@ -567,6 +577,8 @@ pub struct DocView {
     cut_notice_dismissed: std::collections::BTreeSet<usize>,
     /// When each still-missing page was first shown, to flag unusually slow renders.
     waiting_since: HashMap<usize, f64>,
+    /// The UI pass that first painted one of this document's page rasters in view (`ui.first_page_paint`).
+    pub(crate) first_paint: Option<FirstPaint>,
     thumbs: HashMap<usize, PageTex>,
     /// This frame's consumers, with visible cells ahead of prefetch.
     thumb_demand: HashMap<usize, bool>,
@@ -1088,6 +1100,7 @@ impl DocView {
             cut_pages: Default::default(),
             cut_notice_dismissed: Default::default(),
             waiting_since: HashMap::new(),
+            first_paint: None,
             thumbs: HashMap::new(),
             thumb_demand: HashMap::new(),
             frame_queue: Vec::new(),
@@ -1633,6 +1646,9 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
         } else {
             None
         };
+        // The page's current content on screen, if not yet sharp: its whole-page raster (a tiled
+        // page's backdrop too) or one of its tiles, but not one waiting for its replacement.
+        let mut painted = view.pages.get(&i).is_some_and(|p| p.tag != STALE_TAG);
         match view.pages.get(&i) {
             Some(p) => {
                 if !tiled && p.tag == want_tag {
@@ -1650,13 +1666,17 @@ fn paint_page_surface(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFra
             }
         }
         if tiled && r.intersects(visible) {
-            paint_page_tiles(ui, view, frame, slot, (pw_pt, ph_pt, max_side), active_drag_suppress);
+            painted |= paint_page_tiles(ui, view, frame, slot, (pw_pt, ph_pt, max_side), active_drag_suppress);
+        }
+        if painted && view.first_paint.is_none() && r.intersects(visible) {
+            view.first_paint = Some(FirstPaint { page: i, at: web_time::Instant::now(), wall: web_time::SystemTime::now() });
         }
     }
 }
 
 /// Paints the tiles of a page too big to draw whole: the tiles of earlier zooms first, stretched,
 /// then the visible tiles of this one, nearest the viewport centre first, asking for those missing.
+/// Whether it painted, inside the viewport, a tile that is not waiting for its replacement.
 fn paint_page_tiles(
     ui: &egui::Ui,
     view: &mut DocView,
@@ -1664,7 +1684,7 @@ fn paint_page_tiles(
     slot: &PageSlot,
     (pw_pt, ph_pt, max_side): (f32, f32, f32),
     active_drag_suppress: Option<[f32; 4]>,
-) {
+) -> bool {
     let PageEnv { ppp, scale, tag, .. } = frame.env;
     let PageSlot { i, r, xf } = *slot;
     let visible = frame.visible;
@@ -1686,14 +1706,21 @@ fn paint_page_tiles(
     let (vx1, vy1) = (((u1.min(1.0) * dw as f32).ceil() as u32).min(dw), ((v1.min(1.0) * dh as f32).ceil() as u32).min(dh));
     // Tiles of earlier zooms first, stretched, the nearest scale last (on top):
     // until the current tiles arrive, a zoom shows them rather than the backdrop.
-    let mut older: Vec<(f32, u32, u32, &TextureHandle)> =
-        view.tiles.iter().filter(|((p, t, _, _), _)| *p == i && *t != tag).map(|((_, t, ox, oy), tex)| (tag_scale(*t), *ox, *oy, tex)).collect();
+    let mut older: Vec<(f32, u32, u32, &TextureHandle, bool)> = view
+        .tiles
+        .iter()
+        .filter(|((p, t, _, _), _)| *p == i && *t != tag)
+        .map(|(key, tex)| (tag_scale(key.1), key.2, key.3, tex, !view.stale_tiles.contains(key)))
+        .collect();
     older.sort_by(|a, b| (b.0 / scale).ln().abs().total_cmp(&(a.0 / scale).ln().abs()));
-    for (s, ox, oy, tex) in older {
+    let mut painted = false;
+    for (s, ox, oy, tex, current) in older {
         let (ow, oh) = (device_pixels(pw_pt, s) as f32, device_pixels(ph_pt, s) as f32);
         let [w, h] = tex.size();
         let (x, y) = (ox as f32, oy as f32);
-        paint_image_suppressed(&xf, painter, tex.id(), x / ow, y / oh, (x + w as f32) / ow, (y + h as f32) / oh, active_drag_suppress, false);
+        let uv = [x / ow, y / oh, (x + w as f32) / ow, (y + h as f32) / oh];
+        painted |= current && uv_overlap(uv, [u0, v0, u1, v1]);
+        paint_image_suppressed(&xf, painter, tex.id(), uv[0], uv[1], uv[2], uv[3], active_drag_suppress, false);
     }
     // Visible tiles, nearest the viewport centre first: each tile costs a full
     // page interpret, so the workers sharpen what is looked at before the edges.
@@ -1717,6 +1744,7 @@ fn paint_page_tiles(
         }
         frame.wanted.push((i, scale, tag, Some(Tile { x, y, w, h })));
         if let Some(tex) = view.tiles.get(&(i, tag, x, y)) {
+            painted |= !view.stale_tiles.contains(&(i, tag, x, y));
             let (fw, fh) = (dw as f32, dh as f32);
             paint_image_suppressed(
                 &xf.texel_aligned([dw as usize, dh as usize], ppp),
@@ -1731,6 +1759,12 @@ fn paint_page_tiles(
             );
         }
     }
+    painted
+}
+
+/// Whether 2 rectangles in page texture coordinates (`[u0, v0, u1, v1]`) share any area.
+fn uv_overlap(a: [f32; 4], b: [f32; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
 }
 
 /// Images parsed once per page and document edit generation, shared by painting and menus.
