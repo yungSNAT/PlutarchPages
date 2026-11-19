@@ -10,7 +10,7 @@ use pdfcraft_audit::{AuditError, audit_redactions};
 use pdfcraft_cos::Document;
 use pdfcraft_testkit::{Pdf, stream_obj};
 
-use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page};
+use crate::{BLACK_SHADING, HELVETICA, TWO_LINES, covered, open, page, type3};
 
 /// Helvetica `/F1`, the block font `/B`, the form `/Fm` (which draws blocks), a black shading
 /// `/Sh`, the forms of [`objects`], and graphics states at opacity 1 (`/Full`), 0.9 (`/Most`), 0.5
@@ -466,4 +466,63 @@ fn a_fill_shading_or_image_counts_only_under_a_clip_that_is_a_box() {
     }
     let sheared = format!("{TWO_LINES} q 240 0 200 200 0 600 cm /Im Do Q");
     assert!(covered(&page(resources, &sheared, &objects)).is_empty(), "{sheared}");
+}
+
+/// Text shown in a render mode that clips (4 to 7) adds its glyphs to the clip at `ET`, so a stroke
+/// or a fill painted after it, here one far from the glyphs, is no cover. Nothing is clipped where
+/// no glyph with an outline is shown (ISO 32000-1 §9.3.6): a text object that shows nothing, an
+/// empty string, spaces alone in a simple font whose encoding keeps 20h the space, or text in a
+/// Type 3 font, whose glyphs only mode 3 affects; nor by invisible text (mode 3), nor by glyphs
+/// shown before the mode turns to clipping. The last `/Differences` entry for 20h decides whether
+/// it is the space. A Type 0 font's codes, a font of another or no subtype and a font the page
+/// lacks, which a viewer replaces, are taken to draw. A restore brings the clip back.
+#[test]
+fn a_cover_under_a_text_clip_is_not_read() {
+    let resources = "<< /Font << /F1 5 0 R /T3 6 0 R /FA 8 0 R /F0 9 0 R /FS 10 0 R /FB 11 0 R /FU 12 0 R /FN 13 0 R >> \
+                     /ExtGState << /G3 << /Font [6 0 R 24] >> >> >>";
+    let fonts = [
+        type3(7, ""),
+        stream_obj("", "1000 0 d0"),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences [32 /A] >> >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type0 /BaseFont /Helvetica /Encoding /Identity-H /DescendantFonts [<< /Type /Font /Subtype /CIDFontType2 /BaseFont /Helvetica /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> >>] >>"
+            .to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences [32 /A 32 /space] >> >>".to_vec(),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding << /Differences [32 /space 32 /A] >> >>".to_vec(),
+        b"<< /Type /Font /Subtype /Unknown /BaseFont /Helvetica >>".to_vec(),
+        b"<< /Type /Font /BaseFont /Helvetica >>".to_vec(),
+    ];
+    let mut wrong = Vec::new();
+    for painter in ["0 G 33 w 100 704 m 320 704 l S", "0 g 90 600 240 200 re f"] {
+        for (clip, hidden) in [
+            ("BT 3 Tr /F1 24 Tf 300 300 Td (X) Tj ET", true),
+            ("BT 4 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET", false),
+            ("7 Tr BT ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td () Tj ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td [-500] TJ ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td () ' ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td 0 0 () \" ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td (  ) Tj ET", true),
+            ("BT 7 Tr /F1 24 Tf 300 300 Td [-500 ( X)] TJ ET", false),
+            ("BT 7 Tr /T3 24 Tf 300 300 Td (a) Tj ET", true),
+            ("BT 7 Tr /G3 gs 300 300 Td (a) Tj ET", true),
+            ("BT 7 Tr /FA 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /F0 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /F9 24 Tf 300 300 Td (X) Tj ET", false),
+            ("7 Tr BT /F1 24 Tf 300 300 Td (X) Tj ET", false),
+            ("BT 0 Tr /F1 24 Tf 300 300 Td (X) Tj 7 Tr ( ) Tj ET", true),
+            ("BT 7 Tr /FS 24 Tf 300 300 Td (  ) Tj ET", true),
+            ("BT 7 Tr /FB 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /FU 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("BT 7 Tr /FN 24 Tf 300 300 Td (  ) Tj ET", false),
+            ("q BT 7 Tr /F1 24 Tf 300 300 Td (X) Tj ET Q", true),
+        ] {
+            let paint = format!("{TWO_LINES} {clip} {painter}");
+            let want: &[&str] = if hidden { &["SECRET"] } else { &[] };
+            if covered(&page(resources, &paint, &fonts)) != want {
+                wrong.push(paint);
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
