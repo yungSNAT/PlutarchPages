@@ -109,8 +109,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   merges change `crates/ui-egui/tests/it/updates.rs`, so keep the fork's tests there. Its strings
   are overlay rows (Translations).
 - Translations: the interface catalogues are craft-i18n's, at `craft-i18n.rev`, as upstream's are.
-  [Translating PlutarchPages](TRANSLATING.md) explains how to report and fill the fork's gaps;
-  `docs/translation-gaps.md`, the fork's own, holds the last report.
+  [Translating PlutarchPages](TRANSLATING.md) explains how to report and fill the fork's gaps.
+  [docs/translation-gaps.md](docs/translation-gaps.md) (fork only) holds the last fork report, and
+  `the_translation_gaps_document_is_current` in `crates/ui-egui/src/i18n/fork_tests.rs` fails when
+  a merge moves it: run `cargo xtask i18n-report --fork` then and replace the document's block.
   The fork's rows that craft-i18n doesn't have are in `crates/ui-egui/i18n-fork/<locale>.tsv`, and
   `crates/ui-egui/build_i18n_fork.rs` embeds each before craft-i18n's `pdfcraft.tsv`; 2 calls in
   `build.rs` reach it, so keep them when a merge changes `craft_i18n` or `locales`.
