@@ -537,18 +537,14 @@ pub(super) fn add_type3_font(doc: &mut Document, fonts_res: &mut Dict, face: &Cr
     cmap.push_str(&format!("{last_char} beginbfchar\n"));
     for glyph in glyphs {
         let glyph_name = format!("g{:02X}", glyph.code);
-        let mut pd = Dict::new();
-        pd.set(b"Length".to_vec(), glyph.path.len() as i64);
-        let proc_ref = doc.add(Object::Stream(Stream::from_raw(pd, glyph.path)));
+        let proc_ref = doc.add(Object::Stream(Stream::flate(Dict::new(), &glyph.path)));
         charprocs.set(glyph_name.as_bytes().to_vec(), Object::Ref(proc_ref));
         differences.push(Object::name(&glyph_name));
         widths.push(Object::Real((glyph.width * 1000.0).round()));
         cmap.push_str(&format!("<{:02X}> <{}>\n", glyph.code, unicode_hex(glyph.ch)));
     }
     cmap.push_str("endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
-    let mut cmap_dict = Dict::new();
-    cmap_dict.set(b"Length".to_vec(), cmap.len() as i64);
-    let cmap_ref = doc.add(Object::Stream(Stream::from_raw(cmap_dict, cmap.into_bytes())));
+    let cmap_ref = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
     let mut encoding = Dict::new();
     encoding.set(b"Type".to_vec(), Object::name("Encoding"));
     encoding.set(b"Differences".to_vec(), Object::Array(differences));
@@ -638,9 +634,7 @@ pub(crate) fn type3_font_dict(doc: &mut Document, glyphs: &[(char, Vec<u8>, f64)
     for (i, (ch, path, width)) in glyphs.iter().enumerate() {
         let code = u8::try_from(i + 1).map_err(|_| EditError::Invalid("too many unique characters for one font".into()))?;
         let glyph_name = format!("g{code:02X}");
-        let mut pd = Dict::new();
-        pd.set(b"Length".to_vec(), path.len() as i64);
-        let proc_ref = doc.add(Object::Stream(Stream::from_raw(pd, path.clone())));
+        let proc_ref = doc.add(Object::Stream(Stream::flate(Dict::new(), path)));
         charprocs.set(glyph_name.as_bytes().to_vec(), Object::Ref(proc_ref));
         differences.push(Object::name(&glyph_name));
         widths.push(Object::Real((width * 1000.0).round()));
@@ -648,9 +642,7 @@ pub(crate) fn type3_font_dict(doc: &mut Document, glyphs: &[(char, Vec<u8>, f64)
         codes.push((*ch, code, *width));
     }
     cmap.push_str("endbfchar\nendcmap\nCMapName currentdict /CMap defineresource pop\nend\nend\n");
-    let mut cmap_dict = Dict::new();
-    cmap_dict.set(b"Length".to_vec(), cmap.len() as i64);
-    let cmap_ref = doc.add(Object::Stream(Stream::from_raw(cmap_dict, cmap.into_bytes())));
+    let cmap_ref = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
     let mut encoding = Dict::new();
     encoding.set(b"Type".to_vec(), Object::name("Encoding"));
     encoding.set(b"Differences".to_vec(), Object::Array(differences));
