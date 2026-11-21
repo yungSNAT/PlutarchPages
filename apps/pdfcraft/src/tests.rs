@@ -131,6 +131,46 @@ fn opengl_is_the_fallback_unless_a_renderer_was_chosen() {
 }
 
 #[test]
+fn direct3d_12_alone_is_tried_first_only_on_windows_when_nothing_was_chosen() {
+    use super::{RendererChoice, dx12_first};
+    assert!(dx12_first(RendererChoice::Auto, true, false));
+    assert!(!dx12_first(RendererChoice::Auto, false, false), "only Windows");
+    assert!(!dx12_first(RendererChoice::Auto, true, true), "WGPU_BACKEND or WGPU_POWER_PREF decides instead");
+    assert!(!dx12_first(RendererChoice::Wgpu, true, false), "PDFCRAFT_RENDERER=wgpu keeps every backend, in one run");
+    assert!(!dx12_first(RendererChoice::Gl, true, false));
+}
+
+#[test]
+fn the_direct3d_12_run_never_picks_a_software_adapter() {
+    use eframe::wgpu;
+    let _gpu = gpu();
+    // Without a displays-based selector (no display information), nothing is narrowed.
+    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
+    setup.native_adapter_selector = None;
+    let before = setup.instance_descriptor.backends;
+    assert!(!super::hardware_dx12_only(&mut native));
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { unreachable!() };
+    assert_eq!(setup.instance_descriptor.backends, before);
+    // With one, the run lists Direct3D 12 alone and hands the selector only hardware adapters:
+    // this machine's adapters on any backend stand in for Direct3D 12's.
+    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { unreachable!() };
+    setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], _| adapters.first().cloned().ok_or_else(|| "none".to_string())));
+    assert!(super::hardware_dx12_only(&mut native));
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { unreachable!() };
+    assert_eq!(setup.instance_descriptor.backends, wgpu::Backends::DX12);
+    let instance = pollster::block_on(super::native_options(false, false, eframe::Renderer::Wgpu).wgpu_options.wgpu_setup.new_instance());
+    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    let hardware = adapters.iter().any(|a| a.get_info().device_type != wgpu::DeviceType::Cpu);
+    let select = setup.native_adapter_selector.as_ref().expect("a selector");
+    match select(&adapters, None) {
+        Ok(adapter) => assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu, "{:?}", adapter.get_info()),
+        Err(e) => assert!(!hardware, "a hardware adapter was there: {e}"),
+    }
+}
+
+#[test]
 fn the_desktop_frame_is_turned_off_only_when_the_app_draws_one() {
     use super::native_options;
     assert_eq!(native_options(false, false, eframe::Renderer::Glow).viewport.decorations, None);

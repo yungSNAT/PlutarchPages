@@ -293,9 +293,12 @@ fn main() -> eframe::Result {
     // Set once the app is created, which is after the renderer has started.
     let started = Rc::new(Cell::new(false));
     let first = if choice == RendererChoice::Gl { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu };
-    let result = eframe::run_native(
+    let mut options = native_options(launch.integrated, launch.window_controls.is_some(), first);
+    let wgpu_chosen = std::env::var_os("WGPU_BACKEND").is_some() || std::env::var_os("WGPU_POWER_PREF").is_some();
+    let dx12_alone = dx12_first(choice, cfg!(target_os = "windows"), wgpu_chosen) && hardware_dx12_only(&mut options);
+    let mut result = eframe::run_native(
         "PdfCraft",
-        native_options(launch.integrated, launch.window_controls.is_some(), first),
+        options,
         app_creator(
             launch.clone(),
             Rc::clone(&started),
@@ -304,6 +307,23 @@ fn main() -> eframe::Result {
             &apple_events,
         ),
     );
+    if let Err(e @ eframe::Error::Wgpu(_)) = &result
+        && dx12_alone
+        && !started.get()
+    {
+        log::warn!("Direct3D 12 alone didn't start: {e}. Trying wgpu's Direct3D 12 and OpenGL together.");
+        result = eframe::run_native(
+            "PdfCraft",
+            native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Wgpu),
+            app_creator(
+                launch.clone(),
+                Rc::clone(&started),
+                instance.as_ref(),
+                #[cfg(target_os = "macos")]
+                &apple_events,
+            ),
+        );
+    }
     match result {
         // Only a renderer that couldn't start: without a window or display at all, OpenGL can't
         // help either, and winit's own error says more.
@@ -350,6 +370,32 @@ fn renderer_choice(value: Option<&str>) -> RendererChoice {
 /// nobody, and it failed before the app was created (so while starting the renderer, not later).
 fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
     choice == RendererChoice::Auto && !app_started
+}
+
+/// Whether the first run tries Direct3D 12 alone: on Windows (`windows`), when nobody chose the
+/// renderer or wgpu's backend or adapter (`wgpu_chosen`: `WGPU_BACKEND` or `WGPU_POWER_PREF`).
+/// Listing OpenGL adapters as well starts an OpenGL context, about 70 ms of every launch on an
+/// RTX 5080, though Direct3D 12 is what draws. If Direct3D 12 alone fails, the next run asks for
+/// Direct3D 12 and OpenGL as before, then OpenGL through eframe, so each machine still ends on
+/// the renderer it drew with before.
+fn dx12_first(choice: RendererChoice, windows: bool, wgpu_chosen: bool) -> bool {
+    choice == RendererChoice::Auto && windows && !wgpu_chosen
+}
+
+/// Narrows a wgpu run (`native`) to Direct3D 12 on a graphics processor: software adapters
+/// (WARP) are left out, so a GPU with only an OpenGL driver gets the next run, which lists OpenGL
+/// adapters too, rather than software drawing. Only where [`configure_gpu`] picks the adapter
+/// from the displays; elsewhere nothing changes and the result is false.
+fn hardware_dx12_only(native: &mut eframe::NativeOptions) -> bool {
+    use eframe::wgpu;
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { return false };
+    let Some(pick) = setup.native_adapter_selector.clone() else { return false };
+    setup.instance_descriptor.backends = wgpu::Backends::DX12;
+    setup.native_adapter_selector = Some(std::sync::Arc::new(move |adapters, surface| {
+        let hardware: Vec<wgpu::Adapter> = adapters.iter().filter(|a| a.get_info().device_type != wgpu::DeviceType::Cpu).cloned().collect();
+        pick(&hardware, surface)
+    }));
+    true
 }
 
 /// The window and renderer settings for one run.
