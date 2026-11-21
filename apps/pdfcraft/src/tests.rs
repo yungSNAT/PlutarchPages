@@ -167,6 +167,19 @@ fn the_direct3d_12_run_is_narrowed_only_where_displays_pick_the_adapter() {
 }
 
 #[test]
+fn a_failed_direct3d_12_run_is_skipped_until_the_display_gpus_change() {
+    use super::{displays_key, dx12_alone_failed_here as failed_here};
+    let displays = [panel(INTEL_IGPU), monitor(NVIDIA)];
+    let saved = displays_key(&displays);
+    assert_eq!(saved, "10de:2684,8086:a780", "sorted, so the display order doesn't matter");
+    assert_eq!(displays_key(&[monitor(NVIDIA), panel(INTEL_IGPU)]), saved);
+    assert!(failed_here(Some(&format!("{saved}\n")), &displays));
+    assert!(!failed_here(None, &displays), "nothing failed yet");
+    assert!(!failed_here(Some(&saved), &[panel(INTEL_IGPU)]), "another GPU set tries again");
+    assert!(!failed_here(Some(""), &displays));
+}
+
+#[test]
 fn the_direct3d_12_run_draws_only_on_a_gpu_driving_a_display() {
     use super::dx12_alone_may_use as may_use;
     use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu};
