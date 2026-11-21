@@ -298,10 +298,11 @@ fn main() -> eframe::Result {
     let try_dx12 = dx12_first(choice, cfg!(target_os = "windows"), wgpu_chosen);
     let displays = if try_dx12 { display_gpus() } else { Vec::new() };
     // A failed Direct3D 12 run costs a few hundred milliseconds; once is enough with these GPUs.
-    // Without a settings folder to remember a failure in, the combined run goes first.
+    // Where a failure can't be remembered, the combined run goes first.
     let dx12_failed = if try_dx12 { settings_dir().map(|d| d.join(DX12_ALONE_FAILED)) } else { None };
-    let dx12_alone = dx12_failed.as_deref().is_some_and(|f| !dx12_alone_failed_here(std::fs::read_to_string(f).ok().as_deref(), &displays))
-        && hardware_dx12_only(&mut options, displays.clone());
+    let dx12_alone =
+        dx12_failed.as_deref().is_some_and(|f| !dx12_alone_failed_here(std::fs::read_to_string(f).ok().as_deref(), &displays) && can_remember(f))
+            && hardware_dx12_only(&mut options, displays.clone());
     let mut result = eframe::run_native(
         "PdfCraft",
         options,
@@ -409,6 +410,12 @@ fn displays_key(displays: &[DisplayGpu]) -> String {
 /// GPU ids start over; a driver update alone does not, which keeps the combined run.
 fn dx12_alone_failed_here(saved: Option<&str>, displays: &[DisplayGpu]) -> bool {
     saved.is_some_and(|s| s.trim() == displays_key(displays))
+}
+
+/// Whether a failure can be written to `file`: it opens for appending, which creates it empty (and
+/// its folder) the first time and changes nothing after.
+fn can_remember(file: &std::path::Path) -> bool {
+    file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::OpenOptions::new().append(true).create(true).open(file)).is_ok()
 }
 
 /// Narrows a wgpu run (`native`) to Direct3D 12 adapters that [`dx12_alone_may_use`] accepts, so

@@ -167,6 +167,21 @@ fn the_direct3d_12_run_is_narrowed_only_where_displays_pick_the_adapter() {
 }
 
 #[test]
+fn the_direct3d_12_run_needs_somewhere_to_remember_a_failure() {
+    let dir = scratch();
+    let file = dir.join("settings").join(super::DX12_ALONE_FAILED);
+    assert!(super::can_remember(&file), "creates the folder and an empty file");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
+    std::fs::write(&file, "10de:2684").unwrap();
+    assert!(super::can_remember(&file));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "10de:2684", "an existing record is left as it is");
+    // A folder that can't be made (here a file stands in its place) can't hold the record.
+    let blocked = dir.join("settings").join(super::DX12_ALONE_FAILED).join(super::DX12_ALONE_FAILED);
+    assert!(!super::can_remember(&blocked));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_failed_direct3d_12_run_is_skipped_until_the_display_gpus_change() {
     use super::{displays_key, dx12_alone_failed_here as failed_here};
     let displays = [panel(INTEL_IGPU), monitor(NVIDIA)];
