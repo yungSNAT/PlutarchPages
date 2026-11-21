@@ -270,6 +270,11 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/edit/src/text/rewrite.rs`). `japanese_replacement_missing_a_glyph_after_240_changes_nothing`
   picks a character no bundled face draws. Keep these at the next merge unless upstream covers the
   same pages.
+- The control channel's transport tests live in
+  `crates/ui-egui/src/control/transport/transport_tests.rs`, not inline in `transport.rs`, so
+  CodeQL's test exclusion (`.github/codeql/codeql-config.yml`) covers them: their clients parse the
+  server's replies, which `rust/unsafe-deserialization` flagged. Upstream's changes to those tests
+  go into that file at the next merge.
 
 ## Fixed differently upstream
 
