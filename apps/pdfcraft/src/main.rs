@@ -412,10 +412,13 @@ fn dx12_alone_failed_here(saved: Option<&str>, displays: &[DisplayGpu]) -> bool 
     saved.is_some_and(|s| s.trim() == displays_key(displays))
 }
 
-/// Whether a failure can be written to `file`: it opens for appending, which creates it empty (and
-/// its folder) the first time and changes nothing after.
+/// Whether a failure can be written to `file`: it opens for reading and writing, as replacing it
+/// needs, which creates it empty (and its folder) the first time and changes nothing after.
 fn can_remember(file: &std::path::Path) -> bool {
-    file.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::OpenOptions::new().append(true).create(true).open(file)).is_ok()
+    file.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(file))
+        .is_ok()
 }
 
 /// Narrows a wgpu run (`native`) to Direct3D 12 adapters that [`dx12_alone_may_use`] accepts, so
