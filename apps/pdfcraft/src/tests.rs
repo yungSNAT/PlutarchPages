@@ -180,6 +180,38 @@ fn a_failed_direct3d_12_run_is_skipped_until_the_display_gpus_change() {
 }
 
 #[test]
+fn the_direct3d_12_run_picks_what_the_combined_run_would() {
+    use super::{dx12_alone_may_use, pick_adapter};
+    use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu, Other};
+    const WARP: (u32, u32, eframe::wgpu::DeviceType) = (0x1414, 0x8c, Cpu);
+    // wgpu lists Direct3D 12 adapters before OpenGL ones, which carry no PCI device id.
+    let gl = [(NVIDIA.0, 0, Other), (INTEL_IGPU.0, 0, IntegratedGpu)];
+    let both_dx12 = vec![(NVIDIA.0, NVIDIA.1, DiscreteGpu), (INTEL_IGPU.0, INTEL_IGPU.1, IntegratedGpu), WARP];
+    // A hybrid laptop whose Intel GPU has only an OpenGL driver.
+    let nvidia_dx12 = vec![(NVIDIA.0, NVIDIA.1, DiscreteGpu), WARP];
+    let layouts = [
+        vec![monitor(NVIDIA)],
+        vec![panel(INTEL_IGPU)],
+        vec![panel(INTEL_IGPU), monitor(NVIDIA)],
+        vec![monitor(INTEL_IGPU), panel(NVIDIA)],
+        vec![monitor(INTEL_IGPU), monitor(NVIDIA)],
+    ];
+    for dx12 in [&both_dx12, &nvidia_dx12] {
+        let combined: Vec<_> = dx12.iter().chain(&gl).copied().collect();
+        for displays in &layouts {
+            let alone: Vec<_> = dx12.iter().copied().filter(|&(v, d, kind)| dx12_alone_may_use((v, d), kind, displays)).collect();
+            // Where the Direct3D 12 run picks an adapter, the combined run picks the same one;
+            // where it picks none, it fails and the combined run decides.
+            if let Some(i) = pick_adapter(&alone, displays, None) {
+                assert_eq!(pick_adapter(&combined, displays, None).map(|j| combined[j]), Some(alone[i]), "{dx12:?} {displays:?}");
+            }
+        }
+    }
+    let alone: Vec<_> = nvidia_dx12.iter().copied().filter(|&(v, d, kind)| dx12_alone_may_use((v, d), kind, &[panel(INTEL_IGPU)])).collect();
+    assert!(alone.is_empty(), "issue #8: the laptop keeps drawing on its panel's GPU through OpenGL");
+}
+
+#[test]
 fn the_direct3d_12_run_draws_only_on_a_gpu_driving_a_display() {
     use super::dx12_alone_may_use as may_use;
     use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu};

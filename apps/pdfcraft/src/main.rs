@@ -298,9 +298,9 @@ fn main() -> eframe::Result {
     let try_dx12 = dx12_first(choice, cfg!(target_os = "windows"), wgpu_chosen);
     let displays = if try_dx12 { display_gpus() } else { Vec::new() };
     // A failed Direct3D 12 run costs a few hundred milliseconds; once is enough with these GPUs.
-    let dx12_failed = settings_dir().map(|d| d.join(DX12_ALONE_FAILED));
-    let dx12_alone = try_dx12
-        && !dx12_failed.as_deref().is_some_and(|f| dx12_alone_failed_here(std::fs::read_to_string(f).ok().as_deref(), &displays))
+    // Without a settings folder to remember a failure in, the combined run goes first.
+    let dx12_failed = if try_dx12 { settings_dir().map(|d| d.join(DX12_ALONE_FAILED)) } else { None };
+    let dx12_alone = dx12_failed.as_deref().is_some_and(|f| !dx12_alone_failed_here(std::fs::read_to_string(f).ok().as_deref(), &displays))
         && hardware_dx12_only(&mut options, displays.clone());
     let mut result = eframe::run_native(
         "PdfCraft",
@@ -405,8 +405,8 @@ fn displays_key(displays: &[DisplayGpu]) -> String {
 }
 
 /// Whether the Direct3D 12 run failed before with the same display GPUs (`saved`, the
-/// [`DX12_ALONE_FAILED`] file), so this launch goes straight to the combined run. Another GPU or
-/// driver set starts over.
+/// [`DX12_ALONE_FAILED`] file), so this launch goes straight to the combined run. Different display
+/// GPU ids start over; a driver update alone does not, which keeps the combined run.
 fn dx12_alone_failed_here(saved: Option<&str>, displays: &[DisplayGpu]) -> bool {
     saved.is_some_and(|s| s.trim() == displays_key(displays))
 }
