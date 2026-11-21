@@ -2588,6 +2588,33 @@ fn fallback_fonts(doc: &Document) -> Vec<(Vec<u8>, Dict)> {
 /// More unique fallback glyphs than one Type 3 font holds (240) are split across several generated
 /// fonts, each within that limit, and the text still reads back as one line.
 #[test]
+fn fallback_glyph_procedures_and_their_to_unicode_maps_are_compressed() {
+    // A Chinese glyph's outline was about 10 KB uncompressed, 69 KB for a 7-character line.
+    let replacement = covered_japanese_chars(7);
+    let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
+    if without_craft_fonts("fallback_glyph_procedures_and_their_to_unicode_maps_are_compressed") {
+        return;
+    }
+    text::replace_line(&mut doc, 0, 0, &replacement).unwrap();
+    let reopened = reopen(&doc);
+    assert_eq!(text::text_lines(&reopened, 0).unwrap()[0].text, replacement);
+    let fonts = fallback_fonts(&reopened);
+    assert!(!fonts.is_empty());
+    let (mut stored, mut decoded) = (0, 0);
+    for (name, font) in &fonts {
+        let procs = reopened.dict(font.get(b"CharProcs").unwrap()).unwrap();
+        let streams = procs.iter().map(|(_, r)| r.clone()).chain(font.get(b"ToUnicode").cloned());
+        for r in streams {
+            let pdfcraft_cos::Object::Stream(s) = &*reopened.resolve(&r) else { panic!("{name:?}: not a stream") };
+            assert_eq!(s.dict.name(b"Filter"), Some(&b"FlateDecode"[..]), "{name:?}");
+            stored += s.raw.len();
+            decoded += s.decoded().unwrap().len();
+        }
+    }
+    assert!(stored * 2 < decoded, "{stored} bytes stored for {decoded} decoded");
+}
+
+#[test]
 fn japanese_replacement_over_240_unique_glyphs_is_split_across_fallback_fonts() {
     let replacement = covered_japanese_chars(300);
     let mut doc = text_page("BT /F2 12 Tf 72 700 Td (ab) Tj ET");
