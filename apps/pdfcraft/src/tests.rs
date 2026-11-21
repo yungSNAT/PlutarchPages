@@ -146,7 +146,9 @@ fn the_direct3d_12_run_never_picks_a_software_adapter() {
     let _gpu = gpu();
     // Without a displays-based selector (no display information), nothing is narrowed.
     let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
-    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
+    let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else {
+        panic!("default setup creates its own instance")
+    };
     setup.native_adapter_selector = None;
     let before = setup.instance_descriptor.backends;
     assert!(!super::hardware_dx12_only(&mut native));
@@ -156,7 +158,9 @@ fn the_direct3d_12_run_never_picks_a_software_adapter() {
     // this machine's adapters on any backend stand in for Direct3D 12's.
     let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { unreachable!() };
-    setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], _| adapters.first().cloned().ok_or_else(|| "none".to_string())));
+    setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], _: Option<&wgpu::Surface<'_>>| {
+        adapters.first().cloned().ok_or_else(|| "none".to_string())
+    }));
     assert!(super::hardware_dx12_only(&mut native));
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { unreachable!() };
     assert_eq!(setup.instance_descriptor.backends, wgpu::Backends::DX12);
