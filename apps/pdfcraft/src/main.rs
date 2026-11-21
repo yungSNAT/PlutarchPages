@@ -295,7 +295,7 @@ fn main() -> eframe::Result {
     let first = if choice == RendererChoice::Gl { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu };
     let mut options = native_options(launch.integrated, launch.window_controls.is_some(), first);
     let wgpu_chosen = std::env::var_os("WGPU_BACKEND").is_some() || std::env::var_os("WGPU_POWER_PREF").is_some();
-    let dx12_alone = dx12_first(choice, cfg!(target_os = "windows"), wgpu_chosen) && hardware_dx12_only(&mut options);
+    let dx12_alone = dx12_first(choice, cfg!(target_os = "windows"), wgpu_chosen) && hardware_dx12_only(&mut options, display_gpus());
     let mut result = eframe::run_native(
         "PdfCraft",
         options,
@@ -311,7 +311,7 @@ fn main() -> eframe::Result {
         && dx12_alone
         && !started.get()
     {
-        log::warn!("Direct3D 12 alone didn't start: {e}. Trying wgpu's Direct3D 12 and OpenGL together.");
+        log::info!("Direct3D 12 alone didn't start: {e}. Trying wgpu's Direct3D 12 and OpenGL together.");
         result = eframe::run_native(
             "PdfCraft",
             native_options(launch.integrated, launch.window_controls.is_some(), eframe::Renderer::Wgpu),
@@ -374,28 +374,48 @@ fn retry_with_gl(choice: RendererChoice, app_started: bool) -> bool {
 
 /// Whether the first run tries Direct3D 12 alone: on Windows (`windows`), when nobody chose the
 /// renderer or wgpu's backend or adapter (`wgpu_chosen`: `WGPU_BACKEND` or `WGPU_POWER_PREF`).
-/// Listing OpenGL adapters as well starts an OpenGL context, about 70 ms of every launch on an
-/// RTX 5080, though Direct3D 12 is what draws. If Direct3D 12 alone fails, the next run asks for
-/// Direct3D 12 and OpenGL as before, then OpenGL through eframe, so each machine still ends on
-/// the renderer it drew with before.
+/// Listing OpenGL adapters as well starts an OpenGL context on every launch, tens of milliseconds
+/// on an RTX 5080, though Direct3D 12 is what draws. If Direct3D 12 alone fails, the next run asks
+/// for Direct3D 12 and OpenGL as before, then OpenGL through eframe, so each machine still ends on
+/// the renderer and GPU it drew with before, after one failed run.
 fn dx12_first(choice: RendererChoice, windows: bool, wgpu_chosen: bool) -> bool {
     choice == RendererChoice::Auto && windows && !wgpu_chosen
 }
 
-/// Narrows a wgpu run (`native`) to Direct3D 12 on a graphics processor: software adapters
-/// (WARP) are left out, so a GPU with only an OpenGL driver gets the next run, which lists OpenGL
-/// adapters too, rather than software drawing. Only where [`configure_gpu`] picks the adapter
-/// from the displays; elsewhere nothing changes and the result is false.
-fn hardware_dx12_only(native: &mut eframe::NativeOptions) -> bool {
+/// Narrows a wgpu run (`native`) to Direct3D 12 adapters that [`dx12_alone_may_use`] accepts, so
+/// the run either draws where the next run would have or fails and leaves the choice to it. Only
+/// where [`configure_gpu`] picks the adapter from the displays; elsewhere nothing changes and the
+/// result is false.
+fn hardware_dx12_only(native: &mut eframe::NativeOptions, displays: Vec<DisplayGpu>) -> bool {
     use eframe::wgpu;
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else { return false };
     let Some(pick) = setup.native_adapter_selector.clone() else { return false };
     setup.instance_descriptor.backends = wgpu::Backends::DX12;
     setup.native_adapter_selector = Some(std::sync::Arc::new(move |adapters, surface| {
-        let hardware: Vec<wgpu::Adapter> = adapters.iter().filter(|a| a.get_info().device_type != wgpu::DeviceType::Cpu).cloned().collect();
-        pick(&hardware, surface)
+        let usable: Vec<wgpu::Adapter> = adapters
+            .iter()
+            .filter(|a| {
+                let info = a.get_info();
+                dx12_alone_may_use((info.vendor, info.device), info.device_type, &displays)
+            })
+            .cloned()
+            .collect();
+        if usable.is_empty() {
+            return Err("no Direct3D 12 graphics processor drives a display".to_string());
+        }
+        pick(&usable, surface)
     }));
     true
+}
+
+/// Whether the Direct3D 12 run may draw on an adapter with PCI ids `pci` of kind `kind`: a
+/// graphics processor, not software (WARP), that drives one of `displays`. With Direct3D 12 and
+/// OpenGL listed together, [`pick_adapter`] takes such an adapter whenever there is one (wgpu's
+/// OpenGL adapters carry no PCI device id, so they never drive a display), so both runs agree. On
+/// a hybrid laptop whose panel GPU has only an OpenGL driver, no adapter qualifies and the next
+/// run keeps drawing on that GPU (#8).
+fn dx12_alone_may_use(pci: (u32, u32), kind: eframe::wgpu::DeviceType, displays: &[DisplayGpu]) -> bool {
+    kind != eframe::wgpu::DeviceType::Cpu && displays.iter().any(|g| g.pci == pci)
 }
 
 /// The window and renderer settings for one run.

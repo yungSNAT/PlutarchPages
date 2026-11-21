@@ -141,9 +141,8 @@ fn direct3d_12_alone_is_tried_first_only_on_windows_when_nothing_was_chosen() {
 }
 
 #[test]
-fn the_direct3d_12_run_never_picks_a_software_adapter() {
+fn the_direct3d_12_run_is_narrowed_only_where_displays_pick_the_adapter() {
     use eframe::wgpu;
-    let _gpu = gpu();
     // Without a displays-based selector (no display information), nothing is narrowed.
     let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else {
@@ -151,11 +150,10 @@ fn the_direct3d_12_run_never_picks_a_software_adapter() {
     };
     setup.native_adapter_selector = None;
     let before = setup.instance_descriptor.backends;
-    assert!(!super::hardware_dx12_only(&mut native));
+    assert!(!super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     assert_eq!(setup.instance_descriptor.backends, before);
-    // With one, the run lists Direct3D 12 alone and hands the selector only hardware adapters:
-    // this machine's adapters on any backend stand in for Direct3D 12's.
+    // With one, the run lists Direct3D 12 alone.
     let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else {
         panic!("default setup creates its own instance")
@@ -163,17 +161,26 @@ fn the_direct3d_12_run_never_picks_a_software_adapter() {
     setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], _: Option<&wgpu::Surface<'_>>| {
         adapters.first().cloned().ok_or_else(|| "none".to_string())
     }));
-    assert!(super::hardware_dx12_only(&mut native));
+    assert!(super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     assert_eq!(setup.instance_descriptor.backends, wgpu::Backends::DX12);
-    let instance = pollster::block_on(super::native_options(false, false, eframe::Renderer::Wgpu).wgpu_options.wgpu_setup.new_instance());
-    let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-    let hardware = adapters.iter().any(|a| a.get_info().device_type != wgpu::DeviceType::Cpu);
-    let select = setup.native_adapter_selector.as_ref().expect("a selector");
-    match select(&adapters, None) {
-        Ok(adapter) => assert_ne!(adapter.get_info().device_type, wgpu::DeviceType::Cpu, "{:?}", adapter.get_info()),
-        Err(e) => assert!(!hardware, "a hardware adapter was there: {e}"),
-    }
+}
+
+#[test]
+fn the_direct3d_12_run_draws_only_on_a_gpu_driving_a_display() {
+    use super::dx12_alone_may_use as may_use;
+    use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu};
+    // The GPU behind the monitor, integrated or discrete.
+    assert!(may_use(NVIDIA, DiscreteGpu, &[monitor(NVIDIA)]));
+    assert!(may_use(INTEL_IGPU, IntegratedGpu, &[panel(INTEL_IGPU), monitor(NVIDIA)]));
+    // Issue #8: a hybrid laptop whose panel GPU has only an OpenGL driver. Its discrete GPU has
+    // Direct3D 12 but drives nothing, so the run lists nothing and the next run picks the panel's
+    // GPU through OpenGL, as it did before.
+    assert!(!may_use(NVIDIA, DiscreteGpu, &[panel(INTEL_IGPU)]));
+    // Software (WARP), even with ids that match a display, and any GPU when no display is known.
+    assert!(!may_use(NVIDIA, Cpu, &[monitor(NVIDIA)]));
+    assert!(!may_use((0x1414, 0x8c), Cpu, &[]));
+    assert!(!may_use(NVIDIA, DiscreteGpu, &[]));
 }
 
 #[test]
