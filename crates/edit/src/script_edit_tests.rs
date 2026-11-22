@@ -628,15 +628,17 @@ fn kept_arabic_with_an_emptied_glyph_falls_back_for_the_run() {
 /// A GSUB with no scripts, features or lookups: version 1.0 and 3 empty lists.
 const EMPTY_GSUB: [u8; 16] = [0, 1, 0, 0, 0, 10, 0, 12, 0, 14, 0, 0, 0, 0, 0, 0];
 
-/// A subset whose own cmap lacks kaf, which the editor's stand-in cmap then maps to the medial
-/// form the page's ToUnicode names: typed at a word's start, kaf would be drawn medial in the
-/// page's font. The whole run is drawn in the bundled face.
+/// A subset with its layout tables but no cmap: the editor's stand-in cmap, rebuilt from the
+/// page's ToUnicode, maps each letter to a form the page showed (kaf to its medial form, yeh to
+/// its dots), which the GSUB doesn't substitute. Typed at a word's start, kaf would be drawn
+/// medial in the page's font. The whole run is drawn in the bundled face.
 #[test]
-fn kept_arabic_in_a_subset_whose_own_cmap_lacks_a_letter_falls_back_for_the_run() {
+fn kept_arabic_in_a_subset_without_its_own_cmap_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
-    let chars: BTreeSet<char> = ORIGINAL.chars().filter(|&c| c != '\u{0643}').collect();
     let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
-        with_table(&subset(face.bytes, keep, true), b"cmap", pruned_cmap(face.bytes, &chars))
+        let out: Vec<([u8; 4], Vec<u8>)> =
+            tables(&subset(face.bytes, keep, true)).into_iter().filter(|(t, _)| t != b"cmap").map(|(t, d)| (t, d.to_vec())).collect();
+        assemble(&out)
     });
     falls_back_for_the_run(face, page, "كم عليكم");
 }
