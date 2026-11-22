@@ -320,6 +320,9 @@ fn flatten(source: &str, stream: proc_macro2::TokenStream, kind: &mut [u8], toke
     use proc_macro2::{Spacing, TokenTree};
     for tree in stream {
         match tree {
+            // A doc comment's `[doc = "…"]` spans the comment, so its closing bracket would be the
+            // comment's last character.
+            TokenTree::Group(group) if is_comment(source, &group.span().byte_range()) => {}
             TokenTree::Group(group) => {
                 mark(source, group.span_open(), 1, Token::Other, kind, tokens);
                 flatten(source, group.stream(), kind, tokens);
@@ -340,11 +343,16 @@ fn flatten(source: &str, stream: proc_macro2::TokenStream, kind: &mut [u8], toke
 
 fn mark(source: &str, span: proc_macro2::Span, k: u8, token: Token, kind: &mut [u8], tokens: &mut Vec<(usize, Token)>) {
     let range = span.byte_range();
-    let comment = source.get(range.start..).is_some_and(|s| s.starts_with("//") || s.starts_with("/*"));
-    if !comment && let Some(bytes) = kind.get_mut(range.clone()) {
+    if !is_comment(source, &range)
+        && let Some(bytes) = kind.get_mut(range.clone())
+    {
         bytes.fill(k);
         tokens.push((range.start, token));
     }
+}
+
+fn is_comment(source: &str, range: &Range<usize>) -> bool {
+    source.get(range.start..).is_some_and(|s| s.starts_with("//") || s.starts_with("/*"))
 }
 
 /// Each place `ident` starts a path ([`Lexed::tokens`]): its offset, and the token after its `::`.
@@ -1383,6 +1391,13 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         );
         files[0].1 = added.as_str();
         fails_all(named_colours, &files, &["canvas.rs:5", "canvas.rs:6", "canvas.rs:7", "canvas.rs:9"]);
+    }
+
+    #[test]
+    fn a_doc_comment_is_not_read_as_code() {
+        let canvas = "/// Paints the page (and its border)\nfn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n";
+        let lines: Vec<usize> = colour_lines(&tree(&[("crates/ui-egui/src/canvas.rs", canvas)])).into_iter().map(|(_, n, _)| n).collect();
+        assert_eq!(lines, [3]);
     }
 
     #[test]
