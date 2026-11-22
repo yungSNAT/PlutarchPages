@@ -186,6 +186,30 @@ fn reconstructed_and_unreadable_objects_are_not_cached_as_complete() {
     assert!(cache.discovery.lock().unwrap().is_none());
 }
 
+/// A file whose bytes name no `/ByteRange` has no timestamp among the objects stored in it, so
+/// discovery reads none of them: an unreadable one does not make the result incomplete.
+#[test]
+fn a_file_naming_no_byte_range_reads_none_of_its_stored_objects() {
+    let doc = fixture(&["<< /Bounds [0 1] >>", "<< >>\nstream\nunterminated"]);
+    assert!(doc.try_get(4).is_err());
+    let cache = DigestCache::default();
+    assert!(cache.timestamp_candidates(&doc).is_empty());
+    assert!(cache.discovery.lock().unwrap().is_some(), "no stored object was read, so none failed");
+    let mut edited = doc.clone();
+    edited.set(ObjRef::new(3, 0), stamp());
+    assert_eq!(DigestCache::default().timestamp_candidates(&edited), vec![ObjRef::new(3, 0)], "an unsaved timestamp is still read");
+}
+
+/// However the file escapes the key's characters, a timestamp it stores is still found.
+#[test]
+fn an_escaped_byte_range_key_still_marks_a_stored_timestamp() {
+    for key in ["/Byte#52ange", "/#42yteRange", "/#42#79#74#65#52#61#6e#67#65"] {
+        let doc = fixture(&[&STAMP.replace("/ByteRange", key)]);
+        assert!(!doc.bytes().windows(9).any(|w| w == b"ByteRange"), "{key}");
+        assert_eq!(DigestCache::default().timestamp_candidates(&doc), vec![ObjRef::new(3, 0)], "{key}");
+    }
+}
+
 #[test]
 fn indirect_length_edits_and_frees_take_the_full_scan_fallback() {
     let original = fixture(&[STAMP, "<< /Length 5 0 R >>\nstream\nabc\nendstream", "3"]);

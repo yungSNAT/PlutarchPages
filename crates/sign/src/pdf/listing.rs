@@ -38,6 +38,17 @@ pub(crate) fn is_document_timestamp(object: &Object) -> bool {
     object.as_dict().is_some_and(|d| is_doc_timestamp(d) && d.contains(b"ByteRange"))
 }
 
+/// Whether any name in the file's stored bytes reads `ByteRange`, however its characters are
+/// escaped. Every dictionary key is a name, read from its `/` as the object reader reads it, and
+/// names are never encrypted (§7.6.2). So when none does, no object the reader takes from the
+/// file itself, rather than from an object stream, has a `/ByteRange` to be a timestamp. This
+/// pass over the bytes replaces parsing every such object (a fifth of opening ISO 32000-1).
+fn stores_byte_range_name(bytes: &[u8]) -> bool {
+    bytes.windows(2).enumerate().any(|(at, pair)| {
+        matches!(pair, [b'/', b'B' | b'#']) && matches!(pdfcraft_cos::Lexer::new(bytes, at).object(), Ok(Object::Name(name)) if name == b"ByteRange")
+    })
+}
+
 /// Only dictionary/null edits have a local effect on candidate membership. Changes to an
 /// object stream or a scalar used as an indirect /Length can affect unedited objects too.
 /// Checking both the original and current objects also covers freeing those dependencies.
@@ -114,8 +125,21 @@ impl DigestCache {
         #[cfg(test)]
         self.discovery_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut complete = true;
-        let candidates: Vec<_> = doc
-            .scan_objects_where(is_document_timestamp)
+        let scan: Box<dyn Iterator<Item = (ObjRef, Result<Arc<Object>, pdfcraft_cos::CosError>)>> = if stores_byte_range_name(doc.bytes()) {
+            Box::new(doc.scan_objects_where(is_document_timestamp))
+        } else {
+            // No object stored directly in the file can be a timestamp: read only the members of
+            // object streams, whose names are compressed, and the unsaved edits.
+            let mut edited = modified.clone();
+            edited.sort_unstable();
+            let numbers = doc
+                .object_numbers()
+                .into_iter()
+                .filter(|&n| edited.binary_search(&n).is_ok() || !matches!(doc.xref_entry(n), Some(pdfcraft_cos::XrefEntry::InFile { .. })))
+                .collect();
+            Box::new(doc.scan_objects_subset(numbers).filter(|(_, object)| object.as_ref().map_or(true, |o| is_document_timestamp(o))))
+        };
+        let candidates: Vec<_> = scan
             .filter_map(|(reference, object)| {
                 complete &= object.is_ok();
                 object.is_ok().then_some(reference)
