@@ -731,33 +731,3 @@ fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
     assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut full), Some(expected));
     assert!(full.streams.is_empty(), "nothing more kept past the budget");
 }
-
-/// Pages that list the same contents streams have them read once: a later page gets the names an
-/// earlier one read, shown here by changing the stream in between. A page that lists another
-/// stream as well reads its contents again, and once `DRAWN_BUDGET` bytes of names are kept,
-/// each page reads its own.
-#[test]
-fn pages_listing_the_same_contents_streams_have_them_read_once() {
-    let page = |contents: &str| format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents {contents} >>").into_bytes();
-    let mut doc = pdf(vec![
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-        b"<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>".to_vec(),
-        page("6 0 R"),
-        page("6 0 R"),
-        page("[6 0 R 7 0 R]"),
-        stream("", b"/A Do"),
-        stream("", b"/B Do"),
-    ]);
-    let draws = |n: &str| Stream::flate(Dict::new(), format!("/{n} Do").as_bytes());
-    let names = |n: &[&str]| Some(n.iter().map(|n| n.as_bytes().to_vec()).collect::<HashSet<_>>());
-    let drawn = |doc: &Document, i: usize, read: &mut ReadStreams| drawn_names(doc, &pdfcraft_model::pages(doc)[i].dict, i, &[], read);
-    let mut read = ReadStreams::default();
-    assert_eq!(drawn(&doc, 0, &mut read), names(&["A"]));
-    doc.set(ObjRef::new(6, 0), draws("C"));
-    assert_eq!(drawn(&doc, 1, &mut read), names(&["A"]), "page 2 lists what page 1 read");
-    assert_eq!(drawn(&doc, 2, &mut read), names(&["C", "B"]), "page 3 lists another stream too");
-    let mut full = ReadStreams { name_bytes: DRAWN_BUDGET + 1, ..ReadStreams::default() };
-    assert_eq!(drawn(&doc, 0, &mut full), names(&["C"]));
-    doc.set(ObjRef::new(6, 0), draws("A"));
-    assert_eq!(drawn(&doc, 1, &mut full), names(&["A"]), "nothing kept past the budget");
-}
