@@ -38,6 +38,7 @@ crypto-bigint = { version = "0.7", default-features = false, features = ["alloc"
 rsa = { version = "=0.10.0-rc.18", default-features = false, features = ["std", "hazmat"] }
 pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 hmac = "0.13"
+memchr = "2"
 aes = "0.9"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 des = "0.9"

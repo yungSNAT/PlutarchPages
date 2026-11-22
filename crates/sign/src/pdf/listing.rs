@@ -47,10 +47,12 @@ type ScannedObject = (ObjRef, Result<Arc<Object>, pdfcraft_cos::CosError>);
 /// file itself, rather than from an object stream, has a `/ByteRange` to be a timestamp. This
 /// pass over the bytes replaces parsing every such object (a fifth of opening ISO 32000-1); the
 /// engine's list of unreadable objects reads the whole file itself when asked. It runs from the
-/// end, where a signed file's latest signature dictionary normally is.
+/// end, where a signed file's latest signature dictionary normally is, and finds each `/` with
+/// `memchr`, so it costs a small part of decrypting the file once.
 fn stores_byte_range_name(bytes: &[u8]) -> bool {
-    bytes.windows(2).enumerate().rev().any(|(at, pair)| {
-        matches!(pair, [b'/', b'B' | b'#']) && matches!(pdfcraft_cos::Lexer::new(bytes, at).object(), Ok(Object::Name(name)) if name == b"ByteRange")
+    memchr::memrchr_iter(b'/', bytes).any(|at| {
+        matches!(bytes.get(at + 1), Some(b'B' | b'#'))
+            && matches!(pdfcraft_cos::Lexer::new(bytes, at).object(), Ok(Object::Name(name)) if name == b"ByteRange")
     })
 }
 
