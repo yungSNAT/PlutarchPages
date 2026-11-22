@@ -252,35 +252,14 @@ fn clamp_crop(b: Rect, new_screen: Rect) -> Rect {
 mod crop_bounds_tests {
     use super::*;
 
+    mod fork_tests;
+
     #[test]
     fn crop_drag_rejects_nonfinite_bounds() {
         for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
             let bounds = Rect { min: Pos2::new(value, 0.0), max: Pos2::new(100.0, 100.0) };
             let keep = Rect::from_min_max(Pos2::new(10.0, 10.0), Pos2::new(50.0, 50.0));
             assert_eq!(clamp_crop(bounds, keep), keep);
-        }
-    }
-
-    #[test]
-    fn crop_drag_survives_bounds_that_round() {
-        // 6.1 - 0.1 rounds to 6.0, and 6.1 - 6.0 is then just below 0.1.
-        let (low, high) = (0.1_f32, 6.1_f32);
-        assert!(high - (high - low) < low);
-        for bounds in [
-            Rect::from_min_max(Pos2::new(low, 0.0), Pos2::new(high, 100.0)),
-            Rect::from_min_max(Pos2::new(0.0, low), Pos2::new(100.0, high)),
-            Rect::from_min_max(Pos2::new(low, low), Pos2::new(high, high)),
-        ] {
-            for drag in [
-                Rect::from_min_max(Pos2::new(-5.0, -5.0), Pos2::new(50.0, 50.0)),
-                Rect::from_min_max(Pos2::new(3.0, 3.0), Pos2::new(3.0, 3.0)),
-                Rect::from_min_max(Pos2::new(50.0, 50.0), Pos2::new(60.0, 60.0)),
-            ] {
-                let kept = clamp_crop(bounds, drag);
-                assert!(kept.min.x >= bounds.min.x && kept.min.y >= bounds.min.y, "{kept:?}");
-                assert!(kept.max.x <= bounds.max.x && kept.max.y <= bounds.max.y, "{kept:?}");
-                assert!(kept.min.x <= kept.max.x && kept.min.y <= kept.max.y, "{kept:?}");
-            }
         }
     }
 }
