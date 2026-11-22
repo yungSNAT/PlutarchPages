@@ -6962,17 +6962,19 @@ fn hebrew_edits_are_drawn_right_to_left_and_keep_their_right_edge() {
 }
 
 /// A right-to-left line edit keeps the line's right edge (its end along the baseline) however
-/// the line is drawn: scaled or turned by its text matrix, or in several showing operators, and
-/// the text after it in the same text object stays where it was.
+/// the line is drawn: scaled, sheared or turned by its text matrix, or in several showing
+/// operators, and the text after it in the same text object stays where it was.
 #[test]
 fn hebrew_line_edits_keep_the_right_edge_under_any_text_matrix() {
-    // The end of a line's baseline in page space: the right edge, or the top when turned.
-    let end = |l: &text::TextLine, turned: bool| if turned { l.rect[3] } else { l.rect[2] };
-    for (content, turned) in [
-        ("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET", false),
-        ("BT /F1 12 Tf 2 0 0 1.5 200 700 Tm 110 Tz (EDCBA) Tj ET", false),
-        ("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (EDCBA) Tj ET", true),
-        ("BT /F1 12 Tf 300 700 Td (EDC) Tj (BA) Tj ET", false),
+    // The end of a line's baseline in page space fixes the box's right edge (index 2), its top (3)
+    // when turned a quarter, or both when turned part of the way.
+    for (content, edges) in [
+        ("BT /F1 12 Tf 300 700 Td (EDCBA) Tj ET", &[2][..]),
+        ("BT /F1 12 Tf 2 0 0 1.5 200 700 Tm 110 Tz (EDCBA) Tj ET", &[2]),
+        ("BT /F1 12 Tf 0 1 -1 0 300 300 Tm (EDCBA) Tj ET", &[3]),
+        ("BT /F1 12 Tf 1 0 0.4 1 200 700 Tm (EDCBA) Tj ET", &[2]),
+        ("BT /F1 12 Tf 0.866 0.5 -0.5 0.866 200 400 Tm (EDCBA) Tj ET", &[2, 3]),
+        ("BT /F1 12 Tf 300 700 Td (EDC) Tj (BA) Tj ET", &[2]),
     ] {
         for typed in ["שלום בדיוק", "דוב"] {
             let mut doc = hebrew_page(content);
@@ -6980,7 +6982,9 @@ fn hebrew_line_edits_keep_the_right_edge_under_any_text_matrix() {
             assert_eq!(text::replace_line(&mut doc, 0, 0, typed).unwrap().substituted, None, "{content}");
             let after = text::text_lines(&reopen(&doc), 0).unwrap().swap_remove(0);
             assert_eq!(after.text, typed, "{content}");
-            assert!((end(&after, turned) - end(&before, turned)).abs() < 0.5, "{content}, {typed}: {:?} → {:?}", before.rect, after.rect);
+            for &i in edges {
+                assert!((after.rect[i] - before.rect[i]).abs() < 0.5, "{content}, {typed}: {:?} → {:?}", before.rect, after.rect);
+            }
         }
     }
     // The next line moves from where the edited line started, not from where its text ended.
