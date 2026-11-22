@@ -56,12 +56,11 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// Arabic face, which must draw every letter itself. Its own cmap must map every letter; each
 /// letter's isolated, initial, medial and final forms must differ wherever the reference's
 /// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
-/// in glyphs other than those it draws the letter with alone (a joining form or part of a
-/// ligature), the program's must too, each face judged against its own isolated form; and where
-/// the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps a letter
-/// to one of its positional forms (rebuilt from ToUnicode, or
-/// written from the glyphs a page showed) leaves the GSUB with nothing to substitute, or
-/// substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
+/// in glyphs other than those it draws the letter and its marks with alone (a joining form or
+/// part of a ligature), the program's must too, each face judged against its own isolated form;
+/// and where the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps
+/// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
+/// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
 /// ink and still be the wrong form. A program whose joining form reuses another form's glyph is
 /// refused too, which only costs the page's font.
@@ -75,11 +74,12 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
     let own_map = own.charmap();
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
-    let letter =
-        |c: char| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
+    let mark = |c: char| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc | 0x06df..=0x06e4 | 0x06e7..=0x06e8 | 0x06ea..=0x06ed | 0x08ca..=0x08ff);
+    let letter = |c: char| {
+        !mark(c) && matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff)
+    };
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
     // Marks are placed by GPOS; without it they would fall back to an approximate position.
-    let mark = |c: char| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc | 0x06df..=0x06e4 | 0x06e7..=0x06e8 | 0x06ea..=0x06ed | 0x08ca..=0x08ff);
     if text.chars().any(mark) && !positions_marks(&own, b"arab") {
         return false;
     }
@@ -90,9 +90,11 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
         run.char_indices().filter(|(_, c)| letter(*c)).all(|(at, c)| {
-            // Each face against its own isolated form: a face may draw a letter as a base and its
-            // dots even when it stands alone.
-            let isolated = |shaper: &harfrust::Shaper| cluster_at(&rtl_clusters(shaper, c.encode_utf8(&mut [0; 4])), 0);
+            // Each face against its own isolated form of the letter with its marks, which share
+            // its cluster: a face may draw a letter as a base and its dots even when it stands alone.
+            let marks = run.get(at + c.len_utf8()..).unwrap_or_default().chars().take_while(|&m| mark(m));
+            let alone: String = std::iter::once(c).chain(marks).collect();
+            let isolated = |shaper: &harfrust::Shaper| cluster_at(&rtl_clusters(shaper, &alone), 0);
             let (ours, theirs) = (cluster_at(&ours, at), cluster_at(&theirs, at));
             drawn(&ours) && drawn(&theirs) && (theirs == isolated(&reference_shaper) || ours != isolated(&own_shaper))
         })
