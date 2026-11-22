@@ -151,6 +151,11 @@ fn subset(program: &[u8], keep: &BTreeSet<usize>, layout: bool) -> Vec<u8> {
             (*tag, data)
         })
         .collect();
+    assemble(&out)
+}
+
+/// The sfnt of `out`, whose tables are in tag order.
+fn assemble(out: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     let mut font = Vec::new();
     font.extend_from_slice(&0x0001_0000u32.to_be_bytes());
     let n = out.len() as u16;
@@ -159,7 +164,7 @@ fn subset(program: &[u8], keep: &BTreeSet<usize>, layout: bool) -> Vec<u8> {
         font.extend_from_slice(&v.to_be_bytes());
     }
     let mut offset = 12 + 16 * out.len();
-    for (tag, data) in &out {
+    for (tag, data) in out {
         let padded: Vec<u8> = data.iter().copied().chain(std::iter::repeat(0)).take(data.len().next_multiple_of(4)).collect();
         let sum = padded.chunks(4).fold(0u32, |s, c| s.wrapping_add(u32::from_be_bytes(c.try_into().unwrap())));
         font.extend_from_slice(tag);
@@ -168,7 +173,7 @@ fn subset(program: &[u8], keep: &BTreeSet<usize>, layout: bool) -> Vec<u8> {
         font.extend_from_slice(&(data.len() as u32).to_be_bytes());
         offset += padded.len();
     }
-    for (_, data) in &out {
+    for (_, data) in out {
         font.extend_from_slice(data);
         font.resize(font.len().next_multiple_of(4), 0);
     }
@@ -187,6 +192,11 @@ fn advance(program: &[u8], g: usize) -> f64 {
 /// [`RIGHT`] and other text starting at [`LEFT`]. Saved and opened again, so it is a file like any
 /// other.
 fn producer_page(program: &[u8], named: &str, text: &str, layout: bool) -> Document {
+    producer_page_with(program, named, text, |keep| subset(program, keep, layout))
+}
+
+/// [`producer_page`] embedding `embedded(glyphs shown)` as the subset.
+fn producer_page_with(program: &[u8], named: &str, text: &str, embedded: impl FnOnce(&BTreeSet<usize>) -> Vec<u8>) -> Document {
     let shaped = pdfcraft_fonts::source_shaping::shape(program, text).unwrap();
     let mut unicode: BTreeMap<usize, String> = BTreeMap::new();
     for g in &shaped.glyphs {
@@ -239,7 +249,7 @@ fn producer_page(program: &[u8], named: &str, text: &str, layout: bool) -> Docum
     let mut doc = Document::open(Arc::new(out)).unwrap();
 
     let keep: BTreeSet<usize> = unicode.keys().copied().collect();
-    let file = doc.add(Object::Stream(Stream::flate(Dict::new(), &subset(program, &keep, layout))));
+    let file = doc.add(Object::Stream(Stream::flate(Dict::new(), &embedded(&keep))));
     let to_unicode = doc.add(Object::Stream(Stream::flate(Dict::new(), cmap.as_bytes())));
     let widths: Vec<Object> = keep.iter().flat_map(|&g| [Object::Int(g as i64), Object::Array(vec![Object::Real(advance(program, g))])]).collect();
     let base = format!("ABCDEF+{named}");
@@ -370,7 +380,7 @@ fn arabic_paragraph_rows_stay_right_aligned() {
 /// Every case, each failure named, so one run shows them all. Arabic letters take their forms
 /// from their neighbours, so a line edit, which redraws one character at a time, refuses them and
 /// leaves the page as it was; the paragraph edit shapes them, with the bundled Arabic face when
-/// the page's subset cannot.
+/// the page's subset cannot draw every glyph its shaping needs.
 #[test]
 fn existing_cjk_and_right_to_left_text_edits_round_trip_draw_and_add_only_their_glyphs() {
     let mut failures = Vec::new();
@@ -426,8 +436,9 @@ fn existing_cjk_and_right_to_left_text_edits_round_trip_draw_and_add_only_their_
                     if drawn > DRAWN {
                         failures.push(format!("{label}, {what} {how}: {drawn:.3} of the ink differs from the typed text's"));
                     }
-                    // Arabic kept in the page's subset only where its program can shape it.
-                    if what == "kept" && !arabic && (edit.substituted.is_some() || shown != BTreeSet::from(["F1".to_string()])) {
+                    // Arabic stays in the page's subset where its program can shape it: with its
+                    // layout tables.
+                    if what == "kept" && (!arabic || layout) && (edit.substituted.is_some() || shown != BTreeSet::from(["F1".to_string()])) {
                         failures.push(format!("{label}, kept {how}: left the page's subset ({:?}, fonts {shown:?})", edit.substituted));
                     }
                     // Outlines for the glyphs typed at most, never a whole face (megabytes): a
@@ -440,4 +451,168 @@ fn existing_cjk_and_right_to_left_text_edits_round_trip_draw_and_add_only_their_
         }
     }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}
+
+/// Arabic with the lam-alef ligature and marks: [`KEPT`] shows only the glyphs [`ORIGINAL`] does,
+/// in other places; [`TYPED_NEW`] adds a letter (noon) it doesn't have.
+const ORIGINAL: &str = "السَّلامُ عليكم";
+const KEPT: &str = "عليكم السَّلامُ";
+const TYPED_NEW: &str = "عليكم السَّلامُ نعم";
+
+/// The glyph `program`'s Unicode BMP (format 4) cmap gives `c`.
+fn nominal(program: &[u8], c: char) -> u16 {
+    let cmap = tables(program)[b"cmap"];
+    let record = (0..be16(cmap, 2)).map(|i| 4 + 8 * i).find(|&r| matches!((be16(cmap, r), be16(cmap, r + 2)), (3, 1) | (0, 3))).unwrap();
+    let t = &cmap[be32(cmap, record + 4)..];
+    assert_eq!(be16(t, 0), 4);
+    let (segments, c) = (be16(t, 6) / 2, c as usize);
+    let (ends, starts, deltas, offsets) = (14, 16 + 2 * segments, 16 + 4 * segments, 16 + 6 * segments);
+    let i = (0..segments).find(|&i| be16(t, ends + 2 * i) >= c).unwrap();
+    let start = be16(t, starts + 2 * i);
+    assert!(start <= c, "U+{c:04X} is not in the cmap");
+    let offset = be16(t, offsets + 2 * i);
+    let glyph = if offset == 0 { c } else { be16(t, offsets + 2 * i + offset + 2 * (c - start)) };
+    ((glyph + be16(t, deltas + 2 * i)) & 0xFFFF) as u16
+}
+
+/// A cmap mapping only `chars`, each to its glyph in `program`, as a subsetter that prunes the
+/// cmap writes it.
+fn pruned_cmap(program: &[u8], chars: &BTreeSet<char>) -> Vec<u8> {
+    // One segment a character, then the closing one, which maps U+FFFF to glyph 0.
+    let mut segments: Vec<(u16, u16)> = chars.iter().map(|&c| (c as u16, nominal(program, c).wrapping_sub(c as u16))).collect();
+    segments.push((0xFFFF, 1));
+    let n = segments.len() as u16;
+    let range = 2 * (1u16 << (15 - n.leading_zeros()));
+    let mut table = Vec::new();
+    for v in [4, 16 + 8 * n, 0, 2 * n, range, 15 - n.leading_zeros() as u16, 2 * n - range] {
+        table.extend_from_slice(&v.to_be_bytes());
+    }
+    table.extend(segments.iter().flat_map(|(c, _)| c.to_be_bytes()));
+    table.extend_from_slice(&[0, 0]);
+    table.extend(segments.iter().flat_map(|(c, _)| c.to_be_bytes()));
+    table.extend(segments.iter().flat_map(|(_, delta)| delta.to_be_bytes()));
+    table.extend(segments.iter().flat_map(|_| [0, 0]));
+    let mut cmap: Vec<u8> = [0u16, 1, 3, 1].iter().flat_map(|v| v.to_be_bytes()).collect();
+    cmap.extend_from_slice(&12u32.to_be_bytes());
+    cmap.extend(table);
+    cmap
+}
+
+/// `font` with its `tag` table replaced by `data`.
+fn with_table(font: &[u8], tag: &[u8; 4], data: Vec<u8>) -> Vec<u8> {
+    let out: Vec<([u8; 4], Vec<u8>)> = tables(font).into_iter().map(|(t, d)| (t, if &t == tag { data.clone() } else { d.to_vec() })).collect();
+    assemble(&out)
+}
+
+/// Each glyph code the page's content shows, in order, with the font resource it is shown in.
+fn glyphs_shown(doc: &Document) -> Vec<(String, u16)> {
+    let p = pdfcraft_model::pages(doc).swap_remove(0);
+    let list = match &*doc.resolve(p.dict.get(b"Contents").unwrap()) {
+        Object::Array(a) => a.clone(),
+        _ => vec![p.dict.get(b"Contents").unwrap().clone()],
+    };
+    let mut content = Vec::new();
+    for o in &list {
+        if let Object::Stream(s) = &*doc.resolve(o) {
+            content.extend(s.decoded().unwrap());
+        }
+    }
+    let (mut font, mut shown) = (String::new(), Vec::new());
+    for op in pdfcraft_content::parse(&content).ops {
+        if op.is("Tf") {
+            font = String::from_utf8_lossy(op.name(0).unwrap()).into_owned();
+        }
+        let strings: Vec<&Object> = if op.is("Tj") || op.is("'") {
+            op.operands.iter().collect()
+        } else if op.is("TJ") {
+            op.operands.first().and_then(Object::as_array).map(|a| a.iter().collect()).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        for s in strings.into_iter().filter_map(Object::as_string) {
+            shown.extend(s.bytes.chunks(2).map(|c| (font.clone(), u16::from_be_bytes([c[0], *c.get(1).unwrap_or(&0)]))));
+        }
+    }
+    shown
+}
+
+/// Edits `page`'s paragraph to `typed` and checks it reads back as typed and draws as the face
+/// draws it, all of it in the bundled Arabic outlines: nothing in the page's subset, `F1`.
+fn falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, mut page: Document, typed: &str) {
+    let edit = replace_block(&mut page, 0, 0, typed).unwrap();
+    let (reopened, _) = saved(&page);
+    let read: Vec<String> = text_blocks(&reopened, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(read, [typed]);
+    assert_eq!(edit.substituted.as_deref(), pdfcraft_fonts::document_arabic_font().map(|f| f.family));
+    assert!(!fonts_shown(&reopened).contains("F1"), "the subset still draws part of the run: {:?}", glyphs_shown(&reopened));
+    let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", typed, true)));
+    assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
+}
+
+/// Kept Arabic in a subset whose program keeps its cmap and layout tables stays in the page's
+/// font: the glyphs the face's shaping gives (its joining forms, the lam-alef ligature, the
+/// marks) in visual order, shown in the page's own resource, nothing substituted.
+#[test]
+fn kept_arabic_stays_in_its_subset_with_the_faces_glyphs() {
+    let Some(face) = face("Noto Sans Arabic") else {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    };
+    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, KEPT).unwrap();
+    assert!(shaped.glyphs.iter().any(|g| g.text.contains("لا")), "the lam-alef ligature is one glyph");
+    assert!(shaped.glyphs.iter().any(|g| g.text.is_empty()), "the marks are glyphs of their own");
+    let mut doc = producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true);
+    let edit = replace_block(&mut doc, 0, 0, KEPT).unwrap();
+    assert_eq!(edit.substituted, None);
+    let (reopened, _) = saved(&doc);
+    let read: Vec<String> = text_blocks(&reopened, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(read, [KEPT]);
+    let expected: Vec<(String, u16)> = shaped.glyphs.iter().map(|g| ("F1".to_string(), g.id.to_u32() as u16)).collect();
+    assert_eq!(glyphs_shown(&reopened), expected);
+    let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", KEPT, true)));
+    assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
+}
+
+/// A typed letter the subset's cmap doesn't map: the whole run is drawn in the bundled face.
+#[test]
+fn arabic_letter_the_subset_lacks_falls_back_for_the_run() {
+    let Some(face) = face("Noto Sans Arabic") else {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    };
+    assert!(TYPED_NEW.chars().any(|c| !ORIGINAL.contains(c)));
+    let chars: BTreeSet<char> = ORIGINAL.chars().collect();
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        with_table(&subset(face.bytes, keep, true), b"cmap", pruned_cmap(face.bytes, &chars))
+    });
+    falls_back_for_the_run(face, page, TYPED_NEW);
+}
+
+/// A typed letter whose glyphs the subset emptied, though its cmap and layout tables still reach
+/// them: the whole run is drawn in the bundled face.
+#[test]
+fn arabic_letter_the_subset_emptied_falls_back_for_the_run() {
+    let Some(face) = face("Noto Sans Arabic") else {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    };
+    falls_back_for_the_run(face, producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true), TYPED_NEW);
+}
+
+/// Kept text one of whose glyphs (the lam-alef ligature) the subset emptied, though the page's
+/// ToUnicode still names it: the whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_with_an_emptied_glyph_falls_back_for_the_run() {
+    let Some(face) = face("Noto Sans Arabic") else {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+        return;
+    };
+    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, ORIGINAL).unwrap();
+    let ligature = shaped.glyphs.iter().find(|g| g.text.contains("لا")).unwrap().id.to_u32() as usize;
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        let mut keep = keep.clone();
+        keep.remove(&ligature);
+        subset(face.bytes, &keep, true)
+    });
+    falls_back_for_the_run(face, page, KEPT);
 }
