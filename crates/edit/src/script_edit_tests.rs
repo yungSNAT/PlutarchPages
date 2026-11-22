@@ -336,7 +336,8 @@ fn difference((w, a): &(usize, Vec<bool>), (_, b): &(usize, Vec<bool>)) -> f64 {
 }
 
 /// The fonts the page's content selects.
-fn fonts_shown(doc: &Document) -> BTreeSet<String> {
+/// The page's content, its streams joined.
+fn page_content(doc: &Document) -> Vec<u8> {
     let p = pdfcraft_model::pages(doc).swap_remove(0);
     let list = match &*doc.resolve(p.dict.get(b"Contents").unwrap()) {
         Object::Array(a) => a.clone(),
@@ -348,7 +349,11 @@ fn fonts_shown(doc: &Document) -> BTreeSet<String> {
             content.extend(s.decoded().unwrap());
         }
     }
-    pdfcraft_content::parse(&content)
+    content
+}
+
+fn fonts_shown(doc: &Document) -> BTreeSet<String> {
+    pdfcraft_content::parse(&page_content(doc))
         .ops
         .iter()
         .filter(|o| o.is("Tf"))
@@ -506,19 +511,8 @@ fn with_table(font: &[u8], tag: &[u8; 4], data: Vec<u8>) -> Vec<u8> {
 
 /// Each glyph code the page's content shows, in order, with the font resource it is shown in.
 fn glyphs_shown(doc: &Document) -> Vec<(String, u16)> {
-    let p = pdfcraft_model::pages(doc).swap_remove(0);
-    let list = match &*doc.resolve(p.dict.get(b"Contents").unwrap()) {
-        Object::Array(a) => a.clone(),
-        _ => vec![p.dict.get(b"Contents").unwrap().clone()],
-    };
-    let mut content = Vec::new();
-    for o in &list {
-        if let Object::Stream(s) = &*doc.resolve(o) {
-            content.extend(s.decoded().unwrap());
-        }
-    }
     let (mut font, mut shown) = (String::new(), Vec::new());
-    for op in pdfcraft_content::parse(&content).ops {
+    for op in pdfcraft_content::parse(&page_content(doc)).ops {
         if op.is("Tf") {
             font = String::from_utf8_lossy(op.name(0).unwrap()).into_owned();
         }
@@ -549,15 +543,21 @@ fn falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, mut page: Document, 
     assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
 }
 
+/// The craft-fonts Arabic face; `None`, saying the test is skipped, in a build without it.
+fn arabic_face() -> Option<&'static pdfcraft_fonts::CraftFont> {
+    let found = face("Noto Sans Arabic");
+    if found.is_none() {
+        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+    }
+    found
+}
+
 /// Kept Arabic in a subset whose program keeps its cmap and layout tables stays in the page's
 /// font: the glyphs the face's shaping gives (its joining forms, the lam-alef ligature, the
 /// marks) in visual order, shown in the page's own resource, nothing substituted.
 #[test]
 fn kept_arabic_stays_in_its_subset_with_the_faces_glyphs() {
-    let Some(face) = face("Noto Sans Arabic") else {
-        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
-        return;
-    };
+    let Some(face) = arabic_face() else { return };
     let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, KEPT).unwrap();
     assert!(shaped.glyphs.iter().any(|g| g.text.contains("لا")), "the lam-alef ligature is one glyph");
     assert!(shaped.glyphs.iter().any(|g| g.text.is_empty()), "the marks are glyphs of their own");
@@ -576,10 +576,7 @@ fn kept_arabic_stays_in_its_subset_with_the_faces_glyphs() {
 /// A typed letter the subset's cmap doesn't map: the whole run is drawn in the bundled face.
 #[test]
 fn arabic_letter_the_subset_lacks_falls_back_for_the_run() {
-    let Some(face) = face("Noto Sans Arabic") else {
-        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
-        return;
-    };
+    let Some(face) = arabic_face() else { return };
     assert!(TYPED_NEW.chars().any(|c| !ORIGINAL.contains(c)));
     let chars: BTreeSet<char> = ORIGINAL.chars().collect();
     let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
@@ -592,10 +589,7 @@ fn arabic_letter_the_subset_lacks_falls_back_for_the_run() {
 /// them: the whole run is drawn in the bundled face.
 #[test]
 fn arabic_letter_the_subset_emptied_falls_back_for_the_run() {
-    let Some(face) = face("Noto Sans Arabic") else {
-        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
-        return;
-    };
+    let Some(face) = arabic_face() else { return };
     falls_back_for_the_run(face, producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true), TYPED_NEW);
 }
 
@@ -603,10 +597,7 @@ fn arabic_letter_the_subset_emptied_falls_back_for_the_run() {
 /// ToUnicode still names it: the whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_with_an_emptied_glyph_falls_back_for_the_run() {
-    let Some(face) = face("Noto Sans Arabic") else {
-        eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
-        return;
-    };
+    let Some(face) = arabic_face() else { return };
     let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, ORIGINAL).unwrap();
     let ligature = shaped.glyphs.iter().find(|g| g.text.contains("لا")).unwrap().id.to_u32() as usize;
     let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {

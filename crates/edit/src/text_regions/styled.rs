@@ -156,6 +156,33 @@ struct ThaiShaping {
     own_codes: std::collections::HashSet<String>,
 }
 
+impl ThaiShaping {
+    /// A draft-only name for span `index`, measured as `source`'s font, whose rows `resource`'s
+    /// program shapes: another span may still show that resource's existing codes. `arabic`: an
+    /// Arabic span's ([`ThaiShaping::own_codes`]).
+    fn program_name(
+        &mut self,
+        metrics: &mut std::collections::BTreeMap<String, Metrics>,
+        source: &TextLine,
+        index: usize,
+        resource: String,
+        arabic: bool,
+    ) -> String {
+        let mut name = format!("PCProgram{}{index}", if arabic { "Arabic" } else { "Thai" });
+        while metrics.contains_key(&name) {
+            name.push('_');
+        }
+        if let Some(m) = metrics.get(&source.font).cloned() {
+            metrics.insert(name.clone(), m);
+        }
+        if arabic {
+            self.own_codes.insert(name.clone());
+        }
+        self.program.insert(name.clone(), resource);
+        name
+    }
+}
+
 /// How a Thai span keeps its source face ([`legacy_thai_font`]).
 enum ThaiSpan {
     /// In this resource's existing codes.
@@ -215,7 +242,7 @@ impl CharacterPreparation<'_> {
                 substituted = pdfcraft_fonts::document_thai_font().map(|f| f.family.to_owned());
             }
             let arabic =
-                if use_thai_outlines || selected_resource.is_some() { None } else { arabic_span(resolver.doc, resolver.fonts, source, span) };
+                (!use_thai_outlines && selected_resource.is_none()).then(|| arabic_span(resolver.doc, resolver.fonts, source, span)).flatten();
             let use_arabic_outlines = matches!(arabic, Some(ArabicSpan::Outlines));
             if use_arabic_outlines {
                 substituted = pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned());
@@ -266,21 +293,7 @@ impl CharacterPreparation<'_> {
             };
             let (existing_thai, program_name) = match existing_thai {
                 Some(ThaiSpan::InPlace(name)) => (Some(name), None),
-                Some(ThaiSpan::Program(resource)) => {
-                    // Draft-only too: another span may still show this resource's existing codes.
-                    let mut name = format!("PCProgram{}{index}", if arabic_program { "Arabic" } else { "Thai" });
-                    while resolver.metrics.contains_key(&name) {
-                        name.push('_');
-                    }
-                    if let Some(m) = resolver.metrics.get(&source.font).cloned() {
-                        resolver.metrics.insert(name.clone(), m);
-                    }
-                    if arabic_program {
-                        thai.own_codes.insert(name.clone());
-                    }
-                    thai.program.insert(name.clone(), resource);
-                    (None, Some(name))
-                }
+                Some(ThaiSpan::Program(resource)) => (None, Some(thai.program_name(resolver.metrics, source, index, resource, arabic_program))),
                 None => (None, None),
             };
             let start = range.start;
