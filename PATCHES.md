@@ -323,3 +323,13 @@ issue each Monday (cron 04:43 UTC) with how far `main` trails upstream.
    `ATTRIBUTION.md`.
 4. A failure that also occurs on plain upstream isn't the merge's fault: check before patching it.
 5. Update the commit above.
+
+The fork's own tests of an upstream test module sit in a `fork_tests` child module, so a merge
+meets the fork's tests only where it changed or removed upstream's own (those stay in upstream's
+file, and an upstream edit to one still conflicts). The upstream file adds `mod fork_tests;` after
+its `use` lines, and the tests live in `<file stem>/fork_tests.rs`: `crates/audit/src/tests.rs`
+keeps them in `crates/audit/src/tests/fork_tests.rs`, and an inline `mod tests { }` in `foo.rs` in
+`foo/tests/fork_tests.rs`. A file that owns no directory (an integration test's crate root such as
+`tests/optimize.rs`, or a file loaded through `#[path]`) names the file:
+`#[path = "<file stem>/fork_tests.rs"]`. Add new fork tests there, not among upstream's, and point
+`parity/` evidence at them.
