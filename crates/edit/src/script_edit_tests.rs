@@ -702,6 +702,21 @@ fn joining_is_judged_only_for_letters_the_bundled_face_draws() {
     assert!(!pdfcraft_fonts::source_shaping::joins_arabic(face.bytes, &blind, KEPT));
 }
 
+/// The space glyph, which has no ink, stands only for white space and default-ignorable
+/// characters: a cluster of a letter a cmap sends to it would draw nothing, so its shaping is
+/// refused.
+#[test]
+fn the_space_glyph_never_stands_for_a_letter() {
+    use pdfcraft_fonts::source_shaping::{ShapedRun, draws_every_glyph, shape};
+    let Some(face) = arabic_face() else { return };
+    let space = shape(face.bytes, " ").unwrap().glyphs.remove(0);
+    let run =
+        |text: &str| ShapedRun { glyphs: vec![pdfcraft_fonts::source_shaping::ShapedGlyph { text: text.into(), ..space.clone() }], advance: 0.0 };
+    assert!(draws_every_glyph(face.bytes, &run(" ")));
+    assert!(draws_every_glyph(face.bytes, &run("\u{200d}")));
+    assert!(!draws_every_glyph(face.bytes, &run("ك")));
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
