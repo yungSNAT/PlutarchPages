@@ -26,21 +26,21 @@ pub fn required(text: &str) -> bool {
 /// Character coverage alone does not show that stacked vowels and tones can be laid out.
 /// OpenType Thai requires `mark`/`mkmk` (GPOS); `ccmp` substitution (GSUB) is optional.
 pub fn has_thai_layout(bytes: &[u8]) -> bool {
-    FontRef::new(bytes).is_ok_and(|f| positions_thai_marks(&f))
+    FontRef::new(bytes).is_ok_and(|f| positions_marks(&f, b"thai"))
 }
 
-/// Whether the GPOS features the shaper uses for Thai include `mark` or `mkmk`. The selection is
-/// HarfRust's, through the same read-fonts calls: the `thai` script, else `DFLT`, `dflt` or
+/// Whether the GPOS features the shaper uses for `script` include `mark` or `mkmk`. The selection
+/// is HarfRust's, through the same read-fonts calls: the `script` script, else `DFLT`, `dflt` or
 /// `latn` (`ScriptList::select`); then, given no language, a language system tagged `dflt`,
 /// else the script's default one. Marks under a script or language it doesn't select don't
 /// count, nor does a GPOS with only kerning.
-fn positions_thai_marks(face: &FontRef) -> bool {
+fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
     use skrifa::Tag;
     let Ok(gpos) = face.gpos() else { return false };
     let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
     let records = features.feature_records();
     let marks = |index: u16| records.get(usize::from(index)).is_some_and(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk");
-    let Some(selected) = scripts.select(&[Tag::new(b"thai")]) else { return false };
+    let Some(selected) = scripts.select(&[Tag::new(script)]) else { return false };
     let Ok(script) = scripts.get(selected.index) else { return false };
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
@@ -57,7 +57,7 @@ fn positions_thai_marks(face: &FontRef) -> bool {
 /// letter's isolated, initial, medial and final forms must differ wherever the reference's
 /// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
 /// in a glyph other than its nominal one (a joining form or part of a ligature), the program's
-/// must too. A cmap that maps a letter to one of its positional forms (rebuilt from ToUnicode, or
+/// must too; and where the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps a letter to one of its positional forms (rebuilt from ToUnicode, or
 /// written from the glyphs a page showed) leaves the GSUB with nothing to substitute, or
 /// substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
@@ -71,11 +71,16 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     }
     let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
     let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
-    let (own_map, reference_map) = (own.charmap(), reference.charmap());
+    let own_map = own.charmap();
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
     let letter =
         |c: char| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
+    // Marks are placed by GPOS; without it they would fall back to an approximate position.
+    let mark = |c: char| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc | 0x06df..=0x06e4 | 0x06e7..=0x06e8 | 0x06ea..=0x06ed | 0x08ca..=0x08ff);
+    if text.chars().any(mark) && !positions_marks(&own, b"arab") {
+        return false;
+    }
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
     }
@@ -83,9 +88,11 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
         run.char_indices().filter(|(_, c)| letter(*c)).all(|(at, c)| {
-            let (Some(nominal), Some(reference_nominal)) = (own_map.map(c), reference_map.map(c)) else { return false };
+            // Each face against its own isolated form: a face may draw a letter as a base and its
+            // dots even when it stands alone.
+            let isolated = |shaper: &harfrust::Shaper| cluster_at(&rtl_clusters(shaper, c.encode_utf8(&mut [0; 4])), 0);
             let (ours, theirs) = (cluster_at(&ours, at), cluster_at(&theirs, at));
-            drawn(&ours) && drawn(&theirs) && (theirs.contains(&reference_nominal.to_u32()) || !ours.contains(&nominal.to_u32()))
+            drawn(&ours) && drawn(&theirs) && (theirs == isolated(&reference_shaper) || ours != isolated(&own_shaper))
         })
     })
 }
@@ -145,7 +152,7 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     let face = FontRef::new(bytes).map_err(|e| e.to_string())?;
     // Only a vowel or tone mark set on its base (or Sara Am, whose Nikhahit is) needs positioning:
     // digits and bare letters shape the same without it.
-    if !legacy_thai && text.chars().any(|c| matches!(u32::from(c), 0x0e31 | 0x0e33..=0x0e3a | 0x0e47..=0x0e4e)) && !positions_thai_marks(&face) {
+    if !legacy_thai && text.chars().any(|c| matches!(u32::from(c), 0x0e31 | 0x0e33..=0x0e3a | 0x0e47..=0x0e4e)) && !positions_marks(&face, b"thai") {
         return Err("the source subset has no Thai mark positioning (GPOS mark/mkmk); select its full font".into());
     }
     if text.chars().any(|c| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x08a0..=0x0dff | 0x0e80..=0x0fff | 0x1780..=0x17ff))
@@ -226,24 +233,24 @@ pub fn draws_every_glyph(bytes: &[u8], run: &ShapedRun) -> bool {
     }
     let Ok(face) = FontRef::new(bytes) else { return false };
     let (outlines, space) = (face.outline_glyphs(), face.charmap().map(' '));
-    // A cluster's text is on its first glyph; the others carry none.
-    let mut cluster = "";
+    let blank = |c: char| c.is_whitespace() || default_ignorable(c);
+    // A cluster's text is on its first glyph; the others carry none. The space glyph may stand
+    // for each white-space or default-ignorable character of its cluster once: a cmap may map a
+    // letter to that glyph id too, and a joiner shares its letter's cluster.
+    let (mut cluster, mut blanks) = ("", 0usize);
     run.glyphs.iter().all(|glyph| {
         if !glyph.text.is_empty() {
             cluster = &glyph.text;
+            blanks = cluster.chars().filter(|&c| blank(c)).count();
         }
         let inked = || {
             let mut ink = Ink(false);
             outlines.get(glyph.id).is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut ink).is_ok())
                 && ink.0
         };
-        // The space glyph only where the cluster has something it may stand for: a cmap may map
-        // a letter to that glyph id too.
-        let blank = |c: char| c.is_whitespace() || default_ignorable(c);
-        glyph.id.to_u32() != 0
-            && ((Some(glyph.id) == space && cluster.chars().any(blank))
-                || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace))
-                || inked())
+        let stands_for_blank = Some(glyph.id) == space && blanks > 0;
+        blanks -= usize::from(stands_for_blank);
+        glyph.id.to_u32() != 0 && (stands_for_blank || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace)) || inked())
     })
 }
 

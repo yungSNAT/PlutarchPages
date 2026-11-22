@@ -718,6 +718,32 @@ fn the_space_glyph_never_stands_for_a_letter() {
     assert!(draws_every_glyph(face.bytes, &run(" ")));
     assert!(draws_every_glyph(face.bytes, &run("\u{200d}")));
     assert!(!draws_every_glyph(face.bytes, &run("ك")));
+    // A joiner shares its letter's cluster: the space glyph may stand for the joiner, not both.
+    assert!(!draws_every_glyph(face.bytes, &run("ك\u{200d}")));
+    let both = |text: &str| {
+        let mut joined = shape(face.bytes, text).unwrap();
+        joined.glyphs.push(pdfcraft_fonts::source_shaping::ShapedGlyph { text: String::new(), ..space.clone() });
+        joined
+    };
+    assert!(draws_every_glyph(face.bytes, &both("ك\u{200c}")));
+    let mut alone = both("ك\u{200c}");
+    alone.glyphs.retain(|g| g.id == space.id);
+    alone.glyphs[0].text = "ك\u{200c}".into();
+    assert!(!draws_every_glyph(face.bytes, &alone));
+}
+
+/// A subset that kept its cmap, GSUB and every outline but dropped its GPOS: the marks of the
+/// kept text would be placed by guesswork. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_marks_in_a_subset_without_mark_positioning_fall_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    assert!(KEPT.chars().any(|c| matches!(u32::from(c), 0x064b..=0x065f)), "the kept text has marks");
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        let out: Vec<([u8; 4], Vec<u8>)> =
+            tables(&subset(face.bytes, keep, true)).into_iter().filter(|(t, _)| t != b"GPOS").map(|(t, d)| (t, d.to_vec())).collect();
+        assemble(&out)
+    });
+    falls_back_for_the_run(face, page, KEPT);
 }
 
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
