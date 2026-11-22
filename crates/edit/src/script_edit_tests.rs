@@ -720,16 +720,15 @@ fn the_space_glyph_never_stands_for_a_letter() {
     assert!(!draws_every_glyph(face.bytes, &run("ك")));
     // A joiner shares its letter's cluster: the space glyph may stand for the joiner, not both.
     assert!(!draws_every_glyph(face.bytes, &run("ك\u{200d}")));
-    let both = |text: &str| {
-        let mut joined = shape(face.bytes, text).unwrap();
-        joined.glyphs.push(pdfcraft_fonts::source_shaping::ShapedGlyph { text: String::new(), ..space.clone() });
-        joined
-    };
-    assert!(draws_every_glyph(face.bytes, &both("ك\u{200c}")));
-    let mut alone = both("ك\u{200c}");
-    alone.glyphs.retain(|g| g.id == space.id);
-    alone.glyphs[0].text = "ك\u{200c}".into();
-    assert!(!draws_every_glyph(face.bytes, &alone));
+    // Kaf and a non-joiner as the shaper draws them pass; their cluster with only space glyphs
+    // doesn't.
+    let joined = shape(face.bytes, "ك\u{200c}").unwrap();
+    assert!(draws_every_glyph(face.bytes, &joined));
+    let mut blanked = joined.clone();
+    for glyph in &mut blanked.glyphs {
+        glyph.id = space.id;
+    }
+    assert!(!draws_every_glyph(face.bytes, &blanked));
 }
 
 /// A subset that kept its cmap, GSUB and every outline but dropped its GPOS: the marks of the

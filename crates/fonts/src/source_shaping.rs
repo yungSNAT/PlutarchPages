@@ -236,23 +236,34 @@ pub fn draws_every_glyph(bytes: &[u8], run: &ShapedRun) -> bool {
     let Ok(face) = FontRef::new(bytes) else { return false };
     let (outlines, space) = (face.outline_glyphs(), face.charmap().map(' '));
     let blank = |c: char| c.is_whitespace() || default_ignorable(c);
-    // A cluster's text is on its first glyph; the others carry none. The space glyph may stand
-    // for each white-space or default-ignorable character of its cluster once: a cmap may map a
-    // letter to that glyph id too, and a joiner shares its letter's cluster.
-    let (mut cluster, mut blanks) = ("", 0usize);
-    run.glyphs.iter().all(|glyph| {
-        if !glyph.text.is_empty() {
-            cluster = &glyph.text;
-            blanks = cluster.chars().filter(|&c| blank(c)).count();
+    let inked = |id: GlyphId| {
+        let mut ink = Ink(false);
+        outlines.get(id).is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut ink).is_ok()) && ink.0
+    };
+    // A cluster's text is on its first glyph; the others carry none.
+    let mut clusters: Vec<(&str, Vec<GlyphId>)> = Vec::new();
+    for glyph in &run.glyphs {
+        if !glyph.text.is_empty() || clusters.is_empty() {
+            clusters.push((&glyph.text, Vec::new()));
         }
-        let inked = || {
-            let mut ink = Ink(false);
-            outlines.get(glyph.id).is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut ink).is_ok())
-                && ink.0
-        };
-        let stands_for_blank = Some(glyph.id) == space && blanks > 0;
-        blanks -= usize::from(stands_for_blank);
-        glyph.id.to_u32() != 0 && (stands_for_blank || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace)) || inked())
+        if let Some((_, ids)) = clusters.last_mut() {
+            ids.push(glyph.id);
+        }
+    }
+    // The space glyph may stand for each white-space or default-ignorable character of its cluster
+    // once (a joiner shares its letter's cluster), and a cluster with anything else must draw ink:
+    // a cmap may map a letter to the space glyph's id too.
+    clusters.iter().all(|(text, ids)| {
+        let mut blanks = text.chars().filter(|&c| blank(c)).count();
+        let (white, mut drew) = (!text.is_empty() && text.chars().all(char::is_whitespace), false);
+        let each = ids.iter().all(|&id| {
+            let stands_for_blank = Some(id) == space && blanks > 0;
+            blanks -= usize::from(stands_for_blank);
+            let ink = !stands_for_blank && !white && inked(id);
+            drew |= ink;
+            id.to_u32() != 0 && (stands_for_blank || white || ink)
+        });
+        each && (white || drew || text.chars().all(blank))
     })
 }
 
