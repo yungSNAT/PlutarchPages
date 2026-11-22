@@ -132,8 +132,8 @@ fn the_window_names_the_flatpak_desktop_entry_only_in_its_own_sandbox() {
 #[test]
 fn the_flatpak_desktop_entries_name_the_window_class() {
     for manifest in [
-        include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.yml"),
-        include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml"),
+        include_str!("../../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.yml"),
+        include_str!("../../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml"),
     ] {
         assert!(manifest.contains(&format!("s/^StartupWMClass=.*/StartupWMClass={}/", super::super::FLATPAK_APP_ID)));
     }
