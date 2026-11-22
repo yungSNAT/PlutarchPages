@@ -124,6 +124,47 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     Ok(ShapedRun { glyphs, advance: x })
 }
 
+/// Whether `bytes`, the program that shaped `run`, draws every glyph of it. A subset that keeps
+/// glyph ids empties the glyphs it drops (`glyf`/`loca` or CFF charstrings with no contour), and
+/// its cmap and layout tables may still lead to them; they would show nothing. `.notdef` never
+/// counts. Empty glyphs are real only for white space: the space glyph, which the shaper also
+/// gives default-ignorable characters such as joiners, and a cluster of white space.
+pub fn draws_every_glyph(bytes: &[u8], run: &ShapedRun) -> bool {
+    use skrifa::MetadataProvider as _;
+    use skrifa::instance::{LocationRef, Size};
+    use skrifa::outline::{DrawSettings, OutlinePen};
+    /// Whether anything but a bare move was drawn.
+    struct Ink(bool);
+    impl OutlinePen for Ink {
+        fn move_to(&mut self, _: f32, _: f32) {}
+        fn line_to(&mut self, _: f32, _: f32) {
+            self.0 = true;
+        }
+        fn quad_to(&mut self, _: f32, _: f32, _: f32, _: f32) {
+            self.0 = true;
+        }
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, _: f32, _: f32) {
+            self.0 = true;
+        }
+        fn close(&mut self) {}
+    }
+    let Ok(face) = FontRef::new(bytes) else { return false };
+    let (outlines, space) = (face.outline_glyphs(), face.charmap().map(' '));
+    // A cluster's text is on its first glyph; the others carry none.
+    let mut cluster = "";
+    run.glyphs.iter().all(|glyph| {
+        if !glyph.text.is_empty() {
+            cluster = &glyph.text;
+        }
+        let inked = || {
+            let mut ink = Ink(false);
+            outlines.get(glyph.id).is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut ink).is_ok())
+                && ink.0
+        };
+        glyph.id.to_u32() != 0 && (Some(glyph.id) == space || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace)) || inked())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,24 +1,48 @@
 //! The fork's choice of bundled faces for Arabic and Chinese, Japanese and Korean spans of an
 //! edited paragraph (see `PATCHES.md`).
 
-use super::super::{CraftFont, Dict, Document, EditError, Metrics, TextLine, has_arabic_letters, row_break};
+use super::super::{CraftFont, Dict, Document, EditError, TextLine, has_arabic_letters, row_break};
 use super::{covers_rows, program_candidates, shape_with_program};
-use crate::text::fallback::is_subset;
 
-/// Whether `span` (of `source`'s paragraph) is Arabic that the bundled Arabic face draws, and no
-/// complete program of the source's face on the page can shape it. A subset can't: shaping picks
-/// the letters' joining forms, which it may not have kept, and its character map may still name
-/// glyphs whose outlines it dropped. Its letters are then shaped with the bundled face and drawn
-/// from its outlines, as Add text draws Arabic, and the edit says the font was substituted.
-pub(super) fn arabic_outlines(doc: &Document, fonts: &Dict, source: &TextLine, span: &str) -> bool {
-    let Some(face) = pdfcraft_fonts::document_arabic_font() else { return false };
-    if !has_arabic_letters(span) || !covers_rows(face.bytes, span) {
-        return false;
+/// How an Arabic span of an edited paragraph is drawn ([`arabic_span`]).
+pub(super) enum ArabicSpan {
+    /// Shaped by this resource's own program: a font of the source's face on the page.
+    Program(String),
+    /// Shaped with the bundled Arabic face and drawn from its outlines.
+    Outlines,
+}
+
+/// How `span` (of `source`'s paragraph) is drawn, if it has Arabic letters. The first program of
+/// the source's face on the page that shapes every row and draws every glyph its shaping chose
+/// takes the whole span, a subset's too: its glyphs are the ones the page already draws. A subset
+/// that emptied one of them, or whose cmap or layout tables can't reach one, can't; the span is
+/// then shaped with the bundled face and drawn from its outlines, as Add text draws Arabic, and
+/// the edit says the font was substituted. Either way one font draws the span, never part of a
+/// word. `None` (not Arabic, or no font can) leaves the span to the other paths.
+pub(super) fn arabic_span(doc: &Document, fonts: &Dict, source: &TextLine, span: &str) -> Option<ArabicSpan> {
+    if !has_arabic_letters(span) {
+        return None;
     }
-    let Some(font) = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)) else { return true };
-    !program_candidates(doc, fonts, &source.font, font, &source.base_font).into_iter().any(|(_, font)| {
-        !is_subset(&Metrics::from_dict(doc, &font).base_font) && span.split(row_break).all(|row| shape_with_program(doc, &font, row).is_some())
-    })
+    let program = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)).and_then(|font| {
+        program_candidates(doc, fonts, &source.font, font, &source.base_font)
+            .into_iter()
+            .find(|(_, font)| span.split(row_break).all(|row| shape_with_program(doc, font, row).is_some()))
+    });
+    match program {
+        Some((name, _)) => Some(ArabicSpan::Program(name)),
+        None => pdfcraft_fonts::document_arabic_font().filter(|face| covers_rows(face.bytes, span)).map(|_| ArabicSpan::Outlines),
+    }
+}
+
+/// Whether `font` is a TrueType CID font whose codes are its program's glyph ids (Identity-H and
+/// an identity `/CIDToGIDMap`), so text its program shaped is shown in its own codes.
+pub(super) fn codes_are_glyph_ids(doc: &Document, font: &Dict) -> bool {
+    let name = |dict: &Dict, key: &[u8], value: &[u8]| dict.get(key).is_some_and(|o| doc.resolve(o).as_name() == Some(value));
+    let descendant = font.get(b"DescendantFonts").and_then(|d| doc.resolve(d).as_array().and_then(|a| a.first()).cloned()).and_then(|d| doc.dict(&d));
+    name(font, b"Subtype", b"Type0")
+        && name(font, b"Encoding", b"Identity-H")
+        && descendant
+            .is_some_and(|d| name(&d, b"Subtype", b"CIDFontType2") && (d.get(b"CIDToGIDMap").is_none() || name(&d, b"CIDToGIDMap", b"Identity")))
 }
 
 /// Whether a bundled face is for Chinese, Japanese or Korean.
@@ -26,7 +50,7 @@ pub(super) fn is_cjk_face(face: &CraftFont) -> bool {
     ["Jpan", "Hani", "Hans", "Hant", "Kore", "Hang"].iter().any(|script| face.covers(script))
 }
 
-/// `text` shaped with the bundled Arabic face, whose outlines draw it ([`arabic_outlines`]).
+/// `text` shaped with the bundled Arabic face, whose outlines draw it ([`ArabicSpan::Outlines`]).
 pub(super) fn shape_arabic(text: &str) -> Result<pdfcraft_fonts::source_shaping::ShapedRun, EditError> {
     let face = pdfcraft_fonts::document_arabic_font().ok_or_else(|| EditError::Invalid("the bundled Arabic font is not in this build".into()))?;
     pdfcraft_fonts::source_shaping::shape(face.bytes, text).map_err(EditError::Invalid)

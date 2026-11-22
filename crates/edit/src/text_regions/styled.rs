@@ -6,7 +6,7 @@ use super::{
     japanese_glyph_from, needs_type3, no_fallback_font, no_glyph_for, page_dict, reveal_ops, rewritten_contents, row_break, source_encodes,
     source_family, source_program, source_show, source_space, source_width, splice, type3_faces, type3_glyph, write_type3_glyphs,
 };
-use scripts::{arabic_outlines, is_cjk_face, shape_arabic};
+use scripts::{ArabicSpan, arabic_span, codes_are_glyph_ids, is_cjk_face, shape_arabic};
 
 #[path = "styled/scripts.rs"]
 mod scripts;
@@ -142,13 +142,18 @@ struct PreparedCharacters {
 struct ThaiShaping {
     /// Draft-only names drawn with the bundled Thai outlines.
     outlined: std::collections::HashSet<String>,
-    /// Draft-only names drawn with the bundled Arabic outlines ([`arabic_outlines`]).
+    /// Draft-only names drawn with the bundled Arabic outlines ([`arabic_span`]).
     arabic: std::collections::HashSet<String>,
     /// Source faces shaped in their existing codes, by resource name.
     legacy: HashMap<String, LegacyFace>,
     /// Draft-only names whose rows, Latin ones included, are shaped and embedded with the
-    /// complete program of this same-face resource: a span its subsets can't show in place.
+    /// complete program of this same-face resource: a span its subsets can't show in place. An
+    /// Arabic span's may be a subset that draws every glyph its shaping chose.
     program: HashMap<String, String>,
+    /// The names of `program` an Arabic span took ([`arabic_span`]): shown in the resource's own
+    /// codes where those are its glyph ids ([`codes_are_glyph_ids`]), so the page's font draws
+    /// them with no copy of its program.
+    own_codes: std::collections::HashSet<String>,
 }
 
 /// How a Thai span keeps its source face ([`legacy_thai_font`]).
@@ -209,12 +214,16 @@ impl CharacterPreparation<'_> {
             if use_thai_outlines {
                 substituted = pdfcraft_fonts::document_thai_font().map(|f| f.family.to_owned());
             }
-            let use_arabic_outlines =
-                !use_thai_outlines && selected_resource.is_none() && arabic_outlines(resolver.doc, resolver.fonts, source, span);
+            let arabic =
+                if use_thai_outlines || selected_resource.is_some() { None } else { arabic_span(resolver.doc, resolver.fonts, source, span) };
+            let use_arabic_outlines = matches!(arabic, Some(ArabicSpan::Outlines));
             if use_arabic_outlines {
                 substituted = pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned());
             }
-            let existing_thai = if !use_thai_outlines && !use_arabic_outlines {
+            let arabic_program = matches!(arabic, Some(ArabicSpan::Program(_)));
+            let existing_thai = if let Some(ArabicSpan::Program(resource)) = arabic {
+                Some(ThaiSpan::Program(resource))
+            } else if !use_thai_outlines && !use_arabic_outlines {
                 let chosen = match selected_resource {
                     None => Some(source.clone()),
                     Some(resource) => resolver.fonts.get(resource.as_bytes()).and_then(|f| resolver.doc.dict(f)).map(|font| {
@@ -259,12 +268,15 @@ impl CharacterPreparation<'_> {
                 Some(ThaiSpan::InPlace(name)) => (Some(name), None),
                 Some(ThaiSpan::Program(resource)) => {
                     // Draft-only too: another span may still show this resource's existing codes.
-                    let mut name = format!("PCProgramThai{index}");
+                    let mut name = format!("PCProgram{}{index}", if arabic_program { "Arabic" } else { "Thai" });
                     while resolver.metrics.contains_key(&name) {
                         name.push('_');
                     }
                     if let Some(m) = resolver.metrics.get(&source.font).cloned() {
                         resolver.metrics.insert(name.clone(), m);
+                    }
+                    if arabic_program {
+                        thai.own_codes.insert(name.clone());
                     }
                     thai.program.insert(name.clone(), resource);
                     (None, Some(name))
@@ -1257,14 +1269,16 @@ impl FontStyle {
 }
 
 /// `text` shaped by `font`'s embedded program with its own layout, when the program covers it and
-/// may be embedded again (`embed_mapping` refuses one that may not, so a later program is tried).
+/// may be embedded again (`embed_mapping` refuses one that may not, so a later program is tried),
+/// and draws every glyph the shaping chose: a subset's cmap and layout tables may lead to glyphs
+/// it emptied.
 fn shape_with_program(doc: &Document, font: &Dict, text: &str) -> Option<(Vec<u8>, pdfcraft_fonts::source_shaping::ShapedRun)> {
     let bytes = pdfcraft_fonts::pdf::embedded_sfnt(doc, font)?;
     if pdfcraft_fonts::embedding::validate(&bytes).is_err() || !pdfcraft_fonts::embedding::covers(&bytes, text) {
         return None;
     }
     let shaped = pdfcraft_fonts::source_shaping::shape(&bytes, text).ok()?;
-    Some((bytes, shaped))
+    pdfcraft_fonts::source_shaping::draws_every_glyph(&bytes, &shaped).then_some((bytes, shaped))
 }
 
 /// Shape in the source or an explicitly registered matching full face. Never use interface fonts.
@@ -1284,6 +1298,17 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
         let family = Metrics::from_dict(doc, &font).base_font;
         let (bytes, shaped) = shape_with_program(doc, &font, text)
             .ok_or_else(|| EditError::Invalid(format!("{family} cannot shape this text with its own layout; choose a font that covers it")))?;
+        if thai.own_codes.contains(name) && codes_are_glyph_ids(doc, &font) {
+            let codes = shaped
+                .glyphs
+                .iter()
+                .map(|glyph| {
+                    let code = u16::try_from(glyph.id.to_u32()).map_err(|_| EditError::Invalid("shaped glyph limit".into()))?;
+                    Ok((resource.clone(), code.to_be_bytes().to_vec()))
+                })
+                .collect::<Result<Vec<_>, EditError>>()?;
+            return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Existing(codes) }));
+        }
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Program { bytes, family } }));
     }
     if !pdfcraft_fonts::source_shaping::required(text) {
