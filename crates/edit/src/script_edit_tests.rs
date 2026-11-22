@@ -335,7 +335,6 @@ fn difference((w, a): &(usize, Vec<bool>), (_, b): &(usize, Vec<bool>)) -> f64 {
     if total == 0 { 0.0 } else { (unmatched(a, b) + unmatched(b, a)) as f64 / total as f64 }
 }
 
-/// The fonts the page's content selects.
 /// The page's content, its streams joined.
 fn page_content(doc: &Document) -> Vec<u8> {
     let p = pdfcraft_model::pages(doc).swap_remove(0);
@@ -352,6 +351,7 @@ fn page_content(doc: &Document) -> Vec<u8> {
     content
 }
 
+/// The fonts the page's content selects.
 fn fonts_shown(doc: &Document) -> BTreeSet<String> {
     pdfcraft_content::parse(&page_content(doc))
         .ops
@@ -499,8 +499,13 @@ fn nominal(program: &[u8], c: char) -> u16 {
 /// A cmap mapping only `chars`, each to its glyph in `program`, as a subsetter that prunes the
 /// cmap writes it.
 fn pruned_cmap(program: &[u8], chars: &BTreeSet<char>) -> Vec<u8> {
+    cmap_table(&chars.iter().map(|&c| (c, nominal(program, c))).collect())
+}
+
+/// A cmap mapping each of `glyphs`' characters to its glyph.
+fn cmap_table(glyphs: &BTreeMap<char, u16>) -> Vec<u8> {
     // One segment a character, then the closing one, which maps U+FFFF to glyph 0.
-    let mut segments: Vec<(u16, u16)> = chars.iter().map(|&c| (c as u16, nominal(program, c).wrapping_sub(c as u16))).collect();
+    let mut segments: Vec<(u16, u16)> = glyphs.iter().map(|(&c, &glyph)| (c as u16, glyph.wrapping_sub(c as u16))).collect();
     segments.push((0xFFFF, 1));
     let n = segments.len() as u16;
     let range = 2 * (1u16 << (15 - n.leading_zeros()));
@@ -544,6 +549,21 @@ fn glyphs_shown(doc: &Document) -> Vec<(String, u16)> {
         }
     }
     shown
+}
+
+/// The text the ToUnicode of each font the page's content shows a glyph in names for it,
+/// ignoring `ActualText`: what a reader without it copies, in the order shown.
+fn to_unicode_text(doc: &Document) -> String {
+    let page = pdfcraft_model::pages(doc).swap_remove(0);
+    let resources = doc.dict(page.dict.get(b"Resources").unwrap()).unwrap();
+    let fonts = doc.dict(resources.get(b"Font").unwrap()).unwrap();
+    glyphs_shown(doc)
+        .into_iter()
+        .filter_map(|(name, code)| {
+            let font = doc.dict(fonts.get(name.as_bytes())?)?;
+            pdfcraft_fonts::pdf::Metrics::from_dict(doc, &font).text_of(u32::from(code)).map(|t| t.into_owned())
+        })
+        .collect()
 }
 
 /// Edits `page`'s paragraph to `typed` and checks it reads back as typed and draws as the face
@@ -643,17 +663,79 @@ fn kept_arabic_in_a_subset_without_its_own_cmap_falls_back_for_the_run() {
     falls_back_for_the_run(face, page, "كم عليكم");
 }
 
-/// A subset whose GSUB has no Arabic joining features, though it kept the isolated forms: every
-/// glyph has ink, but every letter would be drawn isolated. The whole run is drawn in the
+/// A subset whose own cmap maps kaf to its medial form, as a producer that writes the cmap from
+/// the glyphs it showed does, with the layout tables whole: the initial-form lookup covers
+/// nominal kaf, not the medial form, so kaf typed at a word's start would be drawn medial in the
+/// page's font, every glyph inked. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_in_a_subset_whose_cmap_maps_a_letter_to_a_joining_form_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let kafs = pdfcraft_fonts::source_shaping::shape(face.bytes, "ككك").unwrap();
+    let medial = kafs.glyphs[1].id.to_u32() as u16;
+    assert_ne!(medial, nominal(face.bytes, 'ك'));
+    let glyphs: BTreeMap<char, u16> = ORIGINAL.chars().map(|c| (c, if c == 'ك' { medial } else { nominal(face.bytes, c) })).collect();
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| with_table(&subset(face.bytes, keep, true), b"cmap", cmap_table(&glyphs)));
+    falls_back_for_the_run(face, page, "كم عليكم");
+}
+
+/// Edits kept text on a page whose subset kept the isolated forms, each with ink, and has `gsub`
+/// for its GSUB, under which every letter stays isolated: the whole run must be drawn in the
 /// bundled face.
+fn isolated_only_falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, gsub: Vec<u8>) {
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        let keep: BTreeSet<usize> = keep.iter().copied().chain(ORIGINAL.chars().map(|c| usize::from(nominal(face.bytes, c)))).collect();
+        with_table(&subset(face.bytes, &keep, true), b"GSUB", gsub)
+    });
+    falls_back_for_the_run(face, page, KEPT);
+}
+
+/// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
-    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
-        let keep: BTreeSet<usize> = keep.iter().copied().chain(ORIGINAL.chars().map(|c| usize::from(nominal(face.bytes, c)))).collect();
-        with_table(&subset(face.bytes, &keep, true), b"GSUB", EMPTY_GSUB.to_vec())
-    });
-    falls_back_for_the_run(face, page, KEPT);
+    isolated_only_falls_back_for_the_run(face, EMPTY_GSUB.to_vec());
+}
+
+/// A GSUB whose `arab` script's default language system has `fina`, `init`, `medi` and `rlig`,
+/// each with one lookup. With `lookup`, that lookup is a single substitution covering no glyph, as
+/// a GSUB pruned to a page's glyphs without layout closure keeps for letters the page showed only
+/// isolated; without it, the index points past an empty lookup list.
+fn joining_gsub(lookup: bool) -> Vec<u8> {
+    let words = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_be_bytes()).collect() };
+    // Version 1.0; script, feature and lookup lists at 10, 36 and 86.
+    let mut out = words(&[1, 0, 10, 36, 86]);
+    out.extend(words(&[1]));
+    out.extend_from_slice(b"arab");
+    // The script at 8, its default language system at 4 from it, with features 0 to 3.
+    out.extend(words(&[8, 4, 0, 0, 0xFFFF, 4, 0, 1, 2, 3]));
+    out.extend(words(&[4]));
+    for (i, tag) in [b"fina", b"init", b"medi", b"rlig"].into_iter().enumerate() {
+        out.extend_from_slice(tag);
+        out.extend(words(&[26 + 6 * i as u16]));
+    }
+    for _ in 0..4 {
+        out.extend(words(&[0, 1, if lookup { 0 } else { 9 }]));
+    }
+    // One lookup at 4: type 1, one subtable at 8 (format 1, coverage at 6, delta 1); the coverage
+    // lists no glyph.
+    out.extend(if lookup { words(&[1, 4, 1, 0, 1, 8, 1, 6, 1, 1, 0]) } else { words(&[0]) });
+    out
+}
+
+/// A subset whose GSUB has the joining features, each with a lookup that covers none of its
+/// letters. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_in_a_subset_whose_joining_lookups_cover_no_letter_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    isolated_only_falls_back_for_the_run(face, joining_gsub(true));
+}
+
+/// A subset whose GSUB has the joining features, each pointing past its lookup list. The whole
+/// run is drawn in the bundled face.
+#[test]
+fn kept_arabic_in_a_subset_whose_joining_lookups_are_past_its_lookup_list_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    isolated_only_falls_back_for_the_run(face, joining_gsub(false));
 }
 
 /// A subset that kept a form the page never showed (initial seen), which its ToUnicode doesn't
@@ -675,6 +757,12 @@ fn arabic_in_a_form_the_to_unicode_lacks_keeps_its_program_with_its_own_to_unico
     assert_eq!(read, [typed]);
     let shown = glyphs_shown(&reopened);
     assert!(!shown.is_empty() && !shown.iter().any(|(font, _)| font == "F1"), "shown in the page's codes: {shown:?}");
+    let sorted = |text: &str| -> Vec<char> {
+        let mut chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
+        chars.sort_unstable();
+        chars
+    };
+    assert_eq!(sorted(&to_unicode_text(&reopened)), sorted(typed), "the ToUnicode names every glyph shown");
     let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", typed, true)));
     assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
 }
