@@ -671,9 +671,12 @@ fn kept_arabic_in_a_subset_without_its_own_cmap_falls_back_for_the_run() {
 #[test]
 fn kept_arabic_in_a_subset_whose_cmap_maps_a_letter_to_a_joining_form_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
+    // The middle cluster's glyph: the final kaf draws 2 (a dotless form and a mark).
     let kafs = pdfcraft_fonts::source_shaping::shape(face.bytes, "ككك").unwrap();
-    let medial = kafs.glyphs[1].id.to_u32() as u16;
+    let medial = kafs.glyphs.iter().filter(|g| !g.text.is_empty()).nth(1).unwrap().id.to_u32() as u16;
     assert_ne!(medial, nominal(face.bytes, 'ك'));
+    let shown = pdfcraft_fonts::source_shaping::shape(face.bytes, "عليكم").unwrap();
+    assert!(shown.glyphs.iter().any(|g| g.id.to_u32() == u32::from(medial)), "the page shows medial kaf");
     let glyphs: BTreeMap<char, u16> = ORIGINAL.chars().map(|c| (c, if c == 'ك' { medial } else { nominal(face.bytes, c) })).collect();
     let every: BTreeSet<usize> = (0..be16(tables(face.bytes)[b"maxp"], 4)).collect();
     let page =
