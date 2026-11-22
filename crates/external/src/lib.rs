@@ -274,8 +274,6 @@ const KEPT_ENV: &[&str] = &[
     "OS",
 ];
 
-impl Stage {}
-
 /// A `file:` URL for an absolute path (a folder when `dir`). The web build has no file paths.
 #[cfg(not(target_arch = "wasm32"))]
 fn file_url(path: &Path, dir: bool) -> Option<url::Url> {

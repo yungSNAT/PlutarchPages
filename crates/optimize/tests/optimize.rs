@@ -3845,6 +3845,26 @@ fn gray_conversion_revisits_a_form_first_reached_at_the_depth_limit() {
     assert_eq!((report.forms, report.operators), (2, 1));
 }
 
+/// A page whose content stream is cut short is left as it is: writing back the part that decoded
+/// would drop the rest of the page.
+#[test]
+fn gray_conversion_leaves_a_page_whose_content_is_cut_short() {
+    let mut doc = Document::new_empty();
+    let p = page(&mut doc, &[], "");
+    let content = "1 0 0 rg 0 0 10 10 re f\n".repeat(400);
+    let whole = Stream::flate(Dict::new(), content.as_bytes());
+    let mut cut = whole.dict.clone();
+    cut.set(b"Length".to_vec(), Object::Int((whole.raw.len() / 2) as i64));
+    let cut = Stream::from_raw(cut, whole.raw[..whole.raw.len() / 2].to_vec());
+    let c = doc.get(p).as_dict().and_then(|d| d.reference(b"Contents")).unwrap();
+    doc.set(c, Object::Stream(cut.clone()));
+    let report = pdfcraft_optimize::convert_to_gray(&mut doc, None).unwrap();
+    assert_eq!((report.operators, report.left), (0, 1));
+    assert_eq!(doc.get(p).as_dict().and_then(|d| d.reference(b"Contents")), Some(c));
+    let Object::Stream(s) = &*doc.get(c) else { panic!("the content stream is gone") };
+    assert_eq!(s.raw, cut.raw);
+}
+
 fn form_dict(child: Option<ObjRef>) -> Dict {
     let mut d = Dict::new();
     d.set(b"Type".to_vec(), Object::name("XObject"));

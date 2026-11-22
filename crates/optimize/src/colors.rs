@@ -14,10 +14,10 @@
 use std::collections::HashMap;
 
 use pdfcraft_content::{Op, num, parse, serialize_ops};
-use pdfcraft_cos::{Dict, Document, ImageBudget, ObjRef, Object, Stream};
+use pdfcraft_cos::{DecodeBudget, Dict, Document, ImageBudget, ObjRef, Object, Stream};
 
 use crate::OptimizeError;
-use crate::images::{components, is_identity_decode, pixels};
+use crate::images::{components, content_bytes, is_identity_decode, pixels};
 
 /// How deep forms inside forms are followed.
 const MAX_DEPTH: usize = 12;
@@ -35,7 +35,8 @@ pub struct ColorReport {
     /// Images and forms converted.
     pub images: usize,
     pub forms: usize,
-    /// Colours, images and shadings left as they were (spaces or encodings not converted).
+    /// Colours, images and shadings left as they were (spaces or encodings not converted), and
+    /// pages whose content couldn't be read in full or within the page's decoding budget.
     pub left: usize,
 }
 
@@ -384,23 +385,6 @@ fn convert_form(
     Some(doc.add(Object::Stream(Stream::flate(d, &bytes))))
 }
 
-fn content_bytes(doc: &Document, contents: &Object) -> Option<Vec<u8>> {
-    match &*doc.resolve(contents) {
-        Object::Stream(s) => s.decoded().ok(),
-        Object::Array(a) => {
-            let mut v = Vec::new();
-            for c in a {
-                if let Object::Stream(s) = &*doc.resolve(c) {
-                    v.extend(s.decoded().ok()?);
-                    v.push(b'\n');
-                }
-            }
-            Some(v)
-        }
-        _ => None,
-    }
-}
-
 /// Convert `pages` (0-based; `None` for all) to grayscale.
 pub fn convert_to_gray(doc: &mut Document, pages: Option<&[usize]>) -> Result<ColorReport, OptimizeError> {
     let all = pdfcraft_model::pages(doc);
@@ -415,7 +399,10 @@ pub fn convert_to_gray(doc: &mut Document, pages: Option<&[usize]>) -> Result<Co
         }
         report.pages += 1;
         let resources = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
-        let Some(data) = page.dict.get(b"Contents").and_then(|c| content_bytes(doc, c)) else { continue };
+        let Some(data) = page.dict.get(b"Contents").and_then(|c| content_bytes(doc, c, &mut DecodeBudget::page())) else {
+            report.left += 1;
+            continue;
+        };
         let (bytes, changed, drawn) = convert_ops(doc, &data, &resources, &mut report);
         let new_res = convert_xobjects(doc, &resources, resources_id(&page.dict, page.obj), &drawn, 0, &mut done, &mut report);
         if changed || new_res.is_some() {
