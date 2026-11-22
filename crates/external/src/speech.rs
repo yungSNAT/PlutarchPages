@@ -195,6 +195,14 @@ mod tests {
 
     /// Text that looks like commands to PowerShell, a shell or Speech Dispatcher stays on standard
     /// input and never reaches the command line.
+    /// `-EncodedCommand` takes base64 of the script's UTF-16LE bytes.
+    #[test]
+    fn the_encoded_script_is_utf16le_base64() {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(encoded_script()).unwrap();
+        let units: Vec<u16> = bytes.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        assert_eq!(String::from_utf16(&units).unwrap(), PS_SCRIPT);
+    }
+
     #[test]
     fn text_never_reaches_the_command_line() {
         let text = "$(Remove-Item C:\\x) `whoami` ; rm -rf / !-!SET SELF RATE 100 [[rate 500]] \u{0}";

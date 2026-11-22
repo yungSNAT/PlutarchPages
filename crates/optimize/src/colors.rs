@@ -35,7 +35,8 @@ pub struct ColorReport {
     /// Images and forms converted.
     pub images: usize,
     pub forms: usize,
-    /// Colours, images and shadings left as they were (spaces or encodings not converted).
+    /// Colours, images and shadings left as they were (spaces or encodings not converted), and
+    /// pages whose content couldn't be read in full or within the page's decoding budget.
     pub left: usize,
 }
 
@@ -398,7 +399,10 @@ pub fn convert_to_gray(doc: &mut Document, pages: Option<&[usize]>) -> Result<Co
         }
         report.pages += 1;
         let resources = page.dict.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned()).unwrap_or_default();
-        let Some(data) = page.dict.get(b"Contents").and_then(|c| content_bytes(doc, c, &mut DecodeBudget::page())) else { continue };
+        let Some(data) = page.dict.get(b"Contents").and_then(|c| content_bytes(doc, c, &mut DecodeBudget::page())) else {
+            report.left += 1;
+            continue;
+        };
         let (bytes, changed, drawn) = convert_ops(doc, &data, &resources, &mut report);
         let new_res = convert_xobjects(doc, &resources, resources_id(&page.dict, page.obj), &drawn, 0, &mut done, &mut report);
         if changed || new_res.is_some() {

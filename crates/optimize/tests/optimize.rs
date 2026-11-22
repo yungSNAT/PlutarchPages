@@ -3859,7 +3859,7 @@ fn gray_conversion_leaves_a_page_whose_content_is_cut_short() {
     let c = doc.get(p).as_dict().and_then(|d| d.reference(b"Contents")).unwrap();
     doc.set(c, Object::Stream(cut.clone()));
     let report = pdfcraft_optimize::convert_to_gray(&mut doc, None).unwrap();
-    assert_eq!(report.operators, 0);
+    assert_eq!((report.operators, report.left), (0, 1));
     assert_eq!(doc.get(p).as_dict().and_then(|d| d.reference(b"Contents")), Some(c));
     let Object::Stream(s) = &*doc.get(c) else { panic!("the content stream is gone") };
     assert_eq!(s.raw, cut.raw);
