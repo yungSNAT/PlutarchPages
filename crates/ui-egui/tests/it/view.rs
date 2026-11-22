@@ -2103,10 +2103,24 @@ fn buttons_take_presses_as_the_scripts_show_them() {
         ran
     });
     assert!(opened, "the page's open action ran");
+    // A press runs its script on the document's worker, which refuses another script until the
+    // app has taken the result, so the read waits for that, and the second press doesn't come
+    // whilst the first one's script is still running.
+    let pressed = |h: &mut Harness<'static, PdfCraftApp>| {
+        for _ in 0..600 {
+            h.run_steps(1);
+            let out = h.state_mut().session.run_javascript(id, "pressed", None).expect("runs");
+            if !out.execution_refused {
+                return out.result;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the press's script didn't finish within about 6 s");
+    };
     press_field(&mut h, "shown");
+    assert_eq!(pressed(&mut h).as_deref(), Some("shown"));
     press_field(&mut h, "gone");
-    let pressed = h.state_mut().session.run_javascript(id, "pressed", None).expect("runs").result;
-    assert_eq!(pressed.as_deref(), Some("shown"));
+    assert_eq!(pressed(&mut h).as_deref(), Some("shown"), "the hidden button took no press");
 }
 
 /// A radio group's read-only button can't be chosen by a click, while the group's other button
