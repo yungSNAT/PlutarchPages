@@ -67,3 +67,20 @@ fn audit_rectangles_match_the_tool_in_top_left_points() {
     let tool = serde_json::Deserializer::from_str(&stdout).into_iter::<serde_json::Value>().last().unwrap().unwrap();
     assert_eq!(rects(&tool), rects(&cli), "{tool}");
 }
+
+#[test]
+fn advisory_findings_do_not_fail_the_cli_audit() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("advisory.pdf");
+    let body = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET\n0 g 71 688 22 21 re f";
+    std::fs::write(&path, fixture(body, "", " /Info 7 0 R")).unwrap();
+
+    let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["count"], 2, "{report}");
+    assert_eq!(report["findings"][0]["kind"], "retained-advance");
+    assert_eq!(report["document_findings"][0]["kind"], "document-info");
+    std::fs::remove_file(path).unwrap();
+}
