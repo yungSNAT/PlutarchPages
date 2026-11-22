@@ -9,28 +9,6 @@ fn png_predictor_rows_longer_than_the_data_are_refused_before_allocating() {
 }
 
 #[test]
-fn page_tree_counts_do_not_size_the_page_list() {
-    // Vendored lopdf patch: the page iterator's size hint summed each Pages node's `/Count`,
-    // and `get_pages` preallocated from it: a fuzzed `/Count 4294967295` reserved 48 GiB.
-    use lopdf::{Object, dictionary};
-    let mut doc = lopdf::Document::with_version("1.7");
-    let pages = doc.new_object_id();
-    let page = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages });
-    let huge = |doc: &mut lopdf::Document| {
-        doc.add_object(dictionary! { "Type" => "Pages", "Parent" => pages, "Kids" => Vec::<Object>::new(), "Count" => i64::MAX })
-    };
-    let (a, b) = (huge(&mut doc), huge(&mut doc));
-    let kids = vec![Object::Reference(page), Object::Reference(a), Object::Reference(b)];
-    doc.objects.insert(pages, dictionary! { "Type" => "Pages", "Kids" => kids, "Count" => 4_294_967_295i64 }.into());
-    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
-    doc.trailer.set("Root", catalog);
-
-    let (low, high) = doc.page_iter().size_hint();
-    assert!(low <= 1 && high.is_some_and(|h| h <= doc.objects.len()), "{low} {high:?}");
-    assert_eq!(doc.get_pages(), [(1, page)].into());
-}
-
-#[test]
 fn empty_png_predictor_frames_do_not_allocate_rows() {
     // usize::MAX cannot be reserved, so the old code safely errors before allocating.
     // An empty frame needs no rows regardless of the declared width.
@@ -3132,3 +3110,5 @@ mod javascript_links_tests {
         }
     }
 }
+
+mod fork_tests;
