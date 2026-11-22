@@ -8,7 +8,7 @@ use super::*;
 
 #[test]
 fn direct3d_12_alone_is_tried_first_only_on_windows_when_nothing_was_chosen() {
-    use super::{RendererChoice, dx12_first};
+    use super::super::{RendererChoice, dx12_first};
     assert!(dx12_first(RendererChoice::Auto, true, false));
     assert!(!dx12_first(RendererChoice::Auto, false, false), "only Windows");
     assert!(!dx12_first(RendererChoice::Auto, true, true), "WGPU_BACKEND or WGPU_POWER_PREF decides instead");
@@ -20,24 +20,24 @@ fn direct3d_12_alone_is_tried_first_only_on_windows_when_nothing_was_chosen() {
 fn the_direct3d_12_run_is_narrowed_only_where_displays_pick_the_adapter() {
     use eframe::wgpu;
     // Without a displays-based selector (no display information), nothing is narrowed.
-    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let mut native = super::super::native_options(false, false, eframe::Renderer::Wgpu);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else {
         panic!("default setup creates its own instance")
     };
     setup.native_adapter_selector = None;
     let before = setup.instance_descriptor.backends;
-    assert!(!super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
+    assert!(!super::super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     assert_eq!(setup.instance_descriptor.backends, before);
     // With one, the run lists Direct3D 12 alone.
-    let mut native = super::native_options(false, false, eframe::Renderer::Wgpu);
+    let mut native = super::super::native_options(false, false, eframe::Renderer::Wgpu);
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut native.wgpu_options.wgpu_setup else {
         panic!("default setup creates its own instance")
     };
     setup.native_adapter_selector = Some(std::sync::Arc::new(|adapters: &[wgpu::Adapter], _: Option<&wgpu::Surface<'_>>| {
         adapters.first().cloned().ok_or_else(|| "none".to_string())
     }));
-    assert!(super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
+    assert!(super::super::hardware_dx12_only(&mut native, vec![panel(NVIDIA)]));
     let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &native.wgpu_options.wgpu_setup else { panic!("default setup creates its own instance") };
     assert_eq!(setup.instance_descriptor.backends, wgpu::Backends::DX12);
 }
@@ -45,21 +45,21 @@ fn the_direct3d_12_run_is_narrowed_only_where_displays_pick_the_adapter() {
 #[test]
 fn the_direct3d_12_run_needs_somewhere_to_remember_a_failure() {
     let dir = scratch();
-    let file = dir.join("settings").join(super::DX12_ALONE_FAILED);
-    assert!(super::can_remember(&file), "creates the folder and an empty file");
+    let file = dir.join("settings").join(super::super::DX12_ALONE_FAILED);
+    assert!(super::super::can_remember(&file), "creates the folder and an empty file");
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "");
     std::fs::write(&file, "10de:2684").unwrap();
-    assert!(super::can_remember(&file));
+    assert!(super::super::can_remember(&file));
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "10de:2684", "an existing record is left as it is");
     // A folder that can't be made (here a file stands in its place) can't hold the record.
-    let blocked = dir.join("settings").join(super::DX12_ALONE_FAILED).join(super::DX12_ALONE_FAILED);
-    assert!(!super::can_remember(&blocked));
+    let blocked = dir.join("settings").join(super::super::DX12_ALONE_FAILED).join(super::super::DX12_ALONE_FAILED);
+    assert!(!super::super::can_remember(&blocked));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
 fn a_failed_direct3d_12_run_is_skipped_until_the_display_gpus_change() {
-    use super::{displays_key, dx12_alone_failed_here as failed_here};
+    use super::super::{displays_key, dx12_alone_failed_here as failed_here};
     let displays = [panel(INTEL_IGPU), monitor(NVIDIA)];
     let saved = displays_key(&displays);
     assert_eq!(saved, "10de:2684,8086:a780", "sorted, so the display order doesn't matter");
@@ -72,7 +72,7 @@ fn a_failed_direct3d_12_run_is_skipped_until_the_display_gpus_change() {
 
 #[test]
 fn the_direct3d_12_run_picks_what_the_combined_run_would() {
-    use super::{dx12_alone_may_use, pick_adapter};
+    use super::super::{dx12_alone_may_use, pick_adapter};
     use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu, Other};
     const WARP: (u32, u32, eframe::wgpu::DeviceType) = (0x1414, 0x8c, Cpu);
     // wgpu lists Direct3D 12 adapters before OpenGL ones, which carry no PCI device id.
@@ -104,7 +104,7 @@ fn the_direct3d_12_run_picks_what_the_combined_run_would() {
 
 #[test]
 fn the_direct3d_12_run_draws_only_on_a_gpu_driving_a_display() {
-    use super::dx12_alone_may_use as may_use;
+    use super::super::dx12_alone_may_use as may_use;
     use eframe::wgpu::DeviceType::{Cpu, DiscreteGpu, IntegratedGpu};
     // The GPU behind the monitor, integrated or discrete.
     assert!(may_use(NVIDIA, DiscreteGpu, &[monitor(NVIDIA)]));
@@ -123,9 +123,9 @@ fn the_direct3d_12_run_draws_only_on_a_gpu_driving_a_display() {
 /// another app's sandbox, it keeps the id the other packages install.
 #[test]
 fn the_window_names_the_flatpak_desktop_entry_only_in_its_own_sandbox() {
-    assert_eq!(super::window_app_id(Some(super::FLATPAK_APP_ID)), super::FLATPAK_APP_ID);
-    assert_eq!(super::window_app_id(None), super::APP_ID);
-    assert_eq!(super::window_app_id(Some("org.example.Other")), super::APP_ID);
+    assert_eq!(super::super::window_app_id(Some(super::super::FLATPAK_APP_ID)), super::super::FLATPAK_APP_ID);
+    assert_eq!(super::super::window_app_id(None), super::super::APP_ID);
+    assert_eq!(super::super::window_app_id(Some("org.example.Other")), super::super::APP_ID);
 }
 
 /// Both manifests rewrite `StartupWMClass` to the id the window carries in the sandbox.
@@ -135,6 +135,6 @@ fn the_flatpak_desktop_entries_name_the_window_class() {
         include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.yml"),
         include_str!("../../../packaging/linux/flatpak/io.github.yungSNAT.PlutarchPages.bundle.yml"),
     ] {
-        assert!(manifest.contains(&format!("s/^StartupWMClass=.*/StartupWMClass={}/", super::FLATPAK_APP_ID)));
+        assert!(manifest.contains(&format!("s/^StartupWMClass=.*/StartupWMClass={}/", super::super::FLATPAK_APP_ID)));
     }
 }
