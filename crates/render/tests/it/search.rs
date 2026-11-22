@@ -416,6 +416,25 @@ fn find_joins_a_word_divided_at_a_line_end_soft_hyphen() {
     assert_eq!(text.find("Mitar beiterinnen"), vec![0..2]);
 }
 
+/// Horizontal glyphs of `size` points, one per character, each line `lead` points below the
+/// last and starting at `x`: (x, first line's top, text) per line.
+fn laid_out_at(lines: &[(f32, f32, &str)], size: f32) -> PageText {
+    let mut glyphs = Vec::new();
+    for &(x0, top, text) in lines {
+        for (k, c) in text.chars().enumerate() {
+            let x = x0 + size * k as f32;
+            let (y0, y1) = (top, top + size);
+            glyphs.push(TextGlyph {
+                text: c.into(),
+                rect: [x, y0, x + size, y1],
+                quad: [[x, y1], [x + size, y1], [x + size, y0], [x, y0]],
+                direction: [1.0, 0.0],
+            });
+        }
+    }
+    pdfcraft_render::text::layout(glyphs)
+}
+
 #[test]
 fn a_chinese_or_japanese_word_divided_by_a_line_end_is_found_on_both_lines() {
     // "検知機構" wraps after "検知" (pdf.js #15340); "ソレノイド" after "ソレ".

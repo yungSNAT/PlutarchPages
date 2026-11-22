@@ -238,22 +238,3 @@ fn a_hit_includes_the_marks_drawn_after_it() {
 fn a_mark_query_finds_marks_in_a_ligature() {
     assert_eq!(page(&["\u{FC5B}"]).find("\u{670}"), vec![0..1]);
 }
-
-/// Horizontal glyphs of `size` points, one per character, each line `lead` points below the
-/// last and starting at `x`: (x, first line's top, text) per line.
-fn laid_out_at(lines: &[(f32, f32, &str)], size: f32) -> PageText {
-    let mut glyphs = Vec::new();
-    for &(x0, top, text) in lines {
-        for (k, c) in text.chars().enumerate() {
-            let x = x0 + size * k as f32;
-            let (y0, y1) = (top, top + size);
-            glyphs.push(TextGlyph {
-                text: c.into(),
-                rect: [x, y0, x + size, y1],
-                quad: [[x, y1], [x + size, y1], [x + size, y0], [x, y0]],
-                direction: [1.0, 0.0],
-            });
-        }
-    }
-    pdfcraft_render::text::layout(glyphs)
-}
