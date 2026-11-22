@@ -47,22 +47,6 @@ fn text_find_and_redact_mark_match_script_variants() {
     assert_eq!(marked["marks_pending"].as_u64(), Some(2), "{marked}");
 }
 
-/// A saved file with each `/ID` array blanked: a save draws the identifier at random, as hex digits
-/// that can spell the ones a test searches for.
-fn without_file_id(mut bytes: Vec<u8>) -> Vec<u8> {
-    let mut from = 0;
-    while let Some(key) = bytes[from..].windows(3).position(|w| w == b"/ID") {
-        from += key + 3;
-        let open = from + bytes[from..].iter().take_while(|b| b.is_ascii_whitespace()).count();
-        if bytes.get(open) == Some(&b'[')
-            && let Some(len) = bytes[open..].iter().position(|&b| b == b']')
-        {
-            bytes[open..open + len].fill(b' ');
-        }
-    }
-    bytes
-}
-
 /// An applied redaction at the end of a line leaves the words before it, then a gap the text
 /// matrix jumps over and the redaction box: nothing is under the box any more, so the audit must
 /// not report the words beside it as covered. In the middle of a line it never did.

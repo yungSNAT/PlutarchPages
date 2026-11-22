@@ -5835,6 +5835,22 @@ fn redact_mark_respects_single_page_and_rejects_conflicting_selectors() {
     assert!(text[0].contains("Private") && text[1].contains("Private"), "nothing was changed");
 }
 
+/// A saved file with each `/ID` array blanked: a save draws the identifier at random, as hex digits
+/// that can spell the ones a test searches for.
+fn without_file_id(mut bytes: Vec<u8>) -> Vec<u8> {
+    let mut from = 0;
+    while let Some(key) = bytes[from..].windows(3).position(|w| w == b"/ID") {
+        from += key + 3;
+        let open = from + bytes[from..].iter().take_while(|b| b.is_ascii_whitespace()).count();
+        if bytes.get(open) == Some(&b'[')
+            && let Some(len) = bytes[open..].iter().position(|&b| b == b']')
+        {
+            bytes[open..open + len].fill(b' ');
+        }
+    }
+    bytes
+}
+
 #[test]
 fn redacting_through_tools() {
     let dir = workdir("redact");
