@@ -84,3 +84,25 @@ fn advisory_findings_do_not_fail_the_cli_audit() {
     assert_eq!(report["document_findings"][0]["kind"], "document-info");
     std::fs::remove_file(path).unwrap();
 }
+
+/// A /Info or /Metadata of the wrong type, as a catalogue entry and a trailer entry, with the
+/// document finding each one gives.
+const MALFORMED: [(&str, &str, &str); 2] =
+    [("", " /Info (not a dictionary)", "malformed-document-info"), (" /Metadata (not a stream)", "", "malformed-xmp-metadata")];
+
+#[test]
+fn malformed_metadata_alone_does_not_fail_the_cli_audit() {
+    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("malformed-only.pdf");
+    for (catalog, trailer, kind) in MALFORMED {
+        std::fs::write(&path, fixture("BT /F1 24 Tf 100 700 Td (PUBLIC) Tj ET", catalog, trailer)).unwrap();
+
+        let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
+        assert!(out.status.success(), "{kind}: {}", String::from_utf8_lossy(&out.stderr));
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["count"], 0, "{report}");
+        assert_eq!(report["document_findings"], serde_json::json!([{ "kind": kind, "count": 1 }]), "{report}");
+    }
+    std::fs::remove_file(path).unwrap();
+}
