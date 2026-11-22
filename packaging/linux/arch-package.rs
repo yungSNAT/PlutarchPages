@@ -8,7 +8,7 @@
 //! Build it with `rustc --edition=2024 -D warnings packaging/linux/arch-package.rs -o arch-package`
 //! (with `-C target-feature=+crt-static` to run it where there is no Rust), then from the workspace
 //! root run `arch-package <x86_64|aarch64> [TARBALL]`: it reads Cargo.toml and the default DIST in
-//! the current directory, where arch-package.sh found them from its own path. It knows the root by
+//! the current directory. It knows the root by
 //! packaging/linux/arch-package.rs; elsewhere it needs both `PDFCRAFT_VERSION` and `DIST`, and
 //! refuses rather than guess.
 //!
@@ -96,7 +96,7 @@ fn arch_package() -> Result {
         Some(b"aarch64") => "aarch64",
         None | Some(b"") => return Err("usage: arch-package <x86_64|aarch64> [TARBALL]".into()),
         Some(other) => {
-            // As arch-package.sh said it, bytes and all: a usage error, apart from failures.
+            // The name as given, bytes and all: a usage error, apart from failures.
             io::stderr().write_all(&[b"unsupported architecture ", other, b"\n"].concat())?;
             std::process::exit(2);
         }

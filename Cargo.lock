@@ -4849,6 +4849,7 @@ dependencies = [
 name = "pdfcraft-external"
 version = "0.21.1"
 dependencies = [
+ "base64 0.23.1",
  "rustix 1.1.6",
  "tempfile",
  "thiserror 2.0.21",
