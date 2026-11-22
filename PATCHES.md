@@ -267,7 +267,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/edit/src/added/draw.rs`). Right-to-left styled paragraphs
   are right-aligned and a single row grows to the left (`paragraph_geometry`). `replace_line`
   refuses Arabic letters and keeps a right-to-left line's right edge (`right_edge_gap` in
-  `crates/edit/src/text/rewrite.rs`). `japanese_replacement_missing_a_glyph_after_240_changes_nothing`
+  `crates/edit/src/text/rewrite.rs`). A line edit that needs Type 3 outlines keeps the line's font for the
+  characters it draws, and the next edit reads the line back in that font (`adopt_source_font`). `japanese_replacement_missing_a_glyph_after_240_changes_nothing`
   picks a character no bundled face draws. Keep these at the next merge unless upstream covers the
   same pages.
 - The control channel's transport tests live in

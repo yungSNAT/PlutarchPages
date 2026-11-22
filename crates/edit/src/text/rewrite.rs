@@ -94,22 +94,63 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
         None => {
             let fallback_shown = crate::bidi::to_visual(&text);
             if needs_type3(&text) {
-                let fallback = type3_font(doc, &mut fonts_res, &text, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
-                let runs = type3_encode(&fallback, &fallback_shown)
-                    .ok_or_else(|| EditError::Invalid(format!("\"{text}\" can't be shown by the {} fallback", fallback.family)))?;
+                // Where only Chinese, Japanese or Korean characters are missing, the characters the
+                // line's font draws keep it: only the missing ones are drawn in Type 3 outlines,
+                // each a whole character. A missing letter of an alphabet keeps the whole line in
+                // the fallback face rather than switching faces partway through a word. A CID the
+                // subset emptied (#1443) is not drawn by it. Reordered text (right to left, Indic)
+                // stays one run, as in the mixed substitute below. Spaces go with the line's font,
+                // which draws one it lacks as a displacement.
+                let mut own: HashSet<char> = font
+                    .as_ref()
+                    .filter(|_| !visual_indic && fallback_shown == text)
+                    .map(|m| text.chars().filter(|ch| *ch != ' ' && draws(m, *ch)).collect())
+                    .unwrap_or_default();
+                if !text.chars().all(|ch| ch == ' ' || own.contains(&ch) || is_cjk(ch)) {
+                    own.clear();
+                }
+                if !own.is_empty() {
+                    own.insert(' ');
+                }
+                let missing: String = text.chars().filter(|ch| !own.contains(ch)).collect();
+                let fallback =
+                    type3_font(doc, &mut fonts_res, &missing, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
                 let size = font_size_before(&ops, first).unwrap_or(target.size);
                 let spacing = target.origin.state.char_spacing;
-                for run in runs {
-                    replacement.push(Op::new("Tf", vec![Object::name(&run.name), pdfcraft_content::num(size)]));
-                    if let Some(tc) = run.spacing {
-                        // A variation selector's empty glyph: shown at spacing zero, then the
-                        // line's own spacing back, so it adds no advance.
-                        replacement.push(Op::new("Tc", vec![pdfcraft_content::num(tc)]));
-                        replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
-                        replacement.push(Op::new("Tc", vec![pdfcraft_content::num(spacing)]));
-                    } else {
-                        replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                // Marked as one line, so it reads back as one (see `continues_font`).
+                if !own.is_empty() {
+                    replacement.push(Op::new("BMC", vec![Object::name("PCEdLine")]));
+                }
+                for (mine, piece) in source_fallback_runs(&fallback_shown, (!own.is_empty()).then_some(&own)) {
+                    if let Some(metrics) = font.as_ref().filter(|_| mine) {
+                        replacement.push(Op::new("Tf", vec![Object::name(&target.font), pdfcraft_content::num(size)]));
+                        replacement.extend(source_show(
+                            metrics,
+                            piece,
+                            target.origin.state.font.as_ref().map_or(target.size, |(_, size)| *size),
+                            source_space(doc, &fonts_res, metrics),
+                            spacing,
+                            target.origin.state.word_spacing,
+                        )?);
+                        continue;
                     }
+                    let runs = type3_encode(&fallback, piece)
+                        .ok_or_else(|| EditError::Invalid(format!("\"{text}\" can't be shown by the {} fallback", fallback.family)))?;
+                    for run in runs {
+                        replacement.push(Op::new("Tf", vec![Object::name(&run.name), pdfcraft_content::num(size)]));
+                        if let Some(tc) = run.spacing {
+                            // A variation selector's empty glyph: shown at spacing zero, then the
+                            // line's own spacing back, so it adds no advance.
+                            replacement.push(Op::new("Tc", vec![pdfcraft_content::num(tc)]));
+                            replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                            replacement.push(Op::new("Tc", vec![pdfcraft_content::num(spacing)]));
+                        } else {
+                            replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                        }
+                    }
+                }
+                if !own.is_empty() {
+                    replacement.push(Op::new("EMC", Vec::new()));
                 }
                 replacement.push(Op::new("Tf", vec![Object::name(&target.font), pdfcraft_content::num(size)]));
                 substituted = Some(format!("{} Type3", fallback.family));
@@ -1064,7 +1105,11 @@ pub(crate) fn rewrite_block_from(
             advances
         })
         .unwrap_or_default();
-    let source_chars: HashSet<char> = source_advances.iter().filter_map(|(&ch, width)| width.map(|_| ch)).collect();
+    let source_chars: HashSet<char> = source_advances
+        .iter()
+        .filter(|(ch, _)| **ch == ' ' || source.metrics.as_ref().is_some_and(|m| draws(m, **ch)))
+        .filter_map(|(&ch, width)| width.map(|_| ch))
+        .collect();
     let partial_reuse = !source_chars.is_empty();
     // The chosen style also determines the real Japanese fallback outlines and advances.
     let (family, bold, italic) = style.family.unwrap_or((source_family(&b.base_font), b.bold, b.italic));
@@ -1464,4 +1509,18 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     let contents = rewritten_contents(doc, &streams, data)?;
     doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
     Ok(())
+}
+
+/// Whether `metrics` draws `ch`: it encodes it, and not as a CID whose outline the subset emptied
+/// (#1443; `encode` accepts any code with a `/W` entry).
+fn draws(metrics: &Metrics, ch: char) -> bool {
+    metrics
+        .encode(ch.encode_utf8(&mut [0; 4]))
+        .is_some_and(|code| metrics.codes(&code).first().is_none_or(|(c, _)| metrics.has_outline(*c) != Some(false)))
+}
+
+/// Whether `ch` is a Chinese, Japanese or Korean character, which stands alone in a line rather
+/// than inside a word of letters.
+fn is_cjk(ch: char) -> bool {
+    matches!(u32::from(ch), 0x3000..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF)
 }

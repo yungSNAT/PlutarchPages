@@ -2614,6 +2614,46 @@ fn fallback_glyph_procedures_and_their_to_unicode_maps_are_compressed() {
     assert!(stored * 2 < decoded, "{stored} bytes stored for {decoded} decoded");
 }
 
+/// A line edit adding characters its font lacks draws only those in Type 3 outlines: the rest
+/// keep the line's font, and the line reads back as one, so the next edit replaces all of it.
+#[test]
+fn a_line_edit_draws_in_type3_only_what_its_font_lacks() {
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hello) Tj ET");
+    if without_craft_fonts("a_line_edit_draws_in_type3_only_what_its_font_lacks") {
+        return;
+    }
+    let typed = format!("Hello {}", covered_japanese_chars(2));
+    text::replace_line(&mut doc, 0, 0, &typed).unwrap();
+    let reopened = reopen(&doc);
+    let lines = text::text_lines(&reopened, 0).unwrap();
+    assert_eq!(lines.iter().map(|l| l.text.as_str()).collect::<Vec<_>>(), [typed.as_str()]);
+    let content = String::from_utf8_lossy(&page_content_bytes(&reopened, 0)).into_owned();
+    assert!(content.contains("/F1 12 Tf") && content.contains("(Hello )"), "{content}");
+    let p = pdfcraft_model::pages(&reopened).swap_remove(0);
+    let res = reopened.resolve(p.dict.get(b"Resources").unwrap());
+    let fonts = reopened.resolve(res.as_dict().unwrap().get(b"Font").unwrap());
+    let outlines: usize = fonts
+        .as_dict()
+        .unwrap()
+        .iter()
+        .map(|(_, f)| reopened.resolve(f).as_dict().unwrap().clone())
+        .filter(|f| f.name(b"Subtype") == Some(&b"Type3"[..]))
+        .map(|f| reopened.dict(f.get(b"CharProcs").unwrap()).unwrap().iter().count())
+        .sum();
+    assert_eq!(outlines, 2, "only the 2 Japanese characters are outlines");
+    text::replace_line(&mut doc, 0, 0, "Goodbye").unwrap();
+    assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap().iter().map(|l| l.text.clone()).collect::<Vec<_>>(), ["Goodbye"]);
+
+    // A line that starts with characters its font lacks reads back in that font all the same,
+    // so the next edit draws in it again.
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hello) Tj ET");
+    text::replace_line(&mut doc, 0, 0, &format!("{} Hello", covered_japanese_chars(2))).unwrap();
+    assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap()[0].font, "F1");
+    text::replace_line(&mut doc, 0, 0, "Hello again").unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&reopen(&doc), 0)).into_owned();
+    assert!(content.contains("(Hello again)"), "{content}");
+}
+
 #[test]
 fn japanese_replacement_over_240_unique_glyphs_is_split_across_fallback_fonts() {
     let replacement = covered_japanese_chars(300);
