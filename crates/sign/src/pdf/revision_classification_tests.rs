@@ -9,6 +9,7 @@ use pdfcraft_cos::{Document, ObjRef, Object};
 use super::Modification;
 use super::changes::classify_changes;
 
+#[path = "revision_classification_tests/fork_tests.rs"]
 mod fork_tests;
 
 /// One cross-reference row: an object written with header generation `.0` under row generation `.1`.

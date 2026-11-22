@@ -2,6 +2,7 @@ use super::*;
 use pdfcraft_cos::{Algorithm, NewEncryption, XrefEntry, write_full, write_incremental};
 use std::sync::atomic::Ordering;
 
+#[path = "pdf_discovery_tests/fork_tests.rs"]
 mod fork_tests;
 
 const STAMP: &str = "<< /Type /Sig /SubFilter /ETSI.RFC3161 /ByteRange [0 1 2 1] >>";
