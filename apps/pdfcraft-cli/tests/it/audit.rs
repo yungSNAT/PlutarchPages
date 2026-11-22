@@ -3,6 +3,8 @@
 
 use std::process::Command;
 
+mod fork_tests;
+
 const BIN: &str = env!("CARGO_BIN_EXE_pdfcraft-cli");
 
 /// Two US Letter pages with the same content. The second page is turned a quarter. `catalog` and
@@ -64,93 +66,4 @@ fn audit_rectangles_match_the_tool_in_top_left_points() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let tool = serde_json::Deserializer::from_str(&stdout).into_iter::<serde_json::Value>().last().unwrap().unwrap();
     assert_eq!(rects(&tool), rects(&cli), "{tool}");
-}
-
-#[test]
-fn advisory_findings_do_not_fail_the_cli_audit() {
-    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("advisory.pdf");
-    let body = "BT /F1 20 Tf 72 692 Td [-1000] TJ ET\n0 g 71 688 22 21 re f";
-    std::fs::write(&path, fixture(body, "", " /Info 7 0 R")).unwrap();
-
-    let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["count"], 2, "{report}");
-    assert_eq!(report["findings"][0]["kind"], "retained-advance");
-    assert_eq!(report["document_findings"][0]["kind"], "document-info");
-    std::fs::remove_file(path).unwrap();
-}
-
-/// A /Info or /Metadata of the wrong type, as a catalogue entry and a trailer entry, with the
-/// document finding each one gives.
-const MALFORMED: [(&str, &str, &str); 2] =
-    [("", " /Info (not a dictionary)", "malformed-document-info"), (" /Metadata (not a stream)", "", "malformed-xmp-metadata")];
-
-#[test]
-fn malformed_metadata_alone_does_not_fail_the_cli_audit() {
-    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("malformed-only.pdf");
-    for (catalog, trailer, kind) in MALFORMED {
-        std::fs::write(&path, fixture("BT /F1 24 Tf 100 700 Td (PUBLIC) Tj ET", catalog, trailer)).unwrap();
-
-        let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
-        assert!(out.status.success(), "{kind}: {}", String::from_utf8_lossy(&out.stderr));
-        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(report["count"], 0, "{report}");
-        assert_eq!(report["document_findings"], serde_json::json!([{ "kind": kind, "count": 1 }]), "{report}");
-    }
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn malformed_metadata_beside_covered_text_still_fails_the_cli_audit() {
-    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("malformed-leak.pdf");
-    for (catalog, trailer, kind) in MALFORMED {
-        std::fs::write(&path, fixture("BT /F1 24 Tf 100 700 Td (TOP SECRET) Tj ET\n0 g\n90 688 220 32 re f", catalog, trailer)).unwrap();
-
-        let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
-        assert!(!out.status.success(), "{kind}: covered text must fail the audit");
-        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-        assert_eq!(report["count"], 2, "{report}");
-        assert!(report["findings"].as_array().unwrap().iter().all(|f| f["kind"] == "covered-text"), "{report}");
-        assert_eq!(report["document_findings"], serde_json::json!([{ "kind": kind, "count": 1 }]), "{report}");
-    }
-    std::fs::remove_file(path).unwrap();
-}
-
-/// A page the audit can't read fails it, and the error names the page as a reader counts: here
-/// the first page's text runs past the text reader's budget.
-#[test]
-fn an_unreadable_page_fails_the_cli_audit_and_is_numbered_from_1() {
-    let dir = std::env::temp_dir().join(format!("pdfcraft-cli-audit-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("unreadable.pdf");
-    std::fs::write(&path, fixture("/PCSoft << /N 20000000 >> BDC EMC", "", "")).unwrap();
-
-    let out = Command::new(BIN).arg("audit").arg(&path).output().unwrap();
-    assert!(!out.status.success(), "an audit error must fail the audit");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("unreadable.pdf: page 1: "), "{stderr}");
-    std::fs::remove_file(path).unwrap();
-}
-
-/// Text in a stream nothing refers to is still in the file, so it fails the audit as covered text
-/// does: a redaction mutool applied and saved without garbage collection leaves the page's old
-/// content streams so. Saved with garbage collection, the file audits clean.
-#[test]
-fn unreferenced_text_fails_the_cli_audit() {
-    let data = concat!(env!("CARGO_MANIFEST_DIR"), "/../../crates/audit/tests/data/tool-made");
-    let out = Command::new(BIN).arg("audit").arg(format!("{data}/mutool-applied-no-garbage.pdf")).output().unwrap();
-    assert!(!out.status.success(), "text left in an unreferenced stream must fail the audit");
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["count"], 0, "{report}");
-    assert_eq!(report["document_findings"], serde_json::json!([{ "kind": "unreferenced-text", "count": 2 }]), "{report}");
-
-    let out = Command::new(BIN).arg("audit").arg(format!("{data}/mutool-applied.pdf")).output().unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
 }
