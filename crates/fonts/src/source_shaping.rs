@@ -56,8 +56,10 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// Arabic face, which must draw every letter itself. Its own cmap must map every letter; each
 /// letter's isolated, initial, medial and final forms must differ wherever the reference's
 /// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
-/// in a glyph other than its nominal one (a joining form or part of a ligature), the program's
-/// must too; and where the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps a letter to one of its positional forms (rebuilt from ToUnicode, or
+/// in glyphs other than those it draws the letter with alone (a joining form or part of a
+/// ligature), the program's must too, each face judged against its own isolated form; and where
+/// the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps a letter
+/// to one of its positional forms (rebuilt from ToUnicode, or
 /// written from the glyphs a page showed) leaves the GSUB with nothing to substitute, or
 /// substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
