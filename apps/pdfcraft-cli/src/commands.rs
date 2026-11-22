@@ -27,11 +27,6 @@ pub(crate) fn info(args: &[String]) -> Result<(), CliError> {
     let path = *positional(args, INFO_OPTIONS).first().ok_or("info: missing file")?;
     let bytes = read(path)?;
     let password = flag(args, "--password");
-    // The renderer takes only the user password of R2–R4 files; `Session::open` takes either.
-    let render_password = pdfcraft_engine::render_password_for(bytes.clone(), password);
-    let mut info = inspect(bytes.clone(), render_password.as_deref()).map_err(|e| e.to_string())?;
-    let pdf_pages = info.pages.len();
-    let acroform_fields = info.fields.len();
     // The document as the app opens it: the notes about damage repaired while opening, which the
     // app shows in Document Properties, and for a dynamic XFA form the laid-out pages and fields.
     // Inspection runs none of the document's scripts: an XFA form's initialize and calculate
@@ -39,6 +34,19 @@ pub(crate) fn info(args: &[String]) -> Result<(), CliError> {
     let mut session = pdfcraft_engine::Session::new();
     session.set_javascript(false);
     let opened = session.open("info.pdf", None, bytes.clone(), password).ok().and_then(|id| session.get(id));
+    // Opening inspected the file already. It is read again where the app can't open it, or where
+    // the session changed what it inspected: a laid-out XFA form or a repair written as one more
+    // revision, whose pages and notes are not the file's own.
+    let mut info = match opened.filter(|d| d.xfa.is_none() && *d.saved_bytes() == *bytes) {
+        Some(d) => d.info.clone(),
+        None => {
+            // The renderer takes only the user password of R2–R4 files; `Session::open` takes either.
+            let render_password = pdfcraft_engine::render_password_for(bytes.clone(), password);
+            inspect(bytes.clone(), render_password.as_deref()).map_err(|e| e.to_string())?
+        }
+    };
+    let pdf_pages = info.pages.len();
+    let acroform_fields = info.fields.len();
     // Dynamic XFA forms: say what laying the template out gives (what the app shows).
     let xfa_layout = opened.filter(|_| info.xfa == Some(pdfcraft_render::Xfa::Dynamic)).and_then(|d| {
         d.xfa.as_ref().map(|x| {
