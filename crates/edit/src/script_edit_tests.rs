@@ -663,10 +663,11 @@ fn kept_arabic_in_a_subset_without_its_own_cmap_falls_back_for_the_run() {
     falls_back_for_the_run(face, page, "كم عليكم");
 }
 
-/// A subset whose own cmap maps kaf to its medial form, as a producer that writes the cmap from
-/// the glyphs it showed does, with the layout tables whole: the initial-form lookup covers
-/// nominal kaf, not the medial form, so kaf typed at a word's start would be drawn medial in the
-/// page's font, every glyph inked. The whole run is drawn in the bundled face.
+/// A program whose own cmap maps kaf to its medial form, as a producer that writes the cmap from
+/// the glyphs it showed does, with every glyph and the layout tables kept: the joining lookups
+/// cover nominal kaf, not the medial form, so kaf at a word's start would be drawn in a wrong
+/// form in the page's font (a dotless final kaf, where meem follows), every glyph inked. The
+/// whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_whose_cmap_maps_a_letter_to_a_joining_form_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
@@ -674,7 +675,9 @@ fn kept_arabic_in_a_subset_whose_cmap_maps_a_letter_to_a_joining_form_falls_back
     let medial = kafs.glyphs[1].id.to_u32() as u16;
     assert_ne!(medial, nominal(face.bytes, 'ك'));
     let glyphs: BTreeMap<char, u16> = ORIGINAL.chars().map(|c| (c, if c == 'ك' { medial } else { nominal(face.bytes, c) })).collect();
-    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| with_table(&subset(face.bytes, keep, true), b"cmap", cmap_table(&glyphs)));
+    let every: BTreeSet<usize> = (0..be16(tables(face.bytes)[b"maxp"], 4)).collect();
+    let page =
+        producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |_| with_table(&subset(face.bytes, &every, true), b"cmap", cmap_table(&glyphs)));
     falls_back_for_the_run(face, page, "كم عليكم");
 }
 
@@ -687,6 +690,16 @@ fn isolated_only_falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, gsub: 
         with_table(&subset(face.bytes, &keep, true), b"GSUB", gsub)
     });
     falls_back_for_the_run(face, page, KEPT);
+}
+
+/// Joining is judged against the bundled face, so a letter it doesn't draw itself never keeps a
+/// page's program: here a judge with an empty cmap.
+#[test]
+fn joining_is_judged_only_for_letters_the_bundled_face_draws() {
+    let Some(face) = arabic_face() else { return };
+    let blind = with_table(face.bytes, b"cmap", cmap_table(&BTreeMap::new()));
+    assert!(pdfcraft_fonts::source_shaping::joins_arabic(face.bytes, face.bytes, KEPT));
+    assert!(!pdfcraft_fonts::source_shaping::joins_arabic(face.bytes, &blind, KEPT));
 }
 
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
