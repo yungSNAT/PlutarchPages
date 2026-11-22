@@ -446,6 +446,12 @@ fn existing_cjk_and_right_to_left_text_edits_round_trip_draw_and_add_only_their_
                     if what == "kept" && (!arabic || layout) && (edit.substituted.is_some() || shown != BTreeSet::from(["F1".to_string()])) {
                         failures.push(format!("{label}, kept {how}: left the page's subset ({:?}, fonts {shown:?})", edit.substituted));
                     }
+                    // Without them it can't: the bundled face draws the whole run.
+                    let in_subset = glyphs_shown(&reopened).iter().any(|(font, _)| font == "F1");
+                    let bundled = pdfcraft_fonts::document_arabic_font().map(|f| f.family);
+                    if arabic && !layout && (edit.substituted.as_deref() != bundled || in_subset) {
+                        failures.push(format!("{label}, {what} {how}: not all in the bundled face ({:?}, in F1: {in_subset})", edit.substituted));
+                    }
                     // Outlines for the glyphs typed at most, never a whole face (megabytes): a
                     // glyph of the calligraphic Chinese face takes about 10 KB.
                     if grew > GLYPH_BYTES * typed.chars().count() {
@@ -617,4 +623,66 @@ fn kept_arabic_with_an_emptied_glyph_falls_back_for_the_run() {
         subset(face.bytes, &keep, true)
     });
     falls_back_for_the_run(face, page, KEPT);
+}
+
+/// A GSUB with no scripts, features or lookups: version 1.0 and 3 empty lists.
+const EMPTY_GSUB: [u8; 16] = [0, 1, 0, 0, 0, 10, 0, 12, 0, 14, 0, 0, 0, 0, 0, 0];
+
+/// A subset whose own cmap lacks kaf, which the editor's stand-in cmap then maps to the medial
+/// form the page's ToUnicode names: typed at a word's start, kaf would be drawn medial in the
+/// page's font. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_in_a_subset_whose_own_cmap_lacks_a_letter_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let chars: BTreeSet<char> = ORIGINAL.chars().filter(|&c| c != '\u{0643}').collect();
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        with_table(&subset(face.bytes, keep, true), b"cmap", pruned_cmap(face.bytes, &chars))
+    });
+    falls_back_for_the_run(face, page, "كم عليكم");
+}
+
+/// A subset whose GSUB has no Arabic joining features, though it kept the isolated forms: every
+/// glyph has ink, but every letter would be drawn isolated. The whole run is drawn in the
+/// bundled face.
+#[test]
+fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        let keep: BTreeSet<usize> = keep.iter().copied().chain(ORIGINAL.chars().map(|c| usize::from(nominal(face.bytes, c)))).collect();
+        with_table(&subset(face.bytes, &keep, true), b"GSUB", EMPTY_GSUB.to_vec())
+    });
+    falls_back_for_the_run(face, page, KEPT);
+}
+
+/// A subset that kept a form the page never showed (initial seen), which its ToUnicode doesn't
+/// name: the run keeps the subset's program but is embedded with it again, with its own
+/// ToUnicode, not shown in the page's codes, which would copy only through `ActualText`.
+#[test]
+fn arabic_in_a_form_the_to_unicode_lacks_keeps_its_program_with_its_own_to_unicode() {
+    let Some(face) = arabic_face() else { return };
+    let typed = "سلم عليكم";
+    let forms: Vec<usize> = pdfcraft_fonts::source_shaping::shape(face.bytes, typed).unwrap().glyphs.iter().map(|g| g.id.to_u32() as usize).collect();
+    let mut page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        let keep: BTreeSet<usize> = keep.iter().copied().chain(forms.iter().copied()).collect();
+        subset(face.bytes, &keep, true)
+    });
+    let edit = replace_block(&mut page, 0, 0, typed).unwrap();
+    assert_eq!(edit.substituted, None);
+    let (reopened, _) = saved(&page);
+    let read: Vec<String> = text_blocks(&reopened, 0).unwrap().into_iter().map(|b| b.text).collect();
+    assert_eq!(read, [typed]);
+    let shown = glyphs_shown(&reopened);
+    assert!(!shown.is_empty() && !shown.iter().any(|(font, _)| font == "F1"), "shown in the page's codes: {shown:?}");
+    let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", typed, true)));
+    assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
+}
+
+/// A bracket typed as a word of its own: in the row it is mirrored to the glyph the page shows,
+/// but the layout measures it alone, unmirrored, in a glyph the subset emptied. The whole run is
+/// drawn in the bundled face, not refused.
+#[test]
+fn a_bracket_standing_alone_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let original = "السَّلامُ (عليكم";
+    falls_back_for_the_run(face, producer_page(face.bytes, "NotoSansArabic", original, true), "عليكم ( السَّلامُ");
 }

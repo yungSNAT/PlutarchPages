@@ -6,7 +6,7 @@ use super::{
     japanese_glyph_from, needs_type3, no_fallback_font, no_glyph_for, page_dict, reveal_ops, rewritten_contents, row_break, source_encodes,
     source_family, source_program, source_show, source_space, source_width, splice, type3_faces, type3_glyph, write_type3_glyphs,
 };
-use scripts::{ArabicSpan, arabic_span, codes_are_glyph_ids, is_cjk_face, shape_arabic};
+use scripts::{ArabicSpan, arabic_span, codes_are_glyph_ids, is_cjk_face, shape_arabic, to_unicode_reads};
 
 #[path = "styled/scripts.rs"]
 mod scripts;
@@ -150,16 +150,15 @@ struct ThaiShaping {
     /// complete program of this same-face resource: a span its subsets can't show in place. An
     /// Arabic span's may be a subset that draws every glyph its shaping chose.
     program: HashMap<String, String>,
-    /// The names of `program` an Arabic span took ([`arabic_span`]): shown in the resource's own
-    /// codes where those are its glyph ids ([`codes_are_glyph_ids`]), so the page's font draws
-    /// them with no copy of its program.
-    own_codes: std::collections::HashSet<String>,
+    /// The names of `program` an Arabic span took ([`arabic_span`]), whose runs
+    /// [`arabic_program_run`] shapes.
+    arabic_programs: std::collections::HashSet<String>,
 }
 
 impl ThaiShaping {
     /// A draft-only name for span `index`, measured as `source`'s font, whose rows `resource`'s
     /// program shapes: another span may still show that resource's existing codes. `arabic`: an
-    /// Arabic span's ([`ThaiShaping::own_codes`]).
+    /// Arabic span's ([`ThaiShaping::arabic_programs`]).
     fn program_name(
         &mut self,
         metrics: &mut std::collections::BTreeMap<String, Metrics>,
@@ -176,7 +175,7 @@ impl ThaiShaping {
             metrics.insert(name.clone(), m);
         }
         if arabic {
-            self.own_codes.insert(name.clone());
+            self.arabic_programs.insert(name.clone());
         }
         self.program.insert(name.clone(), resource);
         name
@@ -1294,6 +1293,30 @@ fn shape_with_program(doc: &Document, font: &Dict, text: &str) -> Option<(Vec<u8
     pdfcraft_fonts::source_shaping::draws_every_glyph(&bytes, &shaped).then_some((bytes, shaped))
 }
 
+/// A run of an Arabic span the program of `font` (the resource `resource`) took ([`arabic_span`]):
+/// shown in the font's own codes where they are its glyph ids and its ToUnicode names the glyphs
+/// ([`codes_are_glyph_ids`], [`to_unicode_reads`]), so nothing is embedded; else embedded with
+/// the program again. A part of the span shaped alone, such as a wrapped row, may need a glyph
+/// the rows and words `arabic_span` checked didn't: it is drawn in the bundled Arabic outlines,
+/// a whole row or word, not refused.
+fn arabic_program_run(doc: &Document, font: &Dict, resource: &str, family: String, text: &str) -> Result<ShapedText, EditError> {
+    let Some((bytes, shaped)) = shape_with_program(doc, font, text) else {
+        return Ok(ShapedText { run: shape_arabic(text)?, font: ShapedFont::ArabicOutlines });
+    };
+    if !(codes_are_glyph_ids(doc, font) && to_unicode_reads(doc, font, &shaped)) {
+        return Ok(ShapedText { run: shaped, font: ShapedFont::Program { bytes, family } });
+    }
+    let codes = shaped
+        .glyphs
+        .iter()
+        .map(|glyph| {
+            let code = u16::try_from(glyph.id.to_u32()).map_err(|_| EditError::Invalid("shaped glyph limit".into()))?;
+            Ok((resource.to_owned(), code.to_be_bytes().to_vec()))
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    Ok(ShapedText { run: shaped, font: ShapedFont::Existing(codes) })
+}
+
 /// Shape in the source or an explicitly registered matching full face. Never use interface fonts.
 fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, text: &str) -> Result<Option<ShapedText>, EditError> {
     if thai.outlined.contains(name) {
@@ -1309,19 +1332,11 @@ fn shape_source(doc: &Document, fonts: &Dict, thai: &ThaiShaping, name: &str, te
             .and_then(|f| doc.dict(f))
             .ok_or_else(|| EditError::Invalid("the complete font resource is missing".into()))?;
         let family = Metrics::from_dict(doc, &font).base_font;
+        if thai.arabic_programs.contains(name) {
+            return arabic_program_run(doc, &font, resource, family, text).map(Some);
+        }
         let (bytes, shaped) = shape_with_program(doc, &font, text)
             .ok_or_else(|| EditError::Invalid(format!("{family} cannot shape this text with its own layout; choose a font that covers it")))?;
-        if thai.own_codes.contains(name) && codes_are_glyph_ids(doc, &font) {
-            let codes = shaped
-                .glyphs
-                .iter()
-                .map(|glyph| {
-                    let code = u16::try_from(glyph.id.to_u32()).map_err(|_| EditError::Invalid("shaped glyph limit".into()))?;
-                    Ok((resource.clone(), code.to_be_bytes().to_vec()))
-                })
-                .collect::<Result<Vec<_>, EditError>>()?;
-            return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Existing(codes) }));
-        }
         return Ok(Some(ShapedText { run: shaped, font: ShapedFont::Program { bytes, family } }));
     }
     if !pdfcraft_fonts::source_shaping::required(text) {
@@ -1834,6 +1849,14 @@ pub(crate) fn rewrite_styled_block(
     let measured: Vec<_> = rows.iter().map(|row| measure(row)).collect::<Result<_, _>>()?;
     let shaped = prepare_shaped_rows(doc, &fonts, &thai, &rows, &kept, advance)?;
     let ShapedRows { runs: shaped_runs, advances: segment_advances, char_advances } = shaped;
+    // A part of an Arabic span its program couldn't shape is in the bundled outlines too.
+    let substituted = substituted.or_else(|| {
+        shaped_runs
+            .values()
+            .any(|s| matches!(s.font, ShapedFont::ArabicOutlines))
+            .then(|| pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned()))
+            .flatten()
+    });
     let glyph_resources = embed_shaped_resources(doc, &mut fonts, &shaped_runs)?;
     let n = pdfcraft_content::num;
     let mut block_ops = vec![Op::new("q", vec![])];

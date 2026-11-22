@@ -1,6 +1,7 @@
 //! Shaping an explicitly selected source/document face, with OpenType features and UAX #9.
 use harfrust::{BufferClusterLevel, Direction, ShapeOptions, ShaperData, UnicodeBuffer};
 use skrifa::raw::TableProvider;
+use skrifa::raw::tables::layout::{FeatureList, ScriptList};
 use skrifa::{FontRef, GlyphId};
 use unicode_bidi::{Level, ParagraphBidiInfo};
 
@@ -29,26 +30,67 @@ pub fn has_thai_layout(bytes: &[u8]) -> bool {
     FontRef::new(bytes).is_ok_and(|f| positions_thai_marks(&f))
 }
 
-/// Whether the GPOS features the shaper uses for Thai include `mark` or `mkmk`. The selection is
-/// HarfRust's, through the same read-fonts calls: the `thai` script, else `DFLT`, `dflt` or
-/// `latn` (`ScriptList::select`); then, given no language, a language system tagged `dflt`,
-/// else the script's default one. Marks under a script or language it doesn't select don't
-/// count, nor does a GPOS with only kerning.
-fn positions_thai_marks(face: &FontRef) -> bool {
+/// The features, each with its lookup count, that the shaper uses for `script` from a GSUB or
+/// GPOS script and feature list. The selection is HarfRust's, through the same read-fonts calls:
+/// the `script` script, else `DFLT`, `dflt` or `latn` (`ScriptList::select`); then, given no
+/// language, a language system tagged `dflt`, else the script's default one. Features under a
+/// script or language it doesn't select don't count.
+fn selected_features(scripts: &ScriptList, features: &FeatureList, script: &[u8; 4]) -> Vec<(skrifa::Tag, u16)> {
     use skrifa::Tag;
-    let Ok(gpos) = face.gpos() else { return false };
-    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
-    let records = features.feature_records();
-    let marks = |index: u16| records.get(usize::from(index)).is_some_and(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk");
-    let Some(selected) = scripts.select(&[Tag::new(b"thai")]) else { return false };
-    let Ok(script) = scripts.get(selected.index) else { return false };
+    let Some(selected) = scripts.select(&[Tag::new(script)]) else { return Vec::new() };
+    let Ok(script) = scripts.get(selected.index) else { return Vec::new() };
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
         None => script.default_lang_sys().transpose().ok().flatten(),
     };
-    let Some(language) = language else { return false };
-    language.feature_indices().iter().any(|i| marks(i.get()))
-        || (language.required_feature_index() != 0xFFFF && marks(language.required_feature_index()))
+    let Some(language) = language else { return Vec::new() };
+    let records = features.feature_records();
+    let required = language.required_feature_index();
+    language
+        .feature_indices()
+        .iter()
+        .map(|i| i.get())
+        .chain((required != 0xFFFF).then_some(required))
+        .filter_map(|index| {
+            let record = records.get(usize::from(index))?;
+            Some((record.feature_tag(), record.feature(features.offset_data()).map_or(0, |f| f.lookup_index_count())))
+        })
+        .collect()
+}
+
+/// Whether the GPOS features the shaper uses for Thai ([`selected_features`]) include `mark` or
+/// `mkmk`. Marks under a script or language it doesn't select don't count, nor does a GPOS with
+/// only kerning.
+fn positions_thai_marks(face: &FontRef) -> bool {
+    let Ok(gpos) = face.gpos() else { return false };
+    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
+    selected_features(&scripts, &features, b"thai").iter().any(|(tag, _)| *tag == *b"mark" || *tag == *b"mkmk")
+}
+
+/// Whether `program`, as a page embeds it (not with a cmap the editor rebuilt from ToUnicode),
+/// gives the Arabic letters of `text` their joining forms: its own cmap maps every letter, and
+/// the GSUB features the shaper uses for Arabic ([`selected_features`]) have lookups for `init`,
+/// `medi` and `fina`, and for `rlig` where lam meets alef. A cmap rebuilt from ToUnicode maps a
+/// letter to one of its positional forms, which the GSUB doesn't substitute; a GSUB without these
+/// features leaves every letter isolated. Either way every glyph may have ink and still be the
+/// wrong form.
+pub fn joins_arabic(program: &[u8], text: &str) -> bool {
+    use skrifa::MetadataProvider as _;
+    let letter =
+        |c: &char| matches!(u32::from(*c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
+    let Ok(face) = FontRef::new(program) else { return false };
+    let charmap = face.charmap();
+    if !text.chars().filter(letter).all(|c| charmap.map(c).is_some()) {
+        return false;
+    }
+    let Ok(gsub) = face.gsub() else { return false };
+    let (Ok(scripts), Ok(features)) = (gsub.script_list(), gsub.feature_list()) else { return false };
+    let found = selected_features(&scripts, &features, b"arab");
+    let has = |tag: &[u8; 4]| found.iter().any(|(t, lookups)| *t == *tag && *lookups > 0);
+    // Lam then alef, with any marks on the lam between them.
+    let bare: Vec<char> = text.chars().filter(|c| !matches!(u32::from(*c), 0x064b..=0x065f | 0x0670)).collect();
+    let lam_alef = bare.windows(2).any(|w| matches!(w, ['\u{0644}', '\u{0622}' | '\u{0623}' | '\u{0625}' | '\u{0627}']));
+    has(b"init") && has(b"medi") && has(b"fina") && (!lam_alef || has(b"rlig"))
 }
 
 pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {
@@ -127,8 +169,9 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
 /// Whether `bytes`, the program that shaped `run`, draws every glyph of it. A subset that keeps
 /// glyph ids empties the glyphs it drops (`glyf`/`loca` or CFF charstrings with no contour), and
 /// its cmap and layout tables may still lead to them; they would show nothing. `.notdef` never
-/// counts. Empty glyphs are real only for white space: the space glyph, which the shaper also
-/// gives default-ignorable characters such as joiners, and a cluster of white space.
+/// counts. Empty glyphs are real only for white space: the space glyph in a cluster with white
+/// space or a default-ignorable character such as a joiner (the shaper gives those the space
+/// glyph), and any glyph of a cluster of white space.
 pub fn draws_every_glyph(bytes: &[u8], run: &ShapedRun) -> bool {
     use skrifa::MetadataProvider as _;
     use skrifa::instance::{LocationRef, Size};
@@ -161,8 +204,39 @@ pub fn draws_every_glyph(bytes: &[u8], run: &ShapedRun) -> bool {
             outlines.get(glyph.id).is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut ink).is_ok())
                 && ink.0
         };
-        glyph.id.to_u32() != 0 && (Some(glyph.id) == space || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace)) || inked())
+        // The space glyph only where the cluster has something it may stand for: a cmap may map
+        // a letter to that glyph id too.
+        let blank = |c: char| c.is_whitespace() || default_ignorable(c);
+        glyph.id.to_u32() != 0
+            && ((Some(glyph.id) == space && cluster.chars().any(blank))
+                || (!cluster.is_empty() && cluster.chars().all(char::is_whitespace))
+                || inked())
     })
+}
+
+/// Unicode's Default_Ignorable_Code_Point characters (joiners, bidi controls, variation
+/// selectors and the like), which a shaper hides behind the space glyph.
+fn default_ignorable(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0x00ad
+            | 0x034f
+            | 0x061c
+            | 0x115f..=0x1160
+            | 0x17b4..=0x17b5
+            | 0x180b..=0x180f
+            | 0x200b..=0x200f
+            | 0x202a..=0x202e
+            | 0x2060..=0x206f
+            | 0x3164
+            | 0xfe00..=0xfe0f
+            | 0xfeff
+            | 0xffa0
+            | 0xfff0..=0xfff8
+            | 0x1bca0..=0x1bca3
+            | 0x1d173..=0x1d17a
+            | 0xe0000..=0xe0fff
+    )
 }
 
 #[cfg(test)]
