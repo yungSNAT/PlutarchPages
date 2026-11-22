@@ -814,9 +814,16 @@ impl Document {
     }
 
     /// Objects of the file that could not be read and read as null, one line each (see
-    /// [`pdfcraft_cos::Document::unreadable_objects`]): only those read so far.
+    /// [`pdfcraft_cos::Document::unreadable_objects`]). Every object is read first, an encrypted
+    /// file's as stored, so the list covers the whole file and not only what opening read.
     pub fn unreadable_objects(&self) -> Vec<String> {
-        self.editor.as_ref().map(|e| e.cos.unreadable_objects()).unwrap_or_default()
+        self.editor
+            .as_ref()
+            .map(|e| {
+                e.cos.scan_objects_where(|_| false).for_each(drop);
+                e.cos.unreadable_objects()
+            })
+            .unwrap_or_default()
     }
 }
 
