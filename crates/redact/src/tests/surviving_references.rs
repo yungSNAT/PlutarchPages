@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[path = "surviving_references/fork_tests.rs"]
 mod fork_tests;
 
 /// Whether `secret` survives a full save of `doc`, in the file's bytes or in a decoded stream.

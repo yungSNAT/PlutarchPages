@@ -9,6 +9,7 @@ use pdfcraft_optimize::{
     effective_resolutions, optimize,
 };
 
+#[path = "optimize/fork_tests.rs"]
 mod fork_tests;
 
 /// What image `s` decodes to, its fax or JBIG2 data included, with no limit on the work: the
