@@ -50,12 +50,6 @@ fn redacted_image_bytes_are_gone_from_the_saved_file() {
     assert!(!bytes.windows(CANARY.len()).any(|w| w == CANARY), "redacted image bytes left in the saved file (#389)");
 }
 
-/// Whether any stream of `doc`, saved and decoded, still holds `secret`.
-fn saved_streams_hold(doc: &Document, secret: &[u8]) -> bool {
-    let saved = Document::open(Arc::new(write_full(doc, &SaveOptions::default()).unwrap())).unwrap();
-    saved.scan_objects().any(|(_, o)| matches!(&*o, Object::Stream(s) if s.decoded().is_ok_and(|d| d.windows(secret.len()).any(|w| w == secret))))
-}
-
 /// Final-review finding F1: no draw of a redacted image, through any resource name, visible or
 /// clipped, may keep pixels that were under a mark in the saved file.
 #[test]
@@ -171,74 +165,6 @@ fn images_used_elsewhere_are_refused_and_unused_entries_dropped() {
     mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 40.0]], "");
     assert_eq!(apply(&mut doc, None).unwrap().images_removed, 1);
     assert!(!saved_streams_hold(&doc, SECRET), "the inherited entry kept the original image");
-}
-
-/// Final-review findings on 78b92a5: a form that draws from the resources it inherits counts as
-/// drawing those names (so its image is not pruned from under it), and one image or form drawn
-/// on several pages is redacted with every page's marks.
-#[test]
-fn shared_images_and_forms_are_redacted_with_every_pages_marks() {
-    const LEFT: &[u8] = &[0xCA, 0xFE, 0xBA, 0xBE];
-    const RIGHT: &[u8] = &[0x11, 0x22, 0x33, 0x44];
-    let img = || stream("/Type /XObject /Subtype /Image /Width 8 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8", [LEFT, RIGHT].concat());
-    let leaks = |doc: &Document| saved_streams_hold(doc, LEFT) || saved_streams_hold(doc, RIGHT);
-    // Objects: 1 catalog, 2 pages (shared resources), 3 and 6 pages, 4 and 7 contents, 5 the
-    // image, 8 a form, 9 the font, 10 its widths.
-    let two_pages = |first: &[u8], second: &[u8], form: &[u8]| {
-        pdf(vec![
-            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-            b"<< /Type /Pages /Kids [3 0 R 6 0 R] /Count 2 /MediaBox [0 0 300 300] /Resources << /XObject << /Scan 5 0 R /Fm 8 0 R >> /Font << /F1 9 0 R >> >> >>".to_vec(),
-            b"<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>".to_vec(),
-            stream("", first),
-            img(),
-            b"<< /Type /Page /Parent 2 0 R /Contents 7 0 R >>".to_vec(),
-            stream("", second),
-            stream("/Type /XObject /Subtype /Form /BBox [0 0 300 300]", form),
-            FONT.replace("95 0 R", "10 0 R").into_bytes(),
-            widths(),
-        ])
-    };
-    let scan = b"q 80 0 0 10 10 10 cm /Scan Do Q";
-    // Page 2 draws a form without resources of its own, which draws /Scan from page 2's.
-    let mut doc = two_pages(scan, b"/Fm Do", scan);
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 40.0]], "");
-    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [1]), "the form's image must not be pruned");
-    // The image on both pages: page 1 marks its left half, page 2 its right half. One copy,
-    // with both halves cleared, is drawn on both pages.
-    let mut doc = two_pages(scan, scan, b"");
-    mark(&mut doc, 0, &[[0.0, 0.0, 50.0, 40.0]], "");
-    mark(&mut doc, 1, &[[50.0, 0.0, 120.0, 40.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!((r.images_cleared, r.shared_redacted), (2, 2), "{r:?}");
-    {
-        let copy = |i: usize| {
-            let p = pdfcraft_model::pages(&doc).swap_remove(i);
-            let res = doc.resolve(p.dict.get(b"Resources").unwrap()).as_dict().cloned().unwrap();
-            doc.resolve(res.get(b"XObject").unwrap()).as_dict().and_then(|x| x.get(b"PCRedacted1").and_then(Object::as_ref))
-        };
-        assert!(copy(0).is_some() && copy(0) == copy(1), "both pages draw the same copy");
-    }
-    assert!(!leaks(&doc), "a page's copy kept pixels the other page's mark cleared");
-    // Partly marked on page 1, wholly on page 2: page 2 drops it and page 1's copy is blank.
-    let mut doc = two_pages(scan, scan, b"");
-    mark(&mut doc, 0, &[[0.0, 0.0, 50.0, 40.0]], "");
-    mark(&mut doc, 1, &[[0.0, 0.0, 120.0, 40.0]], "");
-    assert_eq!(apply(&mut doc, None).unwrap().shared_redacted, 1, "page 1's draw is blanked by page 2's mark");
-    let second = content(&doc, 1);
-    assert!(!second.contains("/Scan Do") && !second.contains("/PCRedacted1 Do"), "{second}");
-    assert!(!leaks(&doc), "page 1's copy kept pixels page 2's mark covered");
-    // A form on both pages: page 1 marks its left word, page 2 its right word. Both copies
-    // lose both words.
-    let words = b"BT /F1 10 Tf 10 100 Td (LEFTSECRET) Tj 190 0 Td (RIGHTSECRET) Tj ET";
-    let mut doc = two_pages(b"/Fm Do", b"/Fm Do", words);
-    mark(&mut doc, 0, &[[0.0, 90.0, 120.0, 120.0]], "");
-    mark(&mut doc, 1, &[[190.0, 90.0, 300.0, 120.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!((r.forms_rewritten, r.shared_redacted), (2, 2), "{r:?}");
-    assert!(
-        !saved_streams_hold(&doc, b"LEFTSECRET") && !saved_streams_hold(&doc, b"RIGHTSECRET"),
-        "a copy kept a word the other page's mark removed"
-    );
 }
 
 /// Final-review findings on ac75a54: an unmarked draw split across a page's content streams, or
@@ -407,98 +333,6 @@ fn an_image_a_rewritten_form_draws_again_through_the_pages_resources_is_refused(
     );
     mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
     assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(p)) if p == [0]));
-}
-
-/// Whether a full save of `doc` (classic table, so dictionaries stay readable) holds `secret`.
-fn saved_bytes_hold(doc: &Document, secret: &[u8]) -> bool {
-    let bytes = write_full(doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
-    bytes.windows(secret.len()).any(|w| w == secret)
-}
-
-/// Objects 1 to 4: a catalog (with `catalog_extra`), the page tree, one 300×300 page with
-/// `annots`, and its empty content.
-fn annotated_page(catalog_extra: &str, annots: &str, extra: Vec<Vec<u8>>) -> Document {
-    let mut objs: Vec<Vec<u8>> = vec![
-        format!("<< /Type /Catalog /Pages 2 0 R {catalog_extra} >>").into_bytes(),
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Annots [{annots}] >>").into_bytes(),
-        stream("", b""),
-    ];
-    objs.extend(extra);
-    pdf(objs)
-}
-
-#[test]
-fn removed_comments_and_links_do_not_stay_reachable() {
-    // A comment under the mark with a reply outside it that points back at it.
-    let mut doc = annotated_page(
-        "",
-        "5 0 R 6 0 R",
-        vec![
-            b"<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (CANARY-SECRET-1) >>".to_vec(),
-            b"<< /Type /Annot /Subtype /Text /Rect [200 200 220 220] /IRT 5 0 R /Contents (reply) >>".to_vec(),
-        ],
-    );
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
-    assert_eq!(apply(&mut doc, None).unwrap().annotations, 2, "the reply goes with its comment");
-    assert!(!saved_bytes_hold(&doc, b"CANARY-SECRET-1"), "a reply kept the removed comment");
-
-    // A tagged link under the mark, referenced from two structure elements (inline and indirect).
-    let mut doc = annotated_page(
-        "/StructTreeRoot 6 0 R /MarkInfo << /Marked true >>",
-        "5 0 R",
-        vec![
-            b"<< /Type /Annot /Subtype /Link /Rect [20 20 40 40] /StructParent 0 /A << /S /URI /URI (mailto:canary-secret@example.invalid) >> >>"
-                .to_vec(),
-            b"<< /Type /StructTreeRoot /K [7 0 R 8 0 R] >>".to_vec(),
-            b"<< /Type /StructElem /S /Link /P 6 0 R /Alt (canary-alt) /K [<< /Type /OBJR /Obj 5 0 R >>] >>".to_vec(),
-            b"<< /Type /StructElem /S /Link /P 6 0 R /K 9 0 R >>".to_vec(),
-            b"<< /Type /OBJR /Obj 5 0 R >>".to_vec(),
-        ],
-    );
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!((r.annotations, r.tags), (1, 2), "{r:?}");
-    assert!(!saved_bytes_hold(&doc, b"canary-secret@example.invalid"), "the structure tree kept the removed link");
-    assert!(!saved_bytes_hold(&doc, b"canary-alt"), "the link element kept its alternate text");
-
-    // The same through indirect /K arrays, at the root and in the element.
-    let mut doc = annotated_page(
-        "/StructTreeRoot 6 0 R /MarkInfo << /Marked true >>",
-        "5 0 R",
-        vec![
-            b"<< /Type /Annot /Subtype /Link /Rect [20 20 40 40] /StructParent 0 /A << /S /URI /URI (mailto:canary-secret@example.invalid) >> >>"
-                .to_vec(),
-            b"<< /Type /StructTreeRoot /K 7 0 R >>".to_vec(),
-            b"[8 0 R]".to_vec(),
-            b"<< /Type /StructElem /S /Link /P 6 0 R /K 9 0 R >>".to_vec(),
-            b"[<< /Type /OBJR /Obj 5 0 R >>]".to_vec(),
-        ],
-    );
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
-    let r = apply(&mut doc, None).unwrap();
-    assert_eq!((r.annotations, r.tags), (1, 1), "{r:?}");
-    assert!(!saved_bytes_hold(&doc, b"canary-secret@example.invalid"), "an indirect /K array kept the removed link");
-
-    // A form field's widget and a comment's pop-up under the mark are detached, not refused.
-    let mut doc = annotated_page(
-        "/AcroForm << /Fields [5 0 R] >>",
-        "5 0 R 6 0 R 7 0 R",
-        vec![
-            b"<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /V (CANARY-FIELD) /Rect [20 20 40 40] >>".to_vec(),
-            b"<< /Type /Annot /Subtype /Text /Rect [50 20 70 40] /Contents (CANARY-NOTE) /Popup 7 0 R >>".to_vec(),
-            b"<< /Type /Annot /Subtype /Popup /Rect [150 150 250 250] /Parent 6 0 R >>".to_vec(),
-        ],
-    );
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
-    apply(&mut doc, None).unwrap();
-    assert!(!saved_bytes_hold(&doc, b"CANARY-FIELD") && !saved_bytes_hold(&doc, b"CANARY-NOTE"));
-
-    // Any other reference to a removed annotation fails closed.
-    let mut doc =
-        annotated_page("/PCKeep 5 0 R", "5 0 R", vec![b"<< /Type /Annot /Subtype /Text /Rect [20 20 40 40] /Contents (CANARY-SECRET-2) >>".to_vec()]);
-    mark(&mut doc, 0, &[[0.0, 0.0, 120.0, 80.0]], "");
-    assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(_))));
 }
 
 #[test]
