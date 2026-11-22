@@ -275,6 +275,12 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   CodeQL's test exclusion (`.github/codeql/codeql-config.yml`) covers them: their clients parse the
   server's replies, which `rust/unsafe-deserialization` flagged. Upstream's changes to those tests
   go into that file at the next merge.
+- Windows first starts wgpu with Direct3D 12 alone, on a GPU that drives a display, when nothing
+  chose the renderer or adapter (`dx12_first`, `hardware_dx12_only` and `dx12_alone_may_use` in
+  `apps/pdfcraft/src/main.rs`): listing OpenGL adapters too starts an OpenGL context on every
+  launch. If that run fails before the app starts, upstream's run (Direct3D 12 and OpenGL) and then
+  eframe's OpenGL follow, and the `dx12-alone-failed` file in the settings folder skips the first
+  run on later launches with the same display GPUs. Keep these runs at the next merge.
 
 ## Fixed differently upstream
 
