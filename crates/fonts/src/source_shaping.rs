@@ -53,12 +53,15 @@ fn positions_thai_marks(face: &FontRef) -> bool {
 
 /// Whether `program`, as a page embeds it (not with a cmap the editor rebuilt from ToUnicode),
 /// gives the Arabic letters of `text` their joining forms, judged against `reference`, a complete
-/// Arabic face. Its own cmap must map every letter, and wherever the reference's shaping draws a
-/// letter in a glyph other than its nominal one (a joining form or part of a ligature), the
-/// program's shaping must too. A cmap rebuilt from ToUnicode maps a letter to one of its
-/// positional forms, which the GSUB doesn't substitute; a GSUB without the joining features, or
-/// pruned to the forms a page showed, leaves letters isolated. Either way every glyph may have
-/// ink and still be the wrong form. A program whose joining form reuses its nominal glyph is
+/// Arabic face, which must draw every letter itself. Its own cmap must map every letter; each
+/// letter's isolated, initial, medial and final forms must differ wherever the reference's
+/// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
+/// in a glyph other than its nominal one (a joining form or part of a ligature), the program's
+/// must too. A cmap that maps a letter to one of its positional forms (rebuilt from ToUnicode, or
+/// written from the glyphs a page showed) leaves the GSUB with nothing to substitute, or
+/// substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
+/// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
+/// ink and still be the wrong form. A program whose joining form reuses another form's glyph is
 /// refused too, which only costs the page's font.
 pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     use skrifa::MetadataProvider as _;
@@ -66,24 +69,47 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     if text.len() > 262_144 {
         return false;
     }
+    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
+    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
     let (own_map, reference_map) = (own.charmap(), reference.charmap());
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
-    let letter = |c: char| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
+    let letter =
+        |c: char| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
+    let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
+    if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
+        return false;
+    }
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
-        let (ours, theirs) = (rtl_clusters(&own, run), rtl_clusters(&reference, run));
+        let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
         run.char_indices().filter(|(_, c)| letter(*c)).all(|(at, c)| {
             let (Some(nominal), Some(reference_nominal)) = (own_map.map(c), reference_map.map(c)) else { return false };
             let (ours, theirs) = (cluster_at(&ours, at), cluster_at(&theirs, at));
-            !ours.is_empty() && !theirs.is_empty() && (theirs.contains(&reference_nominal.to_u32()) || !ours.contains(&nominal.to_u32()))
+            drawn(&ours) && drawn(&theirs) && (theirs.contains(&reference_nominal.to_u32()) || !ours.contains(&nominal.to_u32()))
         })
     })
 }
 
-/// Each glyph of `text` shaped right to left in `face`, with the byte offset its cluster starts at.
-fn rtl_clusters(face: &FontRef, text: &str) -> Vec<(usize, u32)> {
-    let data = ShaperData::new(face);
-    let shaper = data.shaper(face).build();
+/// Whether `own` draws `letter`'s isolated, initial, medial and final forms (set against tatweels,
+/// which join on both sides) as distinct glyphs wherever `reference` does, both drawing each form
+/// in glyphs of their own.
+fn tells_forms_apart(own: &harfrust::Shaper, reference: &harfrust::Shaper, letter: char) -> bool {
+    let forms = |shaper: &harfrust::Shaper| {
+        let (t, after) = ('\u{0640}', '\u{0640}'.len_utf8());
+        [(format!("{letter}"), 0), (format!("{letter}{t}"), 0), (format!("{t}{letter}{t}"), after), (format!("{t}{letter}"), after)]
+            .map(|(text, at)| cluster_at(&rtl_clusters(shaper, &text), at))
+    };
+    let (ours, theirs) = (forms(own), forms(reference));
+    ours.iter().chain(&theirs).all(|glyphs| drawn(glyphs)) && (0..4).all(|i| (0..i).all(|j| theirs[i] == theirs[j] || ours[i] != ours[j]))
+}
+
+/// Whether a cluster has glyphs and none of them is `.notdef`.
+fn drawn(glyphs: &[u32]) -> bool {
+    !glyphs.is_empty() && !glyphs.contains(&0)
+}
+
+/// Each glyph of `text` shaped right to left, with the byte offset its cluster starts at.
+fn rtl_clusters(shaper: &harfrust::Shaper, text: &str) -> Vec<(usize, u32)> {
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
@@ -92,10 +118,12 @@ fn rtl_clusters(face: &FontRef, text: &str) -> Vec<(usize, u32)> {
     shaper.shape(buffer, ShapeOptions::new()).glyph_infos().iter().map(|g| (g.cluster as usize, g.glyph_id)).collect()
 }
 
-/// The glyphs of the cluster that holds byte `at`.
+/// The glyphs, sorted, of the cluster that holds byte `at`.
 fn cluster_at(glyphs: &[(usize, u32)], at: usize) -> Vec<u32> {
     let start = glyphs.iter().map(|(s, _)| *s).filter(|s| *s <= at).max();
-    glyphs.iter().filter(|(s, _)| Some(*s) == start).map(|(_, g)| *g).collect()
+    let mut cluster: Vec<u32> = glyphs.iter().filter(|(s, _)| Some(*s) == start).map(|(_, g)| *g).collect();
+    cluster.sort_unstable();
+    cluster
 }
 
 pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {
