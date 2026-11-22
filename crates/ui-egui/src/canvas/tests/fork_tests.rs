@@ -36,9 +36,9 @@ fn right_bound_spreads_put_the_earlier_page_on_the_right() {
 fn an_earlier_zoom_tile_counts_as_painted_only_inside_the_viewport() {
     let view = [0.0, 0.5, 1.0, 1.0];
     // The top half of the page, off screen: painted and clipped, but nothing shows.
-    assert!(!super::uv_overlap([0.0, 0.0, 1.0, 0.5], view));
+    assert!(!super::super::uv_overlap([0.0, 0.0, 1.0, 0.5], view));
     // Reaching into the viewport.
-    assert!(super::uv_overlap([0.0, 0.25, 0.5, 0.75], view));
+    assert!(super::super::uv_overlap([0.0, 0.25, 0.5, 0.75], view));
     // Touching the edge only.
-    assert!(!super::uv_overlap([0.0, 0.0, 0.5, 0.5], [0.5, 0.5, 1.0, 1.0]));
+    assert!(!super::super::uv_overlap([0.0, 0.0, 0.5, 0.5], [0.5, 0.5, 1.0, 1.0]));
 }
