@@ -1423,6 +1423,8 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     fn a_doc_comment_is_not_read_as_code() {
         let canvas = "/// Paints the page (and its border)\nfn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n";
         assert_eq!(colour_line_numbers(canvas), [3]);
+        let blanked = lex(canvas).map(|lexed| lexed.text);
+        assert!(blanked.as_deref().and_then(lex).is_some(), "the comment's closing bracket was kept: {blanked:?}");
     }
 
     fn colour_line_numbers(canvas: &str) -> Vec<usize> {
