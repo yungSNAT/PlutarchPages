@@ -9,6 +9,7 @@ mod cpu_override;
 mod edit;
 mod extract;
 mod help;
+mod info_metadata;
 mod info_repairs;
 mod info_standards;
 mod mcp_compact;
