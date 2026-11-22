@@ -160,10 +160,16 @@ pub(super) fn continues_font(line: &TextLine, s: &Shown) -> bool {
     same_font(line, &s.font, &s.base_font, s.face.as_deref()) || (s.edited.is_some() && line.edited == s.edited)
 }
 
-/// A line that began with a substitute run takes the source font of a later run, so the next
-/// replacement starts from the line's own font again.
+/// Whether resource `name` is one a replacement generated: a substitute (`PCEd`) or a Type 3
+/// fallback ([`fallback_names`]).
+fn generated(name: &[u8]) -> bool {
+    [&b"PCEd"[..], b"PCJp", b"PCLat", b"PCHe"].iter().any(|p| name.starts_with(p))
+}
+
+/// A line that began with a substitute or Type 3 fallback run takes the source font of a later
+/// run, so the next replacement starts from the line's own font again.
 pub(super) fn adopt_source_font(line: &mut TextLine, s: &Shown) {
-    if line.edited.is_some() && line.font.starts_with("PCEd") && !s.font.starts_with(b"PCEd") {
+    if line.edited.is_some() && generated(line.font.as_bytes()) && !generated(&s.font) {
         line.font = String::from_utf8_lossy(&s.font).into_owned();
         line.base_font = s.base_font.clone();
         line.face = s.face.clone();

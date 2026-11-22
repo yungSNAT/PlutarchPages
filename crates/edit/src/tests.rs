@@ -2643,6 +2643,15 @@ fn a_line_edit_draws_in_type3_only_what_its_font_lacks() {
     assert_eq!(outlines, 2, "only the 2 Japanese characters are outlines");
     text::replace_line(&mut doc, 0, 0, "Goodbye").unwrap();
     assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap().iter().map(|l| l.text.clone()).collect::<Vec<_>>(), ["Goodbye"]);
+
+    // A line that starts with characters its font lacks reads back in that font all the same,
+    // so the next edit draws in it again.
+    let mut doc = text_page("BT /F1 12 Tf 72 700 Td (Hello) Tj ET");
+    text::replace_line(&mut doc, 0, 0, &format!("{} Hello", covered_japanese_chars(2))).unwrap();
+    assert_eq!(text::text_lines(&reopen(&doc), 0).unwrap()[0].font, "F1");
+    text::replace_line(&mut doc, 0, 0, "Hello again").unwrap();
+    let content = String::from_utf8_lossy(&page_content_bytes(&reopen(&doc), 0)).into_owned();
+    assert!(content.contains("(Hello again)"), "{content}");
 }
 
 #[test]

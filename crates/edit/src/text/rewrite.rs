@@ -94,13 +94,24 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
         None => {
             let fallback_shown = crate::bidi::to_visual(&text);
             if needs_type3(&text) {
-                // The characters the line's font shows keep it, as in a paragraph edit: only the
-                // others are drawn in Type 3 outlines. Hebrew and visual-order text stay one run.
-                let own: HashSet<char> = font
+                // Where only Chinese, Japanese or Korean characters are missing, the characters the
+                // line's font draws keep it: only the missing ones are drawn in Type 3 outlines,
+                // each a whole character. A missing letter of an alphabet keeps the whole line in
+                // the fallback face rather than switching faces partway through a word. A CID the
+                // subset emptied (#1443) is not drawn by it. Reordered text (right to left, Indic)
+                // stays one run, as in the mixed substitute below. Spaces go with the line's font,
+                // which draws one it lacks as a displacement.
+                let mut own: HashSet<char> = font
                     .as_ref()
-                    .filter(|_| !visual_indic && !text.chars().any(crate::bidi::is_hebrew))
-                    .map(|m| text.chars().filter(|ch| m.encode(ch.encode_utf8(&mut [0; 4])).is_some()).collect())
+                    .filter(|_| !visual_indic && fallback_shown == text)
+                    .map(|m| text.chars().filter(|ch| *ch != ' ' && draws(m, *ch)).collect())
                     .unwrap_or_default();
+                if !text.chars().all(|ch| ch == ' ' || own.contains(&ch) || is_cjk(ch)) {
+                    own.clear();
+                }
+                if !own.is_empty() {
+                    own.insert(' ');
+                }
                 let missing: String = text.chars().filter(|ch| !own.contains(ch)).collect();
                 let fallback =
                     type3_font(doc, &mut fonts_res, &missing, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
@@ -1094,7 +1105,11 @@ pub(crate) fn rewrite_block_from(
             advances
         })
         .unwrap_or_default();
-    let source_chars: HashSet<char> = source_advances.iter().filter_map(|(&ch, width)| width.map(|_| ch)).collect();
+    let source_chars: HashSet<char> = source_advances
+        .iter()
+        .filter(|(ch, _)| **ch == ' ' || source.metrics.as_ref().is_some_and(|m| draws(m, **ch)))
+        .filter_map(|(&ch, width)| width.map(|_| ch))
+        .collect();
     let partial_reuse = !source_chars.is_empty();
     // The chosen style also determines the real Japanese fallback outlines and advances.
     let (family, bold, italic) = style.family.unwrap_or((source_family(&b.base_font), b.bold, b.italic));
@@ -1494,4 +1509,18 @@ pub(crate) fn translate_blocks(doc: &mut Document, page: usize, indexes: &[usize
     let contents = rewritten_contents(doc, &streams, data)?;
     doc.update_dict(p.obj, |d| d.set(b"Contents".to_vec(), contents))?;
     Ok(())
+}
+
+/// Whether `metrics` draws `ch`: it encodes it, and not as a CID whose outline the subset emptied
+/// (#1443; `encode` accepts any code with a `/W` entry).
+fn draws(metrics: &Metrics, ch: char) -> bool {
+    metrics
+        .encode(ch.encode_utf8(&mut [0; 4]))
+        .is_some_and(|code| metrics.codes(&code).first().is_none_or(|(c, _)| metrics.has_outline(*c) != Some(false)))
+}
+
+/// Whether `ch` is a Chinese, Japanese or Korean character, which stands alone in a line rather
+/// than inside a word of letters.
+fn is_cjk(ch: char) -> bool {
+    matches!(u32::from(ch), 0x3000..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF)
 }
