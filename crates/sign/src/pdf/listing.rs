@@ -38,6 +38,9 @@ pub(crate) fn is_document_timestamp(object: &Object) -> bool {
     object.as_dict().is_some_and(|d| is_doc_timestamp(d) && d.contains(b"ByteRange"))
 }
 
+/// An object a discovery scan read, or why it could not.
+type ScannedObject = (ObjRef, Result<Arc<Object>, pdfcraft_cos::CosError>);
+
 /// Whether any name in the file's stored bytes reads `ByteRange`, however its characters are
 /// escaped. Every dictionary key is a name, read from its `/` as the object reader reads it, and
 /// names are never encrypted (§7.6.2). So when none does, no object the reader takes from the
@@ -125,7 +128,7 @@ impl DigestCache {
         #[cfg(test)]
         self.discovery_scans.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut complete = true;
-        let scan: Box<dyn Iterator<Item = (ObjRef, Result<Arc<Object>, pdfcraft_cos::CosError>)>> = if stores_byte_range_name(doc.bytes()) {
+        let scan: Box<dyn Iterator<Item = ScannedObject>> = if stores_byte_range_name(doc.bytes()) {
             Box::new(doc.scan_objects_where(is_document_timestamp))
         } else {
             // No object stored directly in the file can be a timestamp: read only the members of
