@@ -4,8 +4,6 @@
 //! PlutarchPages' own tests of the parent module, kept apart from upstream's so upstream merges
 //! leave its file alone (PATCHES.md, 'Merging upstream').
 
-use super::*;
-
 #[test]
 fn page_tree_counts_do_not_size_the_page_list() {
     // Vendored lopdf patch: the page iterator's size hint summed each Pages node's `/Count`,
