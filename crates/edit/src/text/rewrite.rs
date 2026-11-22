@@ -94,22 +94,52 @@ pub(crate) fn replace_line_with_limit(doc: &mut Document, page: usize, line: usi
         None => {
             let fallback_shown = crate::bidi::to_visual(&text);
             if needs_type3(&text) {
-                let fallback = type3_font(doc, &mut fonts_res, &text, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
-                let runs = type3_encode(&fallback, &fallback_shown)
-                    .ok_or_else(|| EditError::Invalid(format!("\"{text}\" can't be shown by the {} fallback", fallback.family)))?;
+                // The characters the line's font shows keep it, as in a paragraph edit: only the
+                // others are drawn in Type 3 outlines. Hebrew and visual-order text stay one run.
+                let own: HashSet<char> = font
+                    .as_ref()
+                    .filter(|_| !visual_indic && !text.chars().any(crate::bidi::is_hebrew))
+                    .map(|m| text.chars().filter(|ch| m.encode(ch.encode_utf8(&mut [0; 4])).is_some()).collect())
+                    .unwrap_or_default();
+                let missing: String = text.chars().filter(|ch| !own.contains(ch)).collect();
+                let fallback =
+                    type3_font(doc, &mut fonts_res, &missing, source_family(&target.base_font), target.bold, is_chinese(&text), max_glyphs)?;
                 let size = font_size_before(&ops, first).unwrap_or(target.size);
                 let spacing = target.origin.state.char_spacing;
-                for run in runs {
-                    replacement.push(Op::new("Tf", vec![Object::name(&run.name), pdfcraft_content::num(size)]));
-                    if let Some(tc) = run.spacing {
-                        // A variation selector's empty glyph: shown at spacing zero, then the
-                        // line's own spacing back, so it adds no advance.
-                        replacement.push(Op::new("Tc", vec![pdfcraft_content::num(tc)]));
-                        replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
-                        replacement.push(Op::new("Tc", vec![pdfcraft_content::num(spacing)]));
-                    } else {
-                        replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                // Marked as one line, so it reads back as one (see `continues_font`).
+                if !own.is_empty() {
+                    replacement.push(Op::new("BMC", vec![Object::name("PCEdLine")]));
+                }
+                for (mine, piece) in source_fallback_runs(&fallback_shown, (!own.is_empty()).then_some(&own)) {
+                    if let Some(metrics) = font.as_ref().filter(|_| mine) {
+                        replacement.push(Op::new("Tf", vec![Object::name(&target.font), pdfcraft_content::num(size)]));
+                        replacement.extend(source_show(
+                            metrics,
+                            piece,
+                            target.origin.state.font.as_ref().map_or(target.size, |(_, size)| *size),
+                            source_space(doc, &fonts_res, metrics),
+                            spacing,
+                            target.origin.state.word_spacing,
+                        )?);
+                        continue;
                     }
+                    let runs = type3_encode(&fallback, piece)
+                        .ok_or_else(|| EditError::Invalid(format!("\"{text}\" can't be shown by the {} fallback", fallback.family)))?;
+                    for run in runs {
+                        replacement.push(Op::new("Tf", vec![Object::name(&run.name), pdfcraft_content::num(size)]));
+                        if let Some(tc) = run.spacing {
+                            // A variation selector's empty glyph: shown at spacing zero, then the
+                            // line's own spacing back, so it adds no advance.
+                            replacement.push(Op::new("Tc", vec![pdfcraft_content::num(tc)]));
+                            replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                            replacement.push(Op::new("Tc", vec![pdfcraft_content::num(spacing)]));
+                        } else {
+                            replacement.push(Op::new("Tj", vec![Object::String(PdfString::literal(run.bytes))]));
+                        }
+                    }
+                }
+                if !own.is_empty() {
+                    replacement.push(Op::new("EMC", Vec::new()));
                 }
                 replacement.push(Op::new("Tf", vec![Object::name(&target.font), pdfcraft_content::num(size)]));
                 substituted = Some(format!("{} Type3", fallback.family));
