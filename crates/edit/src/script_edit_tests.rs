@@ -458,11 +458,21 @@ fn existing_cjk_and_right_to_left_text_edits_round_trip_draw_and_add_only_their_
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
 
-/// Arabic with the lam-alef ligature and marks: [`KEPT`] shows only the glyphs [`ORIGINAL`] does,
-/// in other places; [`TYPED_NEW`] adds a letter (noon) it doesn't have.
+/// Arabic with lam-alef ([`lam_alef`]) and marks: [`KEPT`] shows only the glyphs [`ORIGINAL`]
+/// does, in other places; [`TYPED_NEW`] adds a letter (noon) it doesn't have.
 const ORIGINAL: &str = "السَّلامُ عليكم";
 const KEPT: &str = "عليكم السَّلامُ";
 const TYPED_NEW: &str = "عليكم السَّلامُ نعم";
+
+/// The glyphs `face` draws a medial lam-alef with, in visual order (alef, then lam): Noto Sans
+/// Arabic's required ligature is a pair of forms that lam and alef take nowhere else.
+fn lam_alef(face: &pdfcraft_fonts::CraftFont) -> [u32; 2] {
+    let ids =
+        |text: &str| -> Vec<u32> { pdfcraft_fonts::source_shaping::shape(face.bytes, text).unwrap().glyphs.iter().map(|g| g.id.to_u32()).collect() };
+    let (pair, plain) = (ids("سلا"), ids("سلم"));
+    assert_ne!(pair[1], plain[1], "lam takes a form of its own before alef");
+    [pair[0], pair[1]]
+}
 
 /// The glyph `program`'s Unicode BMP (format 4) cmap gives `c`.
 fn nominal(program: &[u8], c: char) -> u16 {
@@ -538,7 +548,8 @@ fn falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, mut page: Document, 
     let read: Vec<String> = text_blocks(&reopened, 0).unwrap().into_iter().map(|b| b.text).collect();
     assert_eq!(read, [typed]);
     assert_eq!(edit.substituted.as_deref(), pdfcraft_fonts::document_arabic_font().map(|f| f.family));
-    assert!(!fonts_shown(&reopened).contains("F1"), "the subset still draws part of the run: {:?}", glyphs_shown(&reopened));
+    let shown = glyphs_shown(&reopened);
+    assert!(!shown.iter().any(|(font, _)| font == "F1"), "the subset still draws part of the run: {shown:?}");
     let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", typed, true)));
     assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
 }
@@ -553,13 +564,14 @@ fn arabic_face() -> Option<&'static pdfcraft_fonts::CraftFont> {
 }
 
 /// Kept Arabic in a subset whose program keeps its cmap and layout tables stays in the page's
-/// font: the glyphs the face's shaping gives (its joining forms, the lam-alef ligature, the
-/// marks) in visual order, shown in the page's own resource, nothing substituted.
+/// font: the glyphs the face's shaping gives (its joining forms, lam-alef, the marks) in visual
+/// order, shown in the page's own resource, nothing substituted.
 #[test]
 fn kept_arabic_stays_in_its_subset_with_the_faces_glyphs() {
     let Some(face) = arabic_face() else { return };
     let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, KEPT).unwrap();
-    assert!(shaped.glyphs.iter().any(|g| g.text.contains("لا")), "the lam-alef ligature is one glyph");
+    let ids: Vec<u32> = shaped.glyphs.iter().map(|g| g.id.to_u32()).collect();
+    assert!(ids.windows(2).any(|w| w == lam_alef(face)), "the kept text has lam-alef");
     assert!(shaped.glyphs.iter().any(|g| g.text.is_empty()), "the marks are glyphs of their own");
     let mut doc = producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true);
     let edit = replace_block(&mut doc, 0, 0, KEPT).unwrap();
@@ -593,16 +605,15 @@ fn arabic_letter_the_subset_emptied_falls_back_for_the_run() {
     falls_back_for_the_run(face, producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true), TYPED_NEW);
 }
 
-/// Kept text one of whose glyphs (the lam-alef ligature) the subset emptied, though the page's
+/// Kept text one of whose glyphs (lam-alef's alef) the subset emptied, though the page's
 /// ToUnicode still names it: the whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_with_an_emptied_glyph_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
-    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, ORIGINAL).unwrap();
-    let ligature = shaped.glyphs.iter().find(|g| g.text.contains("لا")).unwrap().id.to_u32() as usize;
+    let alef = lam_alef(face)[0] as usize;
     let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
         let mut keep = keep.clone();
-        keep.remove(&ligature);
+        assert!(keep.remove(&alef), "the page shows lam-alef");
         subset(face.bytes, &keep, true)
     });
     falls_back_for_the_run(face, page, KEPT);
