@@ -1,7 +1,6 @@
 //! Shaping an explicitly selected source/document face, with OpenType features and UAX #9.
 use harfrust::{BufferClusterLevel, Direction, ShapeOptions, ShaperData, UnicodeBuffer};
 use skrifa::raw::TableProvider;
-use skrifa::raw::tables::layout::{FeatureList, ScriptList};
 use skrifa::{FontRef, GlyphId};
 use unicode_bidi::{Level, ParagraphBidiInfo};
 
@@ -30,67 +29,73 @@ pub fn has_thai_layout(bytes: &[u8]) -> bool {
     FontRef::new(bytes).is_ok_and(|f| positions_thai_marks(&f))
 }
 
-/// The features, each with its lookup count, that the shaper uses for `script` from a GSUB or
-/// GPOS script and feature list. The selection is HarfRust's, through the same read-fonts calls:
-/// the `script` script, else `DFLT`, `dflt` or `latn` (`ScriptList::select`); then, given no
-/// language, a language system tagged `dflt`, else the script's default one. Features under a
-/// script or language it doesn't select don't count.
-fn selected_features(scripts: &ScriptList, features: &FeatureList, script: &[u8; 4]) -> Vec<(skrifa::Tag, u16)> {
+/// Whether the GPOS features the shaper uses for Thai include `mark` or `mkmk`. The selection is
+/// HarfRust's, through the same read-fonts calls: the `thai` script, else `DFLT`, `dflt` or
+/// `latn` (`ScriptList::select`); then, given no language, a language system tagged `dflt`,
+/// else the script's default one. Marks under a script or language it doesn't select don't
+/// count, nor does a GPOS with only kerning.
+fn positions_thai_marks(face: &FontRef) -> bool {
     use skrifa::Tag;
-    let Some(selected) = scripts.select(&[Tag::new(script)]) else { return Vec::new() };
-    let Ok(script) = scripts.get(selected.index) else { return Vec::new() };
+    let Ok(gpos) = face.gpos() else { return false };
+    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
+    let records = features.feature_records();
+    let marks = |index: u16| records.get(usize::from(index)).is_some_and(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk");
+    let Some(selected) = scripts.select(&[Tag::new(b"thai")]) else { return false };
+    let Ok(script) = scripts.get(selected.index) else { return false };
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
         None => script.default_lang_sys().transpose().ok().flatten(),
     };
-    let Some(language) = language else { return Vec::new() };
-    let records = features.feature_records();
-    let required = language.required_feature_index();
-    language
-        .feature_indices()
-        .iter()
-        .map(|i| i.get())
-        .chain((required != 0xFFFF).then_some(required))
-        .filter_map(|index| {
-            let record = records.get(usize::from(index))?;
-            Some((record.feature_tag(), record.feature(features.offset_data()).map_or(0, |f| f.lookup_index_count())))
-        })
-        .collect()
-}
-
-/// Whether the GPOS features the shaper uses for Thai ([`selected_features`]) include `mark` or
-/// `mkmk`. Marks under a script or language it doesn't select don't count, nor does a GPOS with
-/// only kerning.
-fn positions_thai_marks(face: &FontRef) -> bool {
-    let Ok(gpos) = face.gpos() else { return false };
-    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
-    selected_features(&scripts, &features, b"thai").iter().any(|(tag, _)| *tag == *b"mark" || *tag == *b"mkmk")
+    let Some(language) = language else { return false };
+    language.feature_indices().iter().any(|i| marks(i.get()))
+        || (language.required_feature_index() != 0xFFFF && marks(language.required_feature_index()))
 }
 
 /// Whether `program`, as a page embeds it (not with a cmap the editor rebuilt from ToUnicode),
-/// gives the Arabic letters of `text` their joining forms: its own cmap maps every letter, and
-/// the GSUB features the shaper uses for Arabic ([`selected_features`]) have lookups for `init`,
-/// `medi` and `fina`, and for `rlig` where lam meets alef. A cmap rebuilt from ToUnicode maps a
-/// letter to one of its positional forms, which the GSUB doesn't substitute; a GSUB without these
-/// features leaves every letter isolated. Either way every glyph may have ink and still be the
-/// wrong form.
-pub fn joins_arabic(program: &[u8], text: &str) -> bool {
+/// gives the Arabic letters of `text` their joining forms, judged against `reference`, a complete
+/// Arabic face. Its own cmap must map every letter, and wherever the reference's shaping draws a
+/// letter in a glyph other than its nominal one (a joining form or part of a ligature), the
+/// program's shaping must too. A cmap rebuilt from ToUnicode maps a letter to one of its
+/// positional forms, which the GSUB doesn't substitute; a GSUB without the joining features, or
+/// pruned to the forms a page showed, leaves letters isolated. Either way every glyph may have
+/// ink and still be the wrong form. A program whose joining form reuses its nominal glyph is
+/// refused too, which only costs the page's font.
+pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     use skrifa::MetadataProvider as _;
-    let letter =
-        |c: &char| matches!(u32::from(*c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
-    let Ok(face) = FontRef::new(program) else { return false };
-    let charmap = face.charmap();
-    if !text.chars().filter(letter).all(|c| charmap.map(c).is_some()) {
+    let (Ok(own), Ok(reference)) = (FontRef::new(program), FontRef::new(reference)) else { return false };
+    if text.len() > 262_144 {
         return false;
     }
-    let Ok(gsub) = face.gsub() else { return false };
-    let (Ok(scripts), Ok(features)) = (gsub.script_list(), gsub.feature_list()) else { return false };
-    let found = selected_features(&scripts, &features, b"arab");
-    let has = |tag: &[u8; 4]| found.iter().any(|(t, lookups)| *t == *tag && *lookups > 0);
-    // Lam then alef, with any marks on the lam between them.
-    let bare: Vec<char> = text.chars().filter(|c| !matches!(u32::from(*c), 0x064b..=0x065f | 0x0670)).collect();
-    let lam_alef = bare.windows(2).any(|w| matches!(w, ['\u{0644}', '\u{0622}' | '\u{0623}' | '\u{0625}' | '\u{0627}']));
-    has(b"init") && has(b"medi") && has(b"fina") && (!lam_alef || has(b"rlig"))
+    let (own_map, reference_map) = (own.charmap(), reference.charmap());
+    let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
+    let letter = |c: char| matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff);
+    // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
+    text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
+        let (ours, theirs) = (rtl_clusters(&own, run), rtl_clusters(&reference, run));
+        run.char_indices().filter(|(_, c)| letter(*c)).all(|(at, c)| {
+            let (Some(nominal), Some(reference_nominal)) = (own_map.map(c), reference_map.map(c)) else { return false };
+            let (ours, theirs) = (cluster_at(&ours, at), cluster_at(&theirs, at));
+            !ours.is_empty() && !theirs.is_empty() && (theirs.contains(&reference_nominal.to_u32()) || !ours.contains(&nominal.to_u32()))
+        })
+    })
+}
+
+/// Each glyph of `text` shaped right to left in `face`, with the byte offset its cluster starts at.
+fn rtl_clusters(face: &FontRef, text: &str) -> Vec<(usize, u32)> {
+    let data = ShaperData::new(face);
+    let shaper = data.shaper(face).build();
+    let mut buffer = UnicodeBuffer::new();
+    buffer.push_str(text);
+    buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
+    buffer.set_direction(Direction::RightToLeft);
+    buffer.guess_segment_properties();
+    shaper.shape(buffer, ShapeOptions::new()).glyph_infos().iter().map(|g| (g.cluster as usize, g.glyph_id)).collect()
+}
+
+/// The glyphs of the cluster that holds byte `at`.
+fn cluster_at(glyphs: &[(usize, u32)], at: usize) -> Vec<u32> {
+    let start = glyphs.iter().map(|(s, _)| *s).filter(|s| *s <= at).max();
+    glyphs.iter().filter(|(s, _)| Some(*s) == start).map(|(_, g)| *g).collect()
 }
 
 pub fn shape(bytes: &[u8], text: &str) -> Result<ShapedRun, String> {

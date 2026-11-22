@@ -263,7 +263,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   completes a subset with outlines of the new characters, not embedded whole (`encodable_font` and
   `FallbackBuilder::prepare` in `crates/edit/src/text_regions/styled.rs`). An Arabic span keeps
   the first program of its face on the page, a subset's too, whose own cmap and GSUB give its
-  letters their joining forms (`joins_arabic`) and that shapes each row and word with every glyph
+  letters a joining form wherever the bundled Arabic face does (`joins_arabic`, comparing the 2
+  shapings glyph by glyph) and that shapes each row and word with every glyph
   inked (`arabic_span` in `crates/edit/src/text_regions/styled/scripts.rs`, `draws_every_glyph`
   in `crates/fonts/src/source_shaping.rs`), shown in that font's own codes where they are glyph
   ids its ToUnicode names (`arabic_program_run`); other Arabic spans use the bundled Arabic

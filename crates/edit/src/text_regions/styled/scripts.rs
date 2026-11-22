@@ -17,28 +17,32 @@ pub(super) enum ArabicSpan {
 }
 
 /// How `span` (of `source`'s paragraph) is drawn, if it has Arabic letters. The first program of
-/// the source's face on the page that gives the span's letters their joining forms
-/// ([`joins_arabic`], on the program as embedded) and, for every row and every word (the layout
-/// measures words alone), shapes it and draws every glyph its shaping chose takes the whole span,
-/// a subset's too: its glyphs are the ones the page already draws. A subset that emptied one of
-/// them, or whose cmap or layout tables can't reach one, can't; the span is then shaped with the
-/// bundled face and drawn from its outlines, as Add text draws Arabic, and the edit says the font
-/// was substituted. Either way one font draws the span, never part of a word. `None` (not
-/// Arabic, or no font can) leaves the span to the other paths.
+/// the source's face on the page that gives the span's letters the joining forms the bundled face
+/// gives them ([`joins_arabic`], on the program as embedded) and, for every row and every word
+/// (the layout measures words alone), shapes it and draws every glyph its shaping chose takes the
+/// whole span, a subset's too: its glyphs are the ones the page already draws. A subset that
+/// emptied one of them, or whose cmap or layout tables can't reach one, can't; the span is then
+/// shaped with the bundled face and drawn from its outlines, as Add text draws Arabic, and the
+/// edit says the font was substituted. Either way one font draws each word; a part these checks
+/// didn't cover that still fails to shape is drawn alone from the bundled outlines
+/// (`arabic_program_run`). Without the bundled face no program can be checked, and the span falls
+/// to the other paths as before, as does one no font can draw (`None`).
 pub(super) fn arabic_span(doc: &Document, fonts: &Dict, source: &TextLine, span: &str) -> Option<ArabicSpan> {
     if !has_arabic_letters(span) {
         return None;
     }
-    let units: Vec<&str> = span.split(row_break).flat_map(|row| std::iter::once(row).chain(row.split(' '))).filter(|u| !u.is_empty()).collect();
+    let units: Vec<&str> =
+        span.split(row_break).flat_map(|row| std::iter::once(row).chain(row.split(char::is_whitespace))).filter(|u| !u.is_empty()).collect();
+    let bundled = pdfcraft_fonts::document_arabic_font()?;
     let program = fonts.get(source.font.as_bytes()).and_then(|f| doc.dict(f)).and_then(|font| {
         program_candidates(doc, fonts, &source.font, font, &source.base_font).into_iter().find(|(_, font)| {
-            embedded_program(doc, font).is_some_and(|program| joins_arabic(&program, span))
+            embedded_program(doc, font).is_some_and(|program| joins_arabic(&program, bundled.bytes, span))
                 && units.iter().all(|unit| shape_with_program(doc, font, unit).is_some())
         })
     });
     match program {
         Some((name, _)) => Some(ArabicSpan::Program(name)),
-        None => pdfcraft_fonts::document_arabic_font().filter(|face| covers_rows(face.bytes, span)).map(|_| ArabicSpan::Outlines),
+        None => covers_rows(bundled.bytes, span).then_some(ArabicSpan::Outlines),
     }
 }
 
