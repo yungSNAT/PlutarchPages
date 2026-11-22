@@ -432,7 +432,8 @@ fn native_popup_completion_is_discarded_after_the_document_is_edited() {
 fn a_save_whilst_a_button_script_runs_discards_the_script() {
     let mut h = harness();
     let id = h.state().active_ids().unwrap().1;
-    let dir = std::env::temp_dir().join(format!("pdfcraft-save-during-script-{}", std::process::id()));
+    // The build's own scratch folder, not the shared temporary one.
+    let dir = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("save-during-script-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("form.pdf");
     h.state_mut().save_override = Some(path.to_string_lossy().into_owned());
