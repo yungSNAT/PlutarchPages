@@ -45,9 +45,11 @@ type ScannedObject = (ObjRef, Result<Arc<Object>, pdfcraft_cos::CosError>);
 /// escaped. Every dictionary key is a name, read from its `/` as the object reader reads it, and
 /// names are never encrypted (§7.6.2). So when none does, no object the reader takes from the
 /// file itself, rather than from an object stream, has a `/ByteRange` to be a timestamp. This
-/// pass over the bytes replaces parsing every such object (a fifth of opening ISO 32000-1).
+/// pass over the bytes replaces parsing every such object (a fifth of opening ISO 32000-1); the
+/// engine's list of unreadable objects reads the whole file itself when asked. It runs from the
+/// end, where a signed file's latest signature dictionary normally is.
 fn stores_byte_range_name(bytes: &[u8]) -> bool {
-    bytes.windows(2).enumerate().any(|(at, pair)| {
+    bytes.windows(2).enumerate().rev().any(|(at, pair)| {
         matches!(pair, [b'/', b'B' | b'#']) && matches!(pdfcraft_cos::Lexer::new(bytes, at).object(), Ok(Object::Name(name)) if name == b"ByteRange")
     })
 }

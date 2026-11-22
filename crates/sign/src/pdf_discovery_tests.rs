@@ -470,6 +470,7 @@ fn a_file_naming_no_byte_range_reads_none_of_its_stored_objects() {
 }
 
 /// However the file escapes the key's characters, a timestamp it stores is still found.
+/// It passes before the byte walk too: it guards the walk against matching only the literal bytes.
 #[test]
 fn an_escaped_byte_range_key_still_marks_a_stored_timestamp() {
     for key in ["/Byte#52ange", "/#42yteRange", "/#42#79#74#65#52#61#6e#67#65"] {
@@ -477,4 +478,23 @@ fn an_escaped_byte_range_key_still_marks_a_stored_timestamp() {
         assert!(!doc.bytes().windows(9).any(|w| w == b"ByteRange"), "{key}");
         assert_eq!(DigestCache::default().timestamp_candidates(&doc), vec![ObjRef::new(3, 0)], "{key}");
     }
+}
+
+/// Discovery finds what reading every object finds: in the repository's signed files, and with a
+/// timestamp stored plainly, under an escaped key or packed in a compressed object stream.
+#[test]
+fn discovery_finds_what_reading_every_object_finds() {
+    let every = |doc: &Document| -> Vec<ObjRef> {
+        doc.scan_objects_checked().filter_map(|(r, o)| o.ok().filter(|o| is_document_timestamp(o)).map(|_| r)).collect()
+    };
+    let data = |name: &str| std::fs::read(format!("{}/tests/data/{name}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let signed = ["openssl-signed.pdf", "x509-rsa-sha1.pdf"].map(|name| Document::open(Arc::new(data(name))).unwrap());
+    let escaped = STAMP.replace("/ByteRange", "/Byte#52ange");
+    let packed = Document::open(Arc::new(write_full(&fixture(&[STAMP]), &SaveOptions::default()).unwrap())).unwrap();
+    assert!(!packed.bytes().windows(9).any(|w| w == b"ByteRange"), "the fixture must hide the key in a compressed stream");
+    let stamped = [fixture(&[STAMP]), fixture(&[escaped.as_str()]), packed];
+    for doc in signed.iter().chain(&stamped) {
+        assert_eq!(DigestCache::default().timestamp_candidates(doc), every(doc));
+    }
+    assert!(stamped.iter().all(|doc| every(doc).len() == 1));
 }
