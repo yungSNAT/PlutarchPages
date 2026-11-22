@@ -203,8 +203,12 @@ fn declared_for_tests(tree: &Tree, path: &str) -> bool {
     let mut declared = false;
     for parent in parents {
         let Some(text) = tree.get(&parent) else { continue };
-        let Some(items) = items(text) else { return false };
-        let declarations: Vec<usize> = items.mods.iter().filter(|(n, _)| n == name).map(|&(_, at)| at).collect();
+        let (Some(lexed), Some(items)) = (lex(text), items(text)) else { return false };
+        // From the tokens, so a `mod` a macro holds counts too.
+        let declarations: Vec<usize> = (lexed.tokens.windows(2))
+            .filter(|w| matches!(&w[0].1, Token::Ident(m) if m == "mod") && matches!(&w[1].1, Token::Ident(n) if n == name))
+            .map(|w| w[0].0)
+            .collect();
         if declarations.is_empty() {
             continue;
         }
@@ -294,7 +298,11 @@ struct Lexed {
 /// `None` when the source doesn't tokenise (a comment or literal that doesn't close, or brackets
 /// that don't pair up): callers then read it as it is.
 fn lex(source: &str) -> Option<Lexed> {
-    let stream: proc_macro2::TokenStream = source.parse().ok()?;
+    let Ok(stream) = source.parse::<proc_macro2::TokenStream>() else {
+        // A failed parse still adds the source to the thread's span map.
+        proc_macro2::extra::invalidate_current_thread_spans();
+        return None;
+    };
     // 0: a comment or white space; 1: code; 2: a string or character literal.
     let mut kind = vec![0u8; source.len()];
     let mut tokens = Vec::new();
@@ -359,22 +367,19 @@ fn is_comment(source: &str, range: &Range<usize>) -> bool {
 fn path_heads<'a>(lexed: &'a Lexed, ident: &'a str) -> impl Iterator<Item = (usize, Option<&'a Token>)> + 'a {
     let t = &lexed.tokens;
     (0..t.len()).filter_map(move |k| {
-        let head = matches!(&t[k].1, Token::Ident(i) if i == ident)
+        let head = matches!(&t[k].1, Token::Ident(i) if i.strip_prefix("r#").unwrap_or(i) == ident)
             && t.get(k + 1).is_some_and(|(_, p)| *p == Token::Punct(':', true))
             && t.get(k + 2).is_some_and(|(_, p)| matches!(p, Token::Punct(':', _)));
         head.then(|| (t[k].0, t.get(k + 3).map(|(_, next)| next)))
     })
 }
 
-/// What a file's items say, from `syn`: its test modules, its module declarations and its
-/// `UPDATE_APP` initialisers.
+/// What a file's items say, from `syn`: its test modules and its `UPDATE_APP` initialisers.
 #[derive(Default)]
 struct Items {
     /// The bytes of each test module at item level, outside function bodies and macros: from its
     /// `#[cfg(test)]` to its closing brace or semicolon.
     tests: Vec<Range<usize>>,
-    /// Each `mod` declaration outside macros: its name and the offset of its `mod`.
-    mods: Vec<(String, usize)>,
     /// Whether a `pub const UPDATE_APP` is an item at the crate root with no attribute mentioning
     /// `test`: the one the updater reads.
     production_app: bool,
@@ -387,6 +392,10 @@ fn items(source: &str) -> Option<Items> {
     let items = syn::parse_file(source).ok().map(|file| {
         let mut items = Items::default();
         test_modules(&file.items, &mut items.tests);
+        // `parse_file` drops a leading byte order mark and shebang line, so its offsets start after them.
+        let bom = if source.starts_with('\u{feff}') { '\u{feff}'.len_utf8() } else { 0 };
+        let prelude = bom + file.shebang.as_ref().map_or(0, String::len);
+        items.tests.iter_mut().for_each(|t| *t = t.start + prelude..t.end + prelude);
         syn::visit::Visit::visit_file(&mut items, &file);
         items.production_app = file.items.iter().any(|item| {
             matches!(item, syn::Item::Const(c) if c.ident == "UPDATE_APP"
@@ -434,11 +443,6 @@ fn is_cfg_test(attribute: &syn::Attribute) -> bool {
 }
 
 impl<'ast> syn::visit::Visit<'ast> for Items {
-    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
-        self.mods.push((m.ident.to_string(), m.mod_token.span.byte_range().start));
-        syn::visit::visit_item_mod(self, m);
-    }
-
     fn visit_item_const(&mut self, c: &'ast syn::ItemConst) {
         if c.ident == "UPDATE_APP" {
             self.update_apps.push(gives_this_repo(&c.expr));
@@ -451,6 +455,15 @@ impl<'ast> syn::visit::Visit<'ast> for Items {
             self.update_apps.push(gives_this_repo(&c.expr));
         }
         syn::visit::visit_impl_item_const(self, c);
+    }
+
+    fn visit_trait_item_const(&mut self, c: &'ast syn::TraitItemConst) {
+        if c.ident == "UPDATE_APP"
+            && let Some((_, expr)) = &c.default
+        {
+            self.update_apps.push(gives_this_repo(expr));
+        }
+        syn::visit::visit_trait_item_const(self, c);
     }
 }
 
@@ -534,7 +547,16 @@ fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
         let capital = |next: Option<&Token>| matches!(next, Some(Token::Ident(i)) if i.strip_prefix("r#").unwrap_or(i).starts_with(|c: char| c.is_ascii_uppercase()));
         let mut named: Vec<usize> = match lex(&read) {
             Some(lexed) => path_heads(&lexed, "Color32").filter(|&(_, next)| capital(next)).map(|(i, _)| line_index(&read, i)).collect(),
-            None => lines.iter().enumerate().filter(|(_, l)| l.contains("Color32")).map(|(n, _)| n).collect(),
+            // Source that doesn't tokenise is read a line at a time.
+            None => {
+                let named = |l: &str| {
+                    l.match_indices("Color32").any(|(i, _)| {
+                        let rest = l[i + "Color32".len()..].trim_start().strip_prefix("::").map(str::trim_start);
+                        rest.is_some_and(|r| r.strip_prefix("r#").unwrap_or(r).starts_with(|c: char| c.is_ascii_uppercase()))
+                    })
+                };
+                lines.iter().enumerate().filter(|(_, l)| named(l)).map(|(n, _)| n).collect()
+            }
         };
         named.dedup();
         out.extend(named.into_iter().map(|n| (path, n + 1, lines[n].trim().to_string())));
@@ -1288,6 +1310,8 @@ mod tests {
         fails(update_source, &[(UPDATE_APP_FILE, in_string)], "lacks `repo");
         let nested = "pub const UPDATE_APP: App = App {\n    name: pick(App {\n        repo: \"yungSNAT/PlutarchPages\",\n    }),\n    ..suite::PDFCRAFT\n};\n";
         fails(update_source, &[(UPDATE_APP_FILE, nested)], "lacks `repo");
+        let in_trait = "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\ntrait Apps {\n    const UPDATE_APP: App = App { ..suite::PDFCRAFT };\n}\n";
+        fails(update_source, &[(UPDATE_APP_FILE, in_trait)], "lacks `repo");
     }
 
     #[test]
@@ -1370,12 +1394,14 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     fn a_hash_path_is_read_across_whitespace_and_comments() {
         let crypt = "use md5::{Digest as _, Md5};\nlet mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5\n";
         let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n";
-        let crypt = format!("{crypt}digest = Md5/* c */::digest(&digest).to_vec();\nlet h = Md5 ::new();\nlet h = md5::Md5\n    ::new();\n");
+        let crypt = format!(
+            "{crypt}digest = Md5/* c */::digest(&digest).to_vec();\nlet h = Md5 ::new();\nlet h = md5::Md5\n    ::new();\nlet h = r#Md5::new();\n"
+        );
         let keys = format!("{keys}let h = ripemd::Ripemd160/* c */\u{200e}::new();\n}}\n");
         fails_all(
             weak_hash_markers,
             &[(WEAK_HASH_FILES[0], crypt.as_str()), (WEAK_HASH_FILES[1], keys.as_str())],
-            &["crypt.rs:3", "crypt.rs:4", "crypt.rs:5", "keys.rs:3"],
+            &["crypt.rs:3", "crypt.rs:4", "crypt.rs:5", "crypt.rs:7", "keys.rs:3"],
         );
     }
 
@@ -1396,8 +1422,34 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     #[test]
     fn a_doc_comment_is_not_read_as_code() {
         let canvas = "/// Paints the page (and its border)\nfn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n";
-        let lines: Vec<usize> = colour_lines(&tree(&[("crates/ui-egui/src/canvas.rs", canvas)])).into_iter().map(|(_, n, _)| n).collect();
-        assert_eq!(lines, [3]);
+        assert_eq!(colour_line_numbers(canvas), [3]);
+    }
+
+    fn colour_line_numbers(canvas: &str) -> Vec<usize> {
+        colour_lines(&tree(&[("crates/ui-egui/src/canvas.rs", canvas)])).into_iter().map(|(_, n, _)| n).collect()
+    }
+
+    #[test]
+    fn a_raw_colour_name_is_a_colour_path() {
+        assert_eq!(colour_line_numbers("fn page() {\n    painter.rect_filled(r, 0.0, r#Color32::GREEN);\n}\n"), [2]);
+    }
+
+    #[test]
+    fn source_that_does_not_tokenise_is_read_a_line_at_a_time() {
+        let canvas = "fn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32 :: WHITE);\n    let s = \"unclosed;\n";
+        assert_eq!(colour_line_numbers(canvas), [2]);
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_shebang_do_not_move_test_modules() {
+        let home = "crates/ui-egui/src/home.rs";
+        let module = "#[cfg(test)]\nmod tests {\n    const MARK: &str = \"artcraft-mark.svg\";\n}\n";
+        for prelude in ["\u{feff}", "#!/usr/bin/env run-cargo-script --with a long first line\n", "\u{feff}#!/usr/bin/env run-cargo-script\n"] {
+            passes(artcraft_names, &[(home, format!("{prelude}{module}").as_str())]);
+            let after = format!("{prelude}{module}fn f() {{ widgets::artcraft_mark(ui, 28.0); }}\n");
+            let line = if prelude.ends_with('\n') { "home.rs:6" } else { "home.rs:5" };
+            fails(artcraft_names, &[(home, after.as_str())], line);
+        }
     }
 
     #[test]
@@ -1414,6 +1466,7 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
             ("a tests.rs declared outside a test module", vec![(lib, "mod tests;\n"), file]),
             ("a tests.rs declared twice", vec![(lib, "#[cfg(test)]\nmod tests;\n#[cfg(not(test))]\nmod tests;\n"), file]),
             ("a tests.rs declared in a macro", vec![(lib, "m! {\n    #[cfg(test)]\n    mod tests;\n}\n"), file]),
+            ("a tests.rs declared for tests and in a macro", vec![(lib, "#[cfg(test)]\nmod tests;\nm! {\n    mod tests;\n}\n"), file]),
             ("a file under a production tests.rs", vec![(lib, "pub mod tests;\n"), (file.0, "mod more;\n"), nested]),
         ]
         .into_iter()
