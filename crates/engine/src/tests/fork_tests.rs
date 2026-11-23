@@ -284,12 +284,17 @@ fn document_text_lines_are_the_lines_paired_with_the_blocks() {
 /// A page showing "Codename BLUEFIN report", with `catalog` and `page` entries added and `extra`
 /// objects numbered from 6.
 fn leaky_page(catalog: &str, page: &str, extra: &[&str]) -> Vec<u8> {
-    let body = "BT /F1 10 Tf 20 150 Td (Codename BLUEFIN report) Tj ET";
+    page_showing("Codename BLUEFIN report", "/Encoding /WinAnsiEncoding", catalog, page, extra)
+}
+
+/// A page showing `text` in Helvetica with `encoding`, as [`leaky_page`].
+fn page_showing(text: &str, encoding: &str, catalog: &str, page: &str, extra: &[&str]) -> Vec<u8> {
+    let body = format!("BT /F1 10 Tf 20 150 Td ({text}) Tj ET");
     let mut objs = vec![
         format!("<< /Type /Catalog /Pages 2 0 R {catalog} >>"),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 300] >>".to_string(),
         format!("<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R {page} >>"),
-        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica {encoding} >>"),
         format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()),
     ];
     objs.extend(extra.iter().map(ToString::to_string));
@@ -431,4 +436,151 @@ fn undoing_a_later_redaction_keeps_the_earlier_one_held() {
     s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
     s.undo(id).unwrap();
     assert!(saved_or_refused(&s, id).is_err(), "the first apply's text is still in the link");
+}
+
+const BLUEFIN_LINK: &str = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+
+/// A redaction mark over `rect` (user space) on the first page.
+fn mark_rect(s: &mut Session, id: DocId, rect: [f64; 4]) {
+    let shape = Shape::Redact { quads: vec![pdfcraft_annot::rect_quad(rect)], overlay: String::new(), look: Default::default() };
+    let mark = NewAnnotation { page: 0, style: Style::default_for(&shape), shape, contents: String::new(), author: "Ada".into() };
+    s.apply(id, Edit::AddAnnotation(mark)).unwrap();
+}
+
+/// Open `pdf`, redact `needle` where the page shows it, then try to save.
+fn redact_shown_then_save(pdf: Vec<u8>, needle: &str) -> (Session, DocId, Result<Arc<Vec<u8>>, EditError>) {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("leaky.pdf", None, Arc::new(pdf), None).unwrap();
+    mark_shown_text(&mut s, id, needle);
+    s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
+    let saved = saved_or_refused(&s, id);
+    (s, id, saved)
+}
+
+/// The date a save stamps is never searched (review B1): when the removed text couldn't be known,
+/// every place holding text refuses, and that must not include what the save itself writes, or no
+/// save could ever succeed.
+#[test]
+fn a_save_after_redacting_text_that_couldnt_be_known_goes_ahead() {
+    let names: String = (1..=26).map(|g| format!(" /g{g}")).collect();
+    let pdf = page_showing("Codename BLUEFIN report", &format!("/Encoding << /Differences [65{names}] >>"), "", "", &[]);
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("unknown.pdf", None, Arc::new(pdf), None).unwrap();
+    mark_rect(&mut s, id, [10.0, 140.0, 400.0, 170.0]);
+    s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
+    assert!(s.get(id).unwrap().redaction_elsewhere().is_none_or(|e| e.unsearched), "the removed text isn't known");
+    saved_or_refused(&s, id).expect("nothing in the file but what the save writes holds text");
+}
+
+/// Redacting a year doesn't refuse the save whose date stamp holds it (review B1).
+#[test]
+fn a_save_after_redacting_this_year_goes_ahead() {
+    let (_, _, saved) = redact_shown_then_save(page_showing("Invoice dated 14/11/2023", "/Encoding /WinAnsiEncoding", "", "", &[]), "2023");
+    saved.expect("the save's own date holds 2023 (the test clock is 14 November 2023)");
+}
+
+/// A short removed run in a field's default appearance doesn't refuse (review B3).
+#[test]
+fn a_save_after_redacting_a_number_in_a_field_appearance_goes_ahead() {
+    let field = "<< /FT /Tx /T (total) /DA (/Helv 12 Tf 0 g) >>";
+    let pdf = page_showing("Total 12 items", "/Encoding /WinAnsiEncoding", "/AcroForm << /Fields [6 0 R] >>", "", &[field]);
+    let (_, _, saved) = redact_shown_then_save(pdf, "12");
+    saved.expect("/DA holds the font size, not the redacted number");
+}
+
+/// Reduce File Size and Optimize PDF write the document too: they refuse as a save does (review B5).
+#[test]
+fn optimizing_refuses_while_redacted_text_survives() {
+    let (s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    assert!(saved.is_err());
+    assert!(s.reduced_bytes(id).is_err(), "Reduce File Size wrote the link");
+    assert!(s.optimized_bytes(id, &optimize::Settings::default(), &[]).is_err(), "Optimize wrote the link");
+}
+
+/// Extract and Split write new files from the document: they refuse as a save does (review S1).
+#[test]
+fn extracting_and_splitting_refuse_while_redacted_text_survives() {
+    let (s, id, _) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    assert!(s.extract(id, &[0]).is_err(), "Extract wrote the link");
+    assert!(s.split(id, &pdfcraft_organize::SplitBy::PageCount(1)).is_err(), "Split wrote the link");
+}
+
+/// The refusal says where each place is, so the user can clear that one (review S12), and
+/// clearing it lets the save go ahead.
+#[test]
+fn a_refusal_names_each_place_and_clearing_it_saves() {
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    let said = saved.expect_err("the link still holds the word").to_string();
+    assert!(said.contains("link, action or script on page 1 (object 6)"), "{said}");
+    assert!(!said.to_lowercase().contains("bluefin"), "the refusal never repeats the text: {said}");
+    s.apply(id, Edit::DeleteLink { page: 0, index: 0 }).unwrap();
+    saved_or_refused(&s, id).expect("the one place holding it is gone");
+}
+
+/// A widget holding the text is named with its page (review S10).
+#[test]
+fn a_widget_holding_redacted_text_refuses_with_its_page() {
+    let widget = "<< /Type /Annot /Subtype /Widget /FT /Tx /T (code) /V (Bluefin) /Rect [300 10 400 30] /P 3 0 R >>";
+    let (_, _, saved) = redact_then_save(leaky_page("/AcroForm << /Fields [6 0 R] >>", "/Annots [6 0 R]", &[widget]), |_, _| {});
+    let said = saved.expect_err("the field still holds the word").to_string();
+    assert!(said.contains("form field on page 1"), "{said}");
+}
+
+/// Document properties and comments added after the apply are searched too (review S10).
+#[test]
+fn properties_and_comments_set_after_redacting_refuse() {
+    let (mut s, id, _) = redact_then_save(leaky_page("", "", &[]), |_, _| {});
+    s.apply(id, Edit::SetInfo { key: "Title".into(), value: "Bluefin plans".into() }).unwrap();
+    let said = saved_or_refused(&s, id).expect_err("the title holds the word").to_string();
+    assert!(said.contains("document properties"), "{said}");
+    s.apply(id, Edit::SetInfo { key: "Title".into(), value: "Plans".into() }).unwrap();
+    saved_or_refused(&s, id).expect("the title no longer holds it");
+    let shape = Shape::Note { at: [100.0, 100.0], icon: NoteIcon::Comment };
+    let note = NewAnnotation { page: 0, style: Style::default_for(&shape), shape, contents: "Bluefin again".into(), author: "Ada".into() };
+    s.apply(id, Edit::AddAnnotation(note)).unwrap();
+    let said = saved_or_refused(&s, id).expect_err("the comment holds the word").to_string();
+    assert!(said.contains("comment on page 1"), "{said}");
+}
+
+/// Trimming the oldest undo step keeps an apply it can no longer undo held (review S10).
+#[test]
+fn an_apply_past_the_undo_limit_stays_held() {
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    assert!(saved.is_err());
+    for i in 0..=crate::history::MAX_UNDO {
+        s.apply(id, Edit::SetInfo { key: "Subject".into(), value: format!("draft {i}") }).unwrap();
+    }
+    assert!(saved_or_refused(&s, id).is_err(), "the apply can't be undone, and the link still holds the word");
+}
+
+/// Revert drops the applied redaction and what it held back (review S10).
+#[test]
+fn reverting_drops_what_an_apply_held_back() {
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    assert!(saved.is_err());
+    s.revert(id).unwrap();
+    saved_or_refused(&s, id).expect("the redaction is gone with the revert");
+}
+
+/// A file that would keep an earlier revision refuses while an apply is held, and not otherwise
+/// (review S10).
+#[test]
+fn a_file_keeping_an_earlier_revision_refuses_only_after_an_apply() {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("leaky.pdf", None, Arc::new(leaky_page("", "", &[])), None).unwrap();
+    s.apply(id, Edit::AddBookmark { parent: vec![], index: 0, title: "Contents".into(), page: 0, left: None, top: None }).unwrap();
+    let two = s.save_bytes(id).unwrap();
+    assert!(pdfcraft_cos::Document::open(two.clone()).unwrap().revisions().len() > 1, "an incremental save");
+    s.check_save(id, &two).expect("no apply is held");
+    mark_shown_text(&mut s, id, "BLUEFIN");
+    s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
+    assert_eq!(s.check_save(id, &two), Err(EditError::RedactedRevisionKept));
+}
+
+/// The removed text isn't kept in the report of the last apply, which outlives the save (review N1).
+#[test]
+fn the_last_redaction_report_keeps_no_removed_text() {
+    let (s, _, _) = redact_then_save(leaky_page("", "", &[]), |_, _| {});
+    let report = s.last_redaction_report().expect("the last edit applied redactions");
+    assert_eq!(report.removed, pdfcraft_redact::Removed::default());
 }
