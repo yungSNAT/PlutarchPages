@@ -806,6 +806,77 @@ fn kept_arabic_stacked_marks_in_a_subset_without_mark_to_mark_lookups_fall_back_
     emptied_lookups_fall_back_for_the_run(face, &[b"mkmk"]);
 }
 
+/// The kept text with sukun added over seen's fatha and shadda: the bundled face stacks all 3
+/// through `mkmk`, fatha on shadda and sukun on fatha.
+const STACKED: &str = "عليكم ال\u{0633}\u{064e}\u{0651}\u{0652}لامُ";
+
+/// The coverage index of `glyph` in the coverage table at `at`, if it is covered.
+fn coverage_index(table: &[u8], at: usize, glyph: usize) -> Option<usize> {
+    match be16(table, at) {
+        1 => (0..be16(table, at + 2)).find(|&i| be16(table, at + 4 + 2 * i) == glyph),
+        2 => (0..be16(table, at + 2))
+            .map(|i| at + 4 + 6 * i)
+            .find(|&r| (be16(table, r)..=be16(table, r + 2)).contains(&glyph))
+            .map(|r| be16(table, r + 4) + glyph - be16(table, r)),
+        _ => None,
+    }
+}
+
+/// `gpos` with every anchor that lets a mark attach to `glyph` as the earlier mark (its Mark2Array
+/// records in the mark-to-mark subtables of `mkmk`'s lookups) set to none, and how many it cleared:
+/// marks still stack on other marks, but nothing stacks on `glyph`, as in a subset that kept only
+/// the mark pairs a page showed.
+fn without_mark_to_mark_onto(gpos: &[u8], glyph: usize) -> (Vec<u8>, usize) {
+    let (mut out, features, lookups, mut cleared) = (gpos.to_vec(), be16(gpos, 6), be16(gpos, 8), 0);
+    let mut subtables = Vec::new();
+    for record in (0..be16(gpos, features)).map(|i| features + 2 + 6 * i).filter(|&r| &gpos[r..r + 4] == b"mkmk") {
+        let feature = features + be16(gpos, record + 4);
+        for index in (0..be16(gpos, feature + 2)).map(|i| be16(gpos, feature + 4 + 2 * i)) {
+            let lookup = lookups + be16(gpos, lookups + 2 + 2 * index);
+            for at in (0..be16(gpos, lookup + 4)).map(|i| lookup + be16(gpos, lookup + 6 + 2 * i)) {
+                match be16(gpos, lookup) {
+                    6 => subtables.push(at),
+                    9 if be16(gpos, at + 2) == 6 => subtables.push(at + be32(gpos, at + 4)),
+                    _ => {}
+                }
+            }
+        }
+    }
+    for at in subtables.into_iter().filter(|&at| be16(gpos, at) == 1) {
+        let (classes, array) = (be16(gpos, at + 6), at + be16(gpos, at + 10));
+        if let Some(index) = coverage_index(gpos, at + be16(gpos, at + 4), glyph) {
+            let anchors = array + 2 + 2 * classes * index;
+            cleared += (0..classes).filter(|c| be16(gpos, anchors + 2 * c) != 0).count();
+            out[anchors..anchors + 2 * classes].fill(0);
+        }
+    }
+    (out, cleared)
+}
+
+/// A subset whose mark-to-mark data stacks fatha on shadda but nothing on fatha: the sukun the edit
+/// adds would be attached to seen's own anchor, through the shadda, though both other marks are
+/// stacked. The whole run is drawn in the bundled face; the same subset with its GPOS intact keeps
+/// the run.
+#[test]
+fn kept_arabic_with_a_mark_stack_the_subset_cuts_short_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let (fatha, sukun) = (usize::from(nominal(face.bytes, '\u{064e}')), usize::from(nominal(face.bytes, '\u{0652}')));
+    let page = |cut: bool| {
+        producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+            let program = subset(face.bytes, &keep.iter().copied().chain([sukun]).collect(), true);
+            if !cut {
+                return program;
+            }
+            let (gpos, cleared) = without_mark_to_mark_onto(tables(&program)[b"GPOS"], fatha);
+            assert!(cleared > 0, "the subset's GPOS stacks marks on fatha");
+            with_table(&program, b"GPOS", gpos)
+        })
+    };
+    let mut intact = page(false);
+    assert_eq!(replace_block(&mut intact, 0, 0, STACKED).unwrap().substituted, None, "the intact subset stacks the 3 marks itself");
+    falls_back_for_the_run(face, page(true), STACKED);
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
