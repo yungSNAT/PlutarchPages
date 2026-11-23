@@ -58,7 +58,8 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
 /// in glyphs other than those it draws the letter and its marks with alone (a joining form or
 /// part of a ligature), the program's must too, each face judged against its own isolated form;
-/// and its GPOS must place every glyph that sits on another ([`places_marks`]). A cmap that maps
+/// and its GPOS must place every glyph that sits on another ([`places_marks`]) and stack marks
+/// wherever the reference does ([`stacks_marks`]). A cmap that maps
 /// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
 /// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
@@ -82,10 +83,11 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
     }
-    let space = own_map.map(' ').map(|g| g.to_u32());
+    let space = |face: &FontRef| face.charmap().map(' ').map(|g| g.to_u32());
+    let (own_space, reference_space) = (space(&own), space(&reference));
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
-        if !places_marks(&own_shaper, space, run) {
+        if !places_marks(&own_shaper, own_space, run) || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run) {
             return false;
         }
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
@@ -123,26 +125,55 @@ fn drawn(glyphs: &[u32]) -> bool {
 /// several glyphs (the space glyph a joiner gets aside), all but one, the base, must move when
 /// `mark` and `mkmk` are turned off. That holds for the marks the text has and for those the GSUB
 /// makes, such as a letter's dots drawn as glyphs of their own; feature names alone don't count,
-/// so a GPOS that is missing, or whose mark features have no lookups or miss these glyphs, fails.
+/// so a GPOS that is missing, or whose `mark` lookups are empty or miss these glyphs, fails; a
+/// mark stacked on another is [`stacks_marks`]'s to judge.
 /// A program that draws its marks in place without GPOS is refused too, which only costs the
 /// page's font.
 fn places_marks(shaper: &harfrust::Shaper, space: Option<u32>, run: &str) -> bool {
-    let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, ..));
-    let (placed, unplaced) = (rtl_shape(shaper, run, &[]), rtl_shape(shaper, run, &off));
-    let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
-    if placed.glyph_infos().iter().map(|g| g.glyph_id).ne(unplaced.glyph_infos().iter().map(|g| g.glyph_id)) {
-        return false;
+    moved_without(shaper, space, run, &[b"mark", b"mkmk"])
+        .is_some_and(|clusters| clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1))
+}
+
+/// Whether `own` stacks marks with its GPOS (`mkmk`) in every cluster of `run` where `reference`
+/// does. Without mark-to-mark lookups, a mark set on another (fatha on shadda) is attached to the
+/// base's anchor, on top of the first, and still moves, so [`places_marks`] can't tell. A face that
+/// draws such a stack as one glyph where the reference stacks 2 is refused too, which only costs
+/// the page's font.
+fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Shaper, Option<u32>), run: &str) -> bool {
+    let stacked = |(shaper, space): (&harfrust::Shaper, Option<u32>)| {
+        moved_without(shaper, space, run, &[b"mkmk"])
+            .map(|clusters| clusters.into_iter().filter(|(_, (glyphs, unmoved))| unmoved < glyphs).map(|(c, _)| c).collect::<Vec<_>>())
+    };
+    match (stacked(own), stacked(reference)) {
+        (Some(ours), Some(theirs)) => theirs.iter().all(|c| ours.contains(c)),
+        _ => false,
     }
-    // Per cluster: its glyphs, and how many of them stay put without the mark features.
+}
+
+/// Per cluster of `run` (the space glyph a joiner gets aside): its glyphs, and how many of them
+/// keep their advance and offset when `features` are turned off. `None` if turning them off
+/// changes the glyphs.
+fn moved_without(
+    shaper: &harfrust::Shaper,
+    space: Option<u32>,
+    run: &str,
+    features: &[&[u8; 4]],
+) -> Option<std::collections::BTreeMap<u32, (usize, usize)>> {
+    let off: Vec<_> = features.iter().map(|&tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, ..)).collect();
+    let (with, without) = (rtl_shape(shaper, run, &[]), rtl_shape(shaper, run, &off));
+    let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
+    if with.glyph_infos().iter().map(|g| g.glyph_id).ne(without.glyph_infos().iter().map(|g| g.glyph_id)) {
+        return None;
+    }
     let mut clusters = std::collections::BTreeMap::<u32, (usize, usize)>::new();
-    for ((info, with), without) in placed.glyph_infos().iter().zip(placed.glyph_positions()).zip(unplaced.glyph_positions()) {
+    for ((info, on), off) in with.glyph_infos().iter().zip(with.glyph_positions()).zip(without.glyph_positions()) {
         if Some(info.glyph_id) != space {
             let (glyphs, unmoved) = clusters.entry(info.cluster).or_default();
             *glyphs += 1;
-            *unmoved += usize::from(at(with) == at(without));
+            *unmoved += usize::from(at(on) == at(off));
         }
     }
-    clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1)
+    Some(clusters)
 }
 
 /// `text` shaped right to left with `features`.
