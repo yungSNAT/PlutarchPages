@@ -510,6 +510,18 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
     if scope.mode == Mode::Apply {
         clean_replacements(doc, resources, &original, &walk.clipped, &mut processed, scope.report);
     }
+    // The renderer can end an inline image at any later `EI`, even inside a token (`FOOEI`,
+    // `/BEI`), unless shown text or enough operators come between: a rewrite that removes those
+    // would let a copied piece's `EI` swallow what follows the image. The writer puts `EI` only at
+    // an image's end, so once anything is rewritten, so is every piece from the first inline image
+    // on that holds `EI`.
+    if processed.iter().any(|(_, changed)| *changed)
+        && let Some(first) = processed.iter().position(|(ops, _)| ops.iter().any(|op| op.inline.is_some()))
+    {
+        for ((_, changed), stream) in processed.iter_mut().zip(streams).skip(first) {
+            *changed |= stream.windows(2).any(|pair| pair == b"EI");
+        }
+    }
     walk.out.streams = processed.into_iter().zip(comment_edges).map(|((ops, changed), edges)| changed.then(|| piece_bytes(&ops, edges))).collect();
     walk.out
 }
