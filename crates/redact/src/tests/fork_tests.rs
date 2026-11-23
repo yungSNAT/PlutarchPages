@@ -639,3 +639,17 @@ fn an_added_item_whose_text_holds_ei_stays_editable_after_a_redaction_elsewhere(
     assert!(!after.contains("SECRET") && after.contains("(RECEIPT) Tj"), "{after}");
     assert_eq!(added_items(&doc), 1);
 }
+
+/// The check that refuses a page whose rewritten content would not read back: a piece written as
+/// the writer writes it, or copied, reads back; one whose image data was cut short does not.
+#[test]
+fn content_whose_inline_image_ends_elsewhere_does_not_read_back() {
+    let source = b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI Q".to_vec();
+    let ops = pdfcraft_content::parse(&source).ops;
+    let processed = [(ops.clone(), true)];
+    let streams = [source.clone()];
+    assert!(crate::interp::reads_back(&[None], &streams, &processed), "copied");
+    assert!(crate::interp::reads_back(&[Some(pdfcraft_content::serialize_ops(&ops))], &streams, &processed), "written");
+    let cut = b"q\nBI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7\nEI\nQ\n".to_vec();
+    assert!(!crate::interp::reads_back(&[Some(cut)], &streams, &processed), "cut short");
+}

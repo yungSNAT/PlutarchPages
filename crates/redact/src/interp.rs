@@ -165,6 +165,9 @@ pub(crate) struct Output {
     /// ([`pdfcraft_content::Parsed::ambiguous_images`]): what this scope placed after it may not
     /// be what the page shows, so a redaction must not trust it.
     pub ambiguous: bool,
+    /// The rewritten content, in this scope or a nested form, would not read back as the operators
+    /// kept: an inline image in it would end elsewhere (see `reads_back`), so it must not be saved.
+    pub unwritable: bool,
     /// The content holds bytes the parser can't read ([`pdfcraft_content::Parsed::skipped`]), in
     /// this scope or a nested form: the walk reads past them, so text they hide (a stray `)` in a
     /// `TJ` array, say), which other readers may still draw, is neither found nor removed, and a
@@ -532,7 +535,7 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
             }
         }
         // The writer's guarantee failed: refuse the page rather than save what it can't read back.
-        walk.out.ambiguous |= !walk.out.reencoded.contains(&true) || !reads_back(&written, streams, &processed);
+        walk.out.unwritable = !walk.out.reencoded.contains(&true) || !reads_back(&written, streams, &processed);
     }
     walk.out.streams = written;
     walk.out
@@ -541,7 +544,7 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
 /// Whether the renderer reads the pieces as written (`None`: the source piece, copied) as the
 /// operators kept, each as the writer writes it, operands and image data included. A rewritten
 /// piece leaves out keywords holding `EI` (`write_op`).
-fn reads_back(written: &[Option<Vec<u8>>], streams: &[Vec<u8>], processed: &[(Vec<Op>, bool)]) -> bool {
+pub(crate) fn reads_back(written: &[Option<Vec<u8>>], streams: &[Vec<u8>], processed: &[(Vec<Op>, bool)]) -> bool {
     let pieces: Vec<&[u8]> = written.iter().zip(streams).map(|(new, old)| new.as_deref().unwrap_or(old)).collect();
     let parsed = Pieces::join(&pieces).parse();
     let kept = written
@@ -1497,6 +1500,7 @@ fn xobject(
             out.vertical |= inner.vertical;
             out.dropped_codes |= inner.dropped_codes;
             out.ambiguous |= inner.ambiguous;
+            out.unwritable |= inner.unwritable;
             out.unparsed |= inner.unparsed;
             out.doomed.extend_from_slice(&inner.doomed);
             out.retired_properties.extend(inner.retired_properties);

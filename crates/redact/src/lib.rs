@@ -58,6 +58,10 @@ pub enum RedactError {
     NothingToApply,
     #[error("page {0} has content that can't be read, so it can't be redacted safely")]
     Unreadable(usize),
+    /// Written back, the page's changed content would not read the same: an inline image in it
+    /// would end elsewhere.
+    #[error("page {0} could not be rewritten so that an inline image on it reads back the same, so it was not changed")]
+    NotReadBack(usize),
     /// The page tree and the renderer count a different number of pages (a page repeated in
     /// `/Kids`, say), so a mark's page can't be matched to the page the renderer drew.
     #[error(
@@ -1219,6 +1223,9 @@ fn redact_page_content(
     // found nor removed, and other readers may draw it.
     if out.ambiguous || out.unparsed {
         return Err(RedactError::Unreadable(pi + 1));
+    }
+    if out.unwritable {
+        return Err(RedactError::NotReadBack(pi + 1));
     }
     doomed_xobjects.extend_from_slice(&out.doomed);
     retired_properties.extend(out.retired_properties);
