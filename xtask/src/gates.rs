@@ -349,10 +349,10 @@ pub fn text_oracle(args: &[String]) -> anyhow::Result<()> {
 
 /// A new folder in the temporary directory that only this user can open (0700 on Unix), removed
 /// when dropped, on success and on error alike.
-struct PrivateDir(PathBuf);
+pub struct PrivateDir(PathBuf);
 
 impl PrivateDir {
-    fn new(prefix: &str) -> anyhow::Result<Self> {
+    pub fn new(prefix: &str) -> anyhow::Result<Self> {
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.subsec_nanos());
         for attempt in 0..100u32 {
             let path = std::env::temp_dir().join(format!("{prefix}-{}-{nanos}-{attempt}", std::process::id()));
@@ -369,6 +369,10 @@ impl PrivateDir {
             }
         }
         bail!("no unused temporary folder name for {prefix}")
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
     }
 }
 
