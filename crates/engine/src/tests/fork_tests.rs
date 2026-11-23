@@ -331,7 +331,7 @@ fn a_save_refuses_while_a_link_address_holds_redacted_text() {
 #[test]
 fn a_save_refuses_while_a_document_script_holds_redacted_text() {
     let names = "/Names << /JavaScript << /Names [(start) 6 0 R] >> >>";
-    refusal(names, "", &["<< /S /JavaScript /JS (app.alert\('Bluefin'\)) >>"], "link, action or script");
+    refusal(names, "", &["<< /S /JavaScript /JS (app.alert('Bluefin')) >>"], "link, action or script");
 }
 
 #[test]

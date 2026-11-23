@@ -195,11 +195,7 @@ pub(crate) fn refusal_text(e: &pdfcraft_redact::Elsewhere) -> String {
     .filter_map(|(on, name)| on.then_some(name))
     .collect();
     let held = if e.unsearched { "the redacted text couldn't be searched for, and these places hold text" } else { "the redacted text is still in" };
-    format!(
-        "not saved: {held}: {} (Remove hidden information removes them: {})",
-        places_text(e, false),
-        categories.join(", ")
-    )
+    format!("not saved: {held}: {} (Remove hidden information removes them: {})", places_text(e, false), categories.join(", "))
 }
 
 /// 0-based pages as 1-based runs: `[0, 1, 2, 5]` is "1-3, 6".

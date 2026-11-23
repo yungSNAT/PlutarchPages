@@ -274,7 +274,13 @@ fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>) -> Option<Place> {
     }
     // An action (a structure element has a parent), a file it names, a name tree's names.
     let action = has(b"S") && !has(b"P") && kind != Some(b"StructElem".as_slice());
-    if action || kind == Some(b"Filespec".as_slice()) || matches!(d.get(b"Names"), Some(Object::Array(_))) || has(b"Limits") || has(b"URI") || has(b"JS") {
+    if action
+        || kind == Some(b"Filespec".as_slice())
+        || matches!(d.get(b"Names"), Some(Object::Array(_)))
+        || has(b"Limits")
+        || has(b"URI")
+        || has(b"JS")
+    {
         return Some(Place::Links);
     }
     Some(parent.unwrap_or(Place::Other))
