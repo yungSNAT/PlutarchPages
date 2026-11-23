@@ -653,3 +653,38 @@ fn content_whose_inline_image_ends_elsewhere_does_not_read_back() {
     let cut = b"q\nBI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7\nEI\nQ\n".to_vec();
     assert!(!crate::interp::reads_back(&[Some(cut)], &streams, &processed), "cut short");
 }
+
+/// Removed text that couldn't all be collected stays so when later applies add text that could:
+/// the save's search must still count every place holding any text.
+#[test]
+fn removed_text_cut_short_stays_cut_short_when_more_is_added() {
+    let mut held = crate::Removed::new(Vec::new(), false);
+    held.extend(&crate::Removed::new(vec!["Bluefin".into()], true));
+    let doc = Document::open(Arc::new(pdf_with_outline_title("Annual figures"))).unwrap();
+    let left = crate::survivors(&doc, &held);
+    assert!(left.unsearched && left.refuses(), "{left:?}");
+}
+
+/// A one-page document whose only bookmark is titled `title`.
+fn pdf_with_outline_title(title: &str) -> Vec<u8> {
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>".to_string(),
+        "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>".to_string(),
+        format!("<< /Title ({title}) /Parent 4 0 R >>"),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    pdf
+}
