@@ -165,11 +165,13 @@ impl Found {
             Place::PrivateData | Place::Other | Place::Unread => &mut c.other,
         };
         *n = n.saturating_add(1);
-        if !self.save || place == Place::Other {
+        let item = Survivor { place, object, page, nth };
+        // The same place found twice (2 `/Info` entries) is listed once.
+        if !self.save || place == Place::Other || self.survivors.items.contains(&item) {
             return;
         }
         if self.survivors.items.len() < MAX_ITEMS {
-            self.survivors.items.push(Survivor { place, object, page, nth });
+            self.survivors.items.push(item);
         } else {
             self.survivors.more = self.survivors.more.saturating_add(1);
         }
