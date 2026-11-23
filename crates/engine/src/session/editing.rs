@@ -340,11 +340,19 @@ impl Session {
         let previous = std::mem::replace(&mut editor.cos, next);
         let keys = keys_after(&edit).unwrap_or_else(|| editor.keys.clone());
         let previous_keys = std::mem::replace(&mut editor.keys, keys);
+        // What undone applies removed goes with the redo history this edit drops.
+        let depth = editor.undo.len();
+        editor.held.retain(|(at, _)| *at <= depth);
         editor.undo.push((label, previous, previous_keys, scope));
         if editor.undo.len() > MAX_UNDO {
             editor.undo.remove(0);
+            // An apply past the oldest undo step can't be undone any more: it stays held.
+            editor.held.iter_mut().for_each(|(at, _)| *at = at.saturating_sub(1));
         }
         editor.redo.clear();
+        if let Some(removed) = cx.redaction.as_ref().map(|r| &r.removed).filter(|r| !r.is_empty()) {
+            editor.held.push((editor.undo.len(), removed.clone()));
+        }
         Self::adopt_keys(doc);
         let refreshed = guard(|| if scope == Scope::Content { Self::refresh_content(doc, Some(&edit)) } else { Self::refresh_scoped(doc, scope) })
             .unwrap_or_else(|m| Err(EditError::Reopen(m)));

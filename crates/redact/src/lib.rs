@@ -44,7 +44,7 @@ pub(crate) mod type3_tables;
 pub mod user_regex;
 pub mod verify;
 
-pub use elsewhere::Elsewhere;
+pub use elsewhere::{Elsewhere, Removed, survivors};
 pub use identification::{Claim, Identification};
 use interp::{Mode, Scope, process};
 pub use pattern_guard::PatternProblem;
@@ -257,6 +257,8 @@ pub struct Report {
     /// told; Remove hidden information removes them. See [`Elsewhere`] for when the counts are
     /// of every place holding any text.
     pub still_holding: Elsewhere,
+    /// The text this apply removed, for [`survivors`] to search the saved file for.
+    pub removed: Removed,
 }
 
 pub(crate) fn rect_of(doc: &Document, o: Option<&Object>) -> Option<[f64; 4]> {
@@ -1125,6 +1127,7 @@ fn apply_within(doc: &mut Document, pages: Option<&[usize]>, images: pdfcraft_co
     report.images_restored = globals::unshare(doc, &kept_before, &mut images)?;
     // What it doesn't scrub is counted, never changed.
     report.still_holding = elsewhere::find(doc, &removed_text, !removed_cut);
+    report.removed = Removed::new(removed_text, !removed_cut);
     // The previous revision still holds the removed content: the next save must rewrite, and the
     // rewritten file is a different file from its source, so it gets a new identifier.
     doc.require_full_save_with_new_id();

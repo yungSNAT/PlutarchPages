@@ -53,6 +53,14 @@ pub enum EditError {
     Write(String),
     #[error("the edited document could not be reopened: {0}")]
     Reopen(String),
+    /// The file about to be saved still holds text redacted since the last save, in places Remove
+    /// hidden information removes. Nothing was written.
+    #[error("{}", crate::document::refusal_text(.0))]
+    RedactedTextSurvives(pdfcraft_redact::Elsewhere),
+    /// The file about to be saved keeps an earlier revision, which still holds the content
+    /// redacted since the last save. Nothing was written.
+    #[error("not saved: the file would keep an earlier revision holding the redacted content")]
+    RedactedRevisionKept,
     #[error("couldn't use {0}")]
     Source(String),
     #[error("nothing to undo")]

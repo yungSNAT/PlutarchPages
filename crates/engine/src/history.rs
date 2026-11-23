@@ -150,6 +150,11 @@ pub(crate) struct Editor {
     pub(crate) field_appearances: pdfcraft_forms::FieldAppearanceCache,
     /// The text lines and blocks last computed for one page, reused while the document is unchanged.
     pub(crate) page_text: PageTextCache,
+    /// The text each Apply Redactions since the last save removed, with the undo depth just
+    /// after it: one deeper than [`Self::undo`] has been undone. A save searches the file it
+    /// writes for the rest and refuses if a place Remove hidden information clears holds it
+    /// ([`pdfcraft_redact::survivors`]). Never written anywhere.
+    pub(crate) held: Vec<(usize, pdfcraft_redact::Removed)>,
 }
 
 /// One page's text lines and the blocks grouped from them ([`pdfcraft_edit::text_lines_and_blocks`])

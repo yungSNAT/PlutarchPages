@@ -57,7 +57,23 @@ impl Session {
     pub fn check_save(&self, id: DocId, bytes: &Arc<Vec<u8>>) -> Result<(), EditError> {
         let doc = self.get(id).ok_or(EditError::NoDocument)?;
         let Some(editor) = doc.editor.as_ref() else { return Ok(()) };
-        pdfcraft_cos::Document::open_with_password(bytes.clone(), editor.keys.reopen.as_deref()).map_err(|e| EditError::Reopen(e.to_string()))?;
+        let written =
+            pdfcraft_cos::Document::open_with_password(bytes.clone(), editor.keys.reopen.as_deref()).map_err(|e| EditError::Reopen(e.to_string()))?;
+        // Text redacted since the last save must not survive in the file (applies undone don't count).
+        let mut held = editor.held.iter().filter(|(at, _)| *at <= editor.undo.len()).map(|(_, r)| r);
+        if let Some(first) = held.next() {
+            if written.revisions().len() > 1 {
+                return Err(EditError::RedactedRevisionKept);
+            }
+            let removed = held.fold(first.clone(), |mut all, r| {
+                all.extend(r);
+                all
+            });
+            let left = guard(|| pdfcraft_redact::survivors(&written, &removed)).map_err(EditError::Reopen)?;
+            if left.refuses() {
+                return Err(EditError::RedactedTextSurvives(left));
+            }
+        }
         pdfcraft_render::check_pages(bytes.clone(), doc.password.as_deref(), doc.info.pages.len()).map_err(|e| EditError::Reopen(e.to_string()))
     }
 
@@ -88,6 +104,7 @@ impl Session {
             editor.saved = bytes;
             editor.saved_keys = keys;
             editor.unsaved_file = false;
+            editor.held.clear();
         }
         if let Some(p) = path {
             doc.name = std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone());
@@ -151,6 +168,7 @@ impl Session {
         editor.keys = keys;
         editor.undo.clear();
         editor.redo.clear();
+        editor.held.clear();
         Self::adopt_keys(doc);
         Self::sync_dirty(doc);
         // The changes whose exits ran are gone with the rest: skip no exit.

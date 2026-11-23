@@ -38,6 +38,18 @@ pub struct Elsewhere {
     /// XMP streams on objects other than the catalog and the pages (images, fonts, form
     /// XObjects, annotations…) whose text holds it, or that can't be read.
     pub xmp: usize,
+    /// Document information (`/Info`) entries that hold it.
+    pub info: usize,
+    /// Links and actions (a link's or bookmark's action, the open action, additional actions:
+    /// their address, file name or script, a script stream included) and the names in the
+    /// named destination and document script lists.
+    pub links: usize,
+    /// Form fields and their widgets whose value, default value, tooltip or other text holds it.
+    pub fields: usize,
+    /// Any other object whose text holds it (structure tree alternate text, page labels, layer
+    /// names, article titles…). No Remove hidden information category removes these, so they
+    /// are told but never refuse a save ([`Elsewhere::refuses`]).
+    pub other: usize,
     /// The removed text couldn't be searched for, so the counts are of every place that holds
     /// any text.
     pub unsearched: bool,
@@ -46,7 +58,18 @@ pub struct Elsewhere {
 impl Elsewhere {
     /// All the places counted.
     pub fn total(&self) -> usize {
-        self.bookmarks.saturating_add(self.attachments).saturating_add(self.comments).saturating_add(self.xmp)
+        self.removable().saturating_add(self.other)
+    }
+
+    /// The places a Remove hidden information category removes.
+    fn removable(&self) -> usize {
+        [self.attachments, self.comments, self.xmp, self.info, self.links, self.fields].into_iter().fold(self.bookmarks, usize::saturating_add)
+    }
+
+    /// Whether a save must refuse: a place Remove hidden information removes still holds the
+    /// text (or, when it couldn't be searched for, any text).
+    pub fn refuses(&self) -> bool {
+        self.removable() > 0
     }
 }
 
@@ -67,13 +90,226 @@ pub(crate) fn find(doc: &Document, removed: &[String], complete: bool) -> Elsewh
     let hit = |o: Option<&Object>| {
         o.and_then(|o| doc.resolve(o).as_string().map(crate::metadata::text_string)).is_some_and(|t| !t.trim().is_empty() && search.text(&t))
     };
+    let swept = sweep(doc, &search);
     Elsewhere {
         bookmarks: bookmarks(doc, &hit),
-        attachments: attachments(doc, &hit),
+        attachments: attachments(doc, &hit).saturating_add(swept.attachments),
         comments: comments(doc, &search, &hit),
         xmp: xmp(doc, &search),
+        info: info(doc, &hit),
+        links: swept.links,
+        fields: swept.fields,
+        other: swept.other,
         unsearched: search.is_everything(),
     }
+}
+
+/// The removed text an [`crate::apply`] collected, kept so that the file about to be saved can be
+/// searched for it again ([`survivors`]). It is never written anywhere.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Removed {
+    text: Vec<String>,
+    /// The collection wasn't cut short. `false` makes every place holding any text count.
+    complete: bool,
+}
+
+impl Removed {
+    pub(crate) fn new(text: Vec<String>, complete: bool) -> Self {
+        Self { text, complete }
+    }
+
+    /// Nothing that could hold text was removed.
+    pub fn is_empty(&self) -> bool {
+        self.complete && self.text.is_empty()
+    }
+
+    /// Add what a later apply removed.
+    pub fn extend(&mut self, other: &Removed) {
+        self.complete = (self.complete || self.text.is_empty()) && other.complete;
+        self.text.extend(other.text.iter().cloned());
+    }
+}
+
+/// The places in `doc` (a file about to be saved, read back) that still hold the `removed` text,
+/// counted as [`crate::apply`] counts [`crate::Report::still_holding`].
+pub fn survivors(doc: &Document, removed: &Removed) -> Elsewhere {
+    find(doc, &removed.text, removed.complete)
+}
+
+/// `/Info` entries whose text holds it.
+fn info(doc: &Document, hit: &dyn Fn(Option<&Object>) -> bool) -> usize {
+    let Some(info) = doc.trailer().get(b"Info").and_then(|i| doc.resolve(i).as_dict().cloned()) else { return 0 };
+    info.iter().filter(|(_, v)| hit(Some(v))).count()
+}
+
+/// The most objects the sweep reads; past it, one more place counts under `other`.
+const MAX_SWEEP_OBJECTS: usize = 4_000_000;
+/// How deep the sweep follows direct arrays and dictionaries inside one object.
+const MAX_SWEEP_DEPTH: usize = 32;
+
+/// What [`sweep`] found, as counts of objects.
+#[derive(Default)]
+struct Swept {
+    attachments: usize,
+    links: usize,
+    fields: usize,
+    other: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Place {
+    Attachments,
+    Links,
+    Fields,
+    Other,
+}
+
+/// Every object of the file whose strings (or script or embedded file data) hold the text, by
+/// place, except what the walks above count (outline items, annotations other than links and
+/// widgets, XMP, `/Info`, the embedded file list) and strings that aren't text (the encryption
+/// dictionary, signatures). Page content is the redaction's own check.
+fn sweep(doc: &Document, search: &Search) -> Swept {
+    let hit = |t: &str| !t.trim().is_empty() && search.text(t);
+    let mut skip = embedded_file_tree(doc);
+    skip.extend([b"Info".as_slice(), b"Encrypt"].into_iter().filter_map(|k| doc.trailer().reference(k)));
+    let mut out = Swept::default();
+    for (read, (r, o)) in doc.scan_objects_checked().enumerate() {
+        if read >= MAX_SWEEP_OBJECTS {
+            out.other = out.other.saturating_add(1);
+            break;
+        }
+        if skip.contains(&r) {
+            continue;
+        }
+        let mut found = HashSet::new();
+        match o {
+            Ok(o) => visit(doc, &o, None, 0, &hit, &mut found),
+            // An object that can't be read may hold it.
+            Err(_) => {
+                found.insert(Place::Other);
+            }
+        }
+        for place in found {
+            let n = match place {
+                Place::Attachments => &mut out.attachments,
+                Place::Links => &mut out.links,
+                Place::Fields => &mut out.fields,
+                Place::Other => &mut out.other,
+            };
+            *n = n.saturating_add(1);
+        }
+    }
+    out
+}
+
+/// Note in `found` the place of each string under `o` that holds the text. `place` is that of the
+/// dictionary holding `o`: `None` where a walk above counts it, or its strings aren't text.
+fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, hit: &dyn Fn(&str) -> bool, found: &mut HashSet<Place>) {
+    if depth > MAX_SWEEP_DEPTH {
+        found.insert(place.unwrap_or(Place::Other));
+        return;
+    }
+    match o {
+        Object::String(s) => {
+            if let Some(p) = place
+                && hit(&crate::metadata::text_string(s))
+            {
+                found.insert(p);
+            }
+        }
+        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, hit, found)),
+        Object::Dict(d) => visit_dict(doc, d, place, depth, hit, found),
+        Object::Stream(s) => {
+            if s.dict.name(b"Type") == Some(b"EmbeddedFile".as_slice()) && stream_holds(doc, s, hit) {
+                found.insert(Place::Attachments);
+            }
+            visit_dict(doc, &s.dict, place, depth, hit, found);
+        }
+        _ => {}
+    }
+}
+
+fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, depth: usize, hit: &dyn Fn(&str) -> bool, found: &mut HashSet<Place>) {
+    let own = place_of(d, place);
+    // A script may be a stream of its own, which says nothing of what it is.
+    if own == Some(Place::Links)
+        && let Some(js) = d.get(b"JS")
+        && let Object::Stream(s) = &*doc.resolve(js)
+        && stream_holds(doc, s, hit)
+    {
+        found.insert(Place::Links);
+    }
+    for (_, v) in d.iter() {
+        visit(doc, v, own, depth + 1, hit, found);
+    }
+}
+
+/// The place of a dictionary's own strings, from what it is; `parent` is the place of the
+/// dictionary holding it directly.
+fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>) -> Option<Place> {
+    let has = |k: &[u8]| d.get(k).is_some();
+    let kind = d.name(b"Type");
+    // Signatures and the encryption dictionary hold binary strings; XMP is counted on its own.
+    if matches!(kind, Some(b"Sig" | b"DocTimeStamp" | b"Metadata")) || has(b"ByteRange") || (has(b"Filter") && has(b"O") && has(b"U")) {
+        return None;
+    }
+    if has(b"Rect") && has(b"Subtype") {
+        // Annotations: comments and file attachments are counted on their own.
+        return match d.name(b"Subtype") {
+            Some(b"Link") => Some(Place::Links),
+            Some(b"Widget") => Some(Place::Fields),
+            _ => None,
+        };
+    }
+    if has(b"FT") || (has(b"T") && (has(b"Kids") || has(b"Parent"))) {
+        return Some(Place::Fields);
+    }
+    // Outline items: their titles are counted on their own (an action they hold is not).
+    if has(b"Title") && [b"Parent".as_slice(), b"Next", b"Prev", b"First", b"Last"].into_iter().any(has) {
+        return None;
+    }
+    // Embedded file specifications are counted with the attachments.
+    if kind == Some(b"Filespec".as_slice()) && has(b"EF") {
+        return None;
+    }
+    // An action (a structure element has a parent), a file it names, a name tree's names.
+    let action = has(b"S") && !has(b"P") && kind != Some(b"StructElem".as_slice());
+    if action || kind == Some(b"Filespec".as_slice()) || matches!(d.get(b"Names"), Some(Object::Array(_))) || has(b"Limits") || has(b"URI") || has(b"JS") {
+        return Some(Place::Links);
+    }
+    Some(parent.unwrap_or(Place::Other))
+}
+
+/// Whether a stream's data, read as text, holds it. Data that can't be read, or is too large to
+/// search, counts as holding it.
+fn stream_holds(doc: &Document, s: &pdfcraft_cos::Stream, hit: &dyn Fn(&str) -> bool) -> bool {
+    if s.filters().len() > 1 {
+        return true;
+    }
+    match doc.with_direct_parms(s).decoded_first_filter_strict(crate::metadata::MAX_XMP_BYTES) {
+        Ok(bytes) => hit(&String::from_utf8_lossy(&bytes)) || hit(&crate::metadata::text_string(&pdfcraft_cos::PdfString { bytes, hex: false })),
+        Err(_) => true,
+    }
+}
+
+/// The nodes of the `/EmbeddedFiles` name tree, whose names [`attachments`] counts.
+fn embedded_file_tree(doc: &Document) -> HashSet<ObjRef> {
+    let mut nodes = HashSet::new();
+    let tree = doc
+        .root()
+        .and_then(|r| doc.get(r).as_dict()?.get(b"Names").cloned())
+        .and_then(|names| doc.resolve(&names).as_dict()?.get(b"EmbeddedFiles").cloned());
+    let mut next: Vec<(Object, usize)> = tree.into_iter().map(|t| (t, 0)).collect();
+    while let Some((o, depth)) = next.pop() {
+        let Object::Ref(r) = o else { continue };
+        if depth > MAX_NAME_TREE_DEPTH || nodes.len() >= MAX_NAME_TREE_NODES || !nodes.insert(r) {
+            continue;
+        }
+        if let Some(kids) = doc.get(r).as_dict().and_then(|n| n.get(b"Kids")).and_then(|k| doc.resolve(k).as_array().cloned()) {
+            next.extend(kids.into_iter().map(|k| (k, depth.saturating_add(1))));
+        }
+    }
+    nodes
 }
 
 /// Outline items whose `/Title` holds the text.

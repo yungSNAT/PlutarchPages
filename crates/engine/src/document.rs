@@ -144,25 +144,62 @@ fn elsewhere_text(e: &pdfcraft_redact::Elsewhere, f: &mut std::fmt::Formatter<'_
         1 => Some(format!("1 {one}")),
         n => Some(format!("{n} {many}")),
     };
-    let places: Vec<String> = [
-        count(e.bookmarks, "bookmark title", "bookmark titles"),
-        count(e.attachments, "attachment", "attachments"),
-        count(e.comments, "comment", "comments"),
-        count(e.xmp, "other metadata stream", "other metadata streams"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    let list = match places.split_last() {
-        None => "no place counted".to_string(),
-        Some((last, [])) => last.clone(),
-        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
-    };
+    let list = places_text(e, true);
     if e.unsearched {
         write!(f, "the redacted text couldn't be searched for, so {list} may still hold it (Remove hidden information removes them)")
     } else {
         write!(f, "the redacted text also appears in {list}, which redaction doesn't change (Remove hidden information removes them)")
     }
+}
+
+/// The places `e` counts, as a list ("1 bookmark title, 2 links and 1 other object"); `other`
+/// only when `with_other`.
+fn places_text(e: &pdfcraft_redact::Elsewhere, with_other: bool) -> String {
+    let count = |n: usize, one: &str, many: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {one}")),
+        n => Some(format!("{n} {many}")),
+    };
+    let places: Vec<String> = [
+        count(e.bookmarks, "bookmark title", "bookmark titles"),
+        count(e.attachments, "attachment", "attachments"),
+        count(e.comments, "comment", "comments"),
+        count(e.xmp, "other metadata stream", "other metadata streams"),
+        count(e.info, "document information entry", "document information entries"),
+        count(e.links, "link, action or script", "links, actions or scripts"),
+        count(e.fields, "form field", "form fields"),
+        count(if with_other { e.other } else { 0 }, "other object", "other objects"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    match places.split_last() {
+        None => "no place counted".to_string(),
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// Why a save refused ([`crate::EditError::RedactedTextSurvives`]): where the redacted text is, and
+/// the Remove hidden information categories that remove it.
+pub(crate) fn refusal_text(e: &pdfcraft_redact::Elsewhere) -> String {
+    let categories: Vec<&str> = [
+        (e.bookmarks > 0, "Bookmarks"),
+        (e.attachments > 0, "Attachments"),
+        (e.comments > 0, "Comments"),
+        (e.xmp > 0 || e.info > 0, "Metadata"),
+        (e.links > 0, "Links, actions and scripts"),
+        (e.fields > 0, "Form fields"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect();
+    let held = if e.unsearched { "the redacted text couldn't be searched for, and these places hold text" } else { "the redacted text is still in" };
+    format!(
+        "not saved: {held}: {} (Remove hidden information removes them: {})",
+        places_text(e, false),
+        categories.join(", ")
+    )
 }
 
 /// 0-based pages as 1-based runs: `[0, 1, 2, 5]` is "1-3, 6".
