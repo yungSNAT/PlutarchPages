@@ -12,7 +12,8 @@ let m = Matrix::from_operands(&op.operands);  // cm / Tm arithmetic, invert, bbo
 ```
 
 The parser is tolerant (unreadable bytes are skipped and counted, never fatal) and never
-panics. `redact` and (later) `edit` build their interpreters on it; the graphics-state tracker
+panics. The writer leaves out an operator whose keyword holds `EI`: no PDF operator but `EI`
+does, and written after an inline image its `EI` could end the image in the wrong place. `redact` and (later) `edit` build their interpreters on it; the graphics-state tracker
 and the `Patch` API of architecture §6 grow here.
 
 An inline image ends where the renderer's tokenizer (`hayro-syntax`) ends it, so the parser
