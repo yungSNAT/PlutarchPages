@@ -125,7 +125,7 @@ impl Removed {
 
     /// Add what a later apply removed.
     pub fn extend(&mut self, other: &Removed) {
-        self.complete = (self.complete || self.text.is_empty()) && other.complete;
+        self.complete &= other.complete;
         self.text.extend(other.text.iter().cloned());
     }
 }
