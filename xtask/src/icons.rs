@@ -93,13 +93,7 @@ fn mac_svg(master: &Path) -> String {
 
 fn render(src: &Path, size: u32, out: &Path) -> anyhow::Result<()> {
     let size = size.to_string();
-    let status = Command::new("resvg")
-        .args(["-w", &size, "-h", &size])
-        .arg(src)
-        .arg(out)
-        .stdin(Stdio::null())
-        .status()
-        .context("run resvg")?;
+    let status = Command::new("resvg").args(["-w", &size, "-h", &size]).arg(src).arg(out).stdin(Stdio::null()).status().context("run resvg")?;
     if !status.success() {
         bail!("resvg failed on {} at {size} px ({status})", src.display());
     }

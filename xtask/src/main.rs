@@ -62,7 +62,11 @@ const COMMANDS: &[(&str, &str, Command)] = &[
         "Compare page rendering with Poppler over corpus/ (pixel disagreement rate; --dir, --dpi, --limit, --tolerance, --hide-annotations)",
         gates::render_oracle,
     ),
-    ("icons", "Regenerate the app and PDF document icons in assets/app-icon/ from their master SVGs (needs resvg; iconutil on macOS for the .icns)", icons::run),
+    (
+        "icons",
+        "Regenerate the app and PDF document icons in assets/app-icon/ from their master SVGs (needs resvg; iconutil on macOS for the .icns)",
+        icons::run,
+    ),
     ("screenshots", "Regenerate the README screenshots in docs/images/ and their ATTRIBUTION entries", screenshots::run),
     (
         "models",
