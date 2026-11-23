@@ -719,3 +719,68 @@ fn restored_session_falls_back_to_surviving_tab_when_saved_active_fails_or_cance
     assert_eq!(harness6.state().active, Some(0), "successful delayed restore did not steal focus from selected tab");
     assert_eq!(harness6.state().views[1].current, 2, "delayed restore still applied saved page in background");
 }
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+fn explicit_navigation_commands_suppress_delayed_session_restore_activation() {
+    #[derive(Clone, Copy, Debug)]
+    enum NavMode {
+        NextTab,
+        WindowDocument,
+        SplitPane,
+    }
+    for (mode, label) in [(NavMode::NextTab, "next-tab"), (NavMode::WindowDocument, "window-document"), (NavMode::SplitPane, "split-pane")] {
+        let plain = tool_open_file(&format!("nav-{label}-bg"), "pdf", &fixture(4));
+        let active = tool_open_file(&format!("nav-{label}-active"), "pdf", &fixture(4));
+        let plain_path = crate::persist::last_session::absolute(&plain.0.to_string_lossy());
+        let active_path = crate::persist::last_session::absolute(&active.0.to_string_lossy());
+        let (gate, started, release, finished) = open_worker::prepare_gate();
+
+        let mut harness = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+            let mut app = PdfCraftApp::new();
+            app.open_prepare_gate = Some(gate);
+            app.reopen_last_session = true;
+            app.last_session = crate::persist::last_session::LastSession {
+                files: vec![
+                    crate::persist::last_session::SessionFile { path: plain_path, page: 1 },
+                    crate::persist::last_session::SessionFile { path: active_path.clone(), page: 3 },
+                ],
+                active: Some(active_path),
+            };
+            app.attach_context(&creation.egui_ctx);
+            app.reopen_last_files(&[]);
+            app
+        });
+
+        // Background tab arrives while saved-active document is still pending at the gate.
+        release_one(&started, &release, &finished, &mut harness);
+        assert_eq!(harness.state().views.len(), 1);
+        assert!(harness.state().pending_opens[0].activate, "{label}: saved-active starts with activate=true");
+
+        match mode {
+            NavMode::NextTab => {
+                harness.state_mut().execute("view.next_tab");
+                assert_eq!(harness.state().active, Some(0));
+            }
+            NavMode::WindowDocument => {
+                let ctx = harness.ctx.clone();
+                let cmd = craft_menu::CommandRef::with_params(crate::menus::DOCUMENT, json!({ "index": 0 }));
+                harness.state_mut().run_menu_command(&ctx, &cmd);
+                assert_eq!(harness.state().active, Some(0));
+            }
+            NavMode::SplitPane => {
+                harness.state_mut().split_tab(0, false);
+                harness.state_mut().activate_place(crate::panes::Place::Main);
+                assert_eq!(harness.state().active, Some(0));
+            }
+        }
+
+        assert!(!harness.state().pending_opens[0].activate, "{label}: explicit navigation revoked saved-active activation");
+        release_one(&started, &release, &finished, &mut harness);
+
+        let app = harness.state();
+        assert_eq!(app.active, Some(0), "{label}: delayed saved-active completion did not steal focus");
+        let last_view = app.views.last().expect("delayed restored tab opened");
+        assert_eq!(last_view.current, 3, "{label}: delayed restored tab kept saved page in background");
+    }
+}
