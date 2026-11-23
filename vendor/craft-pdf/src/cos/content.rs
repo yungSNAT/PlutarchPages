@@ -577,7 +577,9 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
 /// `EI` and the one written after the data by looking at what follows each, and what this writer
 /// puts after the image (spacing, the terminator, normalised operators) can change that choice,
 /// so the data read back would end elsewhere. For the same reason no operand is written with an
-/// `EI` in it (see [`write_operand`]).
+/// `EI` in it (see [`write_operand`]), and an operator whose keyword holds one is not written at
+/// all: no PDF operator but `EI` does, a renderer ignores an unknown one with its operands (inside
+/// `BX`/`EX` by the standard, elsewhere in practice), and `EI` outside an image ends nothing.
 pub fn write_op(op: &Op, out: &mut Vec<u8>) {
     if let Some((dict, img)) = &op.inline {
         let hex;
@@ -597,6 +599,9 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
         out.extend_from_slice(b" ID ");
         out.extend_from_slice(img);
         out.extend_from_slice(b"\nEI\n");
+        return;
+    }
+    if op.op.windows(2).any(|pair| pair == b"EI") {
         return;
     }
     for o in &op.operands {
@@ -703,7 +708,8 @@ fn hex_encoded(dict: &Dict, data: &[u8]) -> (Dict, Vec<u8>) {
     (dict, hex)
 }
 
-/// Write operators back to a content stream.
+/// Write operators back to a content stream, each as [`write_op`] does: an operator whose keyword
+/// holds `EI` is left out.
 pub fn serialize_ops(ops: &[Op]) -> Vec<u8> {
     let mut out = Vec::new();
     for op in ops {
