@@ -62,3 +62,32 @@ fn doc_info_lists_an_object_that_could_not_be_read() {
     assert_eq!(info["title"], "Report");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// An object nothing refers to is listed too: `doc_info` reads the whole file for the list, not
+/// only what opening read.
+#[test]
+fn doc_info_lists_an_unreferenced_object_that_could_not_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut file = with_info("<< /Title (Report) >>");
+    // Object 5, a stream with neither /Length nor endstream, before the cross-reference table.
+    let xref = file.windows(6).position(|w| w == b"\nxref\n").unwrap() + 1;
+    let tail = file.split_off(xref);
+    file.extend_from_slice(b"5 0 obj\n<< >>\nstream\nunterminated\n");
+    let offset = xref;
+    let shift = file.len() - xref;
+    let tail = String::from_utf8(tail).unwrap();
+    let startxref = tail.rsplit_once("startxref\n").unwrap().1.lines().next().unwrap().parse::<usize>().unwrap();
+    let tail = tail
+        .replace("xref\n0 5\n", "xref\n0 6\n")
+        .replace("trailer\n", &format!("{offset:010} 00000 n \ntrailer\n"))
+        .replace("/Size 5", "/Size 6")
+        .replace(&format!("startxref\n{startxref}\n"), &format!("startxref\n{}\n", startxref + shift));
+    file.extend_from_slice(tail.as_bytes());
+    std::fs::write(dir.path().join("unreferenced.pdf"), file).unwrap();
+    let mut a = Automation::new().with_root(dir.path()).unwrap();
+
+    let info = info_of(&mut a, "unreferenced.pdf");
+    let lines = info["unreadable_objects"].as_array().unwrap();
+    assert_eq!(lines.len(), 1, "{info}");
+    assert!(lines[0].as_str().unwrap().starts_with("object 5 0 could not be read"), "{info}");
+}

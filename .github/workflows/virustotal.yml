@@ -1,0 +1,27 @@
+name: VirusTotal
+
+# Uploads each file of a published release to VirusTotal and links the reports in the
+# release notes. It needs the repository secret VT_API_KEY.
+on:
+  # release.yml only drafts a release; a person publishing the draft raises this event.
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to scan.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    permissions:
+      contents: write # The reusable workflow edits the release notes in a separate job.
+    uses: ryanduguid/release-policy/.github/workflows/virustotal-release.yml@494674a4834480237eb0a4820ed98864d58377e7 # v0.5.0-15-g494674a
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
+    secrets:
+      vt-api-key: ${{ secrets.VT_API_KEY }}

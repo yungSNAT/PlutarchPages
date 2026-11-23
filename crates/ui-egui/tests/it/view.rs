@@ -5,6 +5,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use pdfcraft_ui_egui::PdfCraftApp;
 
+mod fork_tests;
+
 /// Three 300×400 pt pages. Page 1 links to page 3.
 const PAGES: &[u8] = b"%PDF-1.7
 1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
@@ -1202,24 +1204,6 @@ fn the_rail_zoom_field_sets_a_typed_zoom() {
     h.state_mut().views[0].set_zoom(2.0);
     h.run_steps(2);
     assert_eq!(h.get_by_role_and_label(Role::TextInput, "Zoom").value().as_deref(), Some("200%"));
-}
-
-/// `/Direction /R2L` reaches the view from the file, and holds with the default view too: it says
-/// how the book is bound, not how to show it.
-#[test]
-fn a_document_bound_on_the_right_opens_bound_on_the_right() {
-    let right_bound = String::from_utf8_lossy(PAGES)
-        .replace("/Pages 2 0 R >>", "/Pages 2 0 R /PageLayout /TwoPageLeft /ViewerPreferences << /Direction /R2L >> >>");
-    let open = |file: &[u8], always: &str| {
-        let mut app = PdfCraftApp::new();
-        app.set_option("language", "en").unwrap();
-        app.set_option("always-default-view", always).unwrap();
-        app.open_bytes("book.pdf", None, file.to_vec()).expect("opens");
-        app.views[0].right_to_left
-    };
-    assert!(open(right_bound.as_bytes(), "off"));
-    assert!(open(right_bound.as_bytes(), "on"));
-    assert!(!open(PAGES, "off"));
 }
 
 #[test]

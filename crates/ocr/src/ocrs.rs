@@ -303,6 +303,8 @@ mod tests {
 
     use super::*;
 
+    mod fork_tests;
+
     /// A found line is widened by fractions of its word height: every word above and below, the
     /// first and the last word along the line; the box returned is the line's before.
     #[test]
@@ -404,14 +406,5 @@ mod tests {
             Models::in_dir(dir.path()),
             Some(Models { detection: dir.path().join("text-detection.rten"), recognition: dir.path().join("text-recognition.rten") })
         );
-    }
-
-    #[test]
-    fn release_model_discovery_excludes_the_source_checkout() {
-        let source_models = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/models");
-        let dirs = Models::search_dirs();
-        // An explicit override is still allowed in either profile.
-        let has_source = dirs.iter().skip(usize::from(std::env::var_os("PDFCRAFT_MODELS").is_some())).any(|dir| dir == &source_models);
-        assert_eq!(has_source, cfg!(debug_assertions), "{dirs:?}");
     }
 }
