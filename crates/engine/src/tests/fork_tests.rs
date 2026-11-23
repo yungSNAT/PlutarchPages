@@ -409,3 +409,26 @@ fn text_in_a_place_nothing_removes_is_told_and_saved() {
     let left = s.get(id).unwrap().redaction_elsewhere().expect("applying tells where the text is");
     assert_eq!((left.other, left.refuses()), (1, false));
 }
+
+/// An edit after undoing an apply drops what the undone apply removed: it can't be redone.
+#[test]
+fn an_edit_after_undoing_a_redaction_drops_it_for_good() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[link]), |_, _| {});
+    assert!(saved.is_err());
+    s.undo(id).unwrap();
+    s.apply(id, Edit::AddBookmark { parent: vec![], index: 0, title: "Contents".into(), page: 0, left: None, top: None }).unwrap();
+    saved_or_refused(&s, id).expect("the undone redaction is gone with the redo history");
+}
+
+/// Undoing the later of 2 applies keeps the earlier one's text held.
+#[test]
+fn undoing_a_later_redaction_keeps_the_earlier_one_held() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[link]), |_, _| {});
+    assert!(saved.is_err());
+    mark_shown_text(&mut s, id, "report");
+    s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
+    s.undo(id).unwrap();
+    assert!(saved_or_refused(&s, id).is_err(), "the first apply's text is still in the link");
+}
