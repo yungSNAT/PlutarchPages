@@ -1,5 +1,5 @@
 diff --git a/src/cos/content/tests.rs b/src/cos/content/tests.rs
-index 6a44d51..ea4d2b9 100644
+index 6a44d51..dd7b36e 100644
 --- a/src/cos/content/tests.rs
 +++ b/src/cos/content/tests.rs
 @@ -57,6 +57,22 @@ fn a_long_unreadable_number_is_read_once() {
@@ -144,19 +144,19 @@ index 6a44d51..ea4d2b9 100644
 +fn an_operator_keyword_holding_ei_is_not_written() {
 +    let image = Op { inline: Some((Dict::new(), b"\0E".to_vec())), ..Op::new("BI", Vec::new()) };
 +    let kept = |ops: Vec<Op>| ops.into_iter().map(|o| (o.op, o.operands, o.inline)).collect::<Vec<_>>();
-+    let expected = kept(vec![image.clone(), Op::new("ID", Vec::new()), Op::new("w", vec![Object::Int(2)])]);
++    let expected = kept(vec![image.clone(), Op::new("w", vec![Object::Int(2)])]);
 +    for keyword in ["EEI", "EI", "AEIB"] {
-+        let ops = [image.clone(), Op::new("ID", Vec::new()), Op::new(keyword, vec![Object::Int(1)]), Op::new("w", vec![Object::Int(2)])];
++        let ops = [image.clone(), Op::new(keyword, vec![Object::Int(1)]), Op::new("w", vec![Object::Int(2)])];
 +        let written = serialize_ops(&ops);
 +        let read = parse(&written);
 +        assert_eq!(read.ambiguous_images, 0, "{keyword}");
 +        assert_eq!(kept(read.ops), expected, "{keyword}");
-+        assert_eq!(renderer_operators(&written), [&b"BI"[..], b"ID", b"w"], "{keyword}");
++        assert_eq!(renderer_operators(&written), [&b"BI"[..], b"w"], "{keyword}");
      }
  }
  
 diff --git a/src/cos/content.rs b/src/cos/content.rs
-index a308797..0500123 100644
+index a308797..d5e85d3 100644
 --- a/src/cos/content.rs
 +++ b/src/cos/content.rs
 @@ -107,6 +107,12 @@ fn is_delim(b: u8) -> bool {
@@ -255,7 +255,7 @@ index a308797..0500123 100644
  }
  
  /// The length declared by `/L` (or `/Length`, ISO 32000-2 §8.9.7), used when `EI` follows the
-@@ -553,28 +571,143 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
+@@ -553,29 +571,145 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
  }
  
  /// Write one operator (with a trailing newline).
@@ -266,8 +266,8 @@ index a308797..0500123 100644
 +/// puts after the image (spacing, the terminator, normalised operators) can change that choice,
 +/// so the data read back would end elsewhere. For the same reason no operand is written with an
 +/// `EI` in it (see [`write_operand`]), and an operator whose keyword holds one is not written at
-+/// all: no PDF operator but `EI` does, a renderer ignores an unknown one with its operands, and
-+/// `EI` outside an image ends nothing.
++/// all: no PDF operator but `EI` does, a renderer ignores an unknown one with its operands (inside
++/// `BX`/`EX` by the standard, elsewhere in practice), and `EI` outside an image ends nothing.
  pub fn write_op(op: &Op, out: &mut Vec<u8>) {
      if let Some((dict, img)) = &op.inline {
 +        let hex;
@@ -303,6 +303,7 @@ index a308797..0500123 100644
      out.push(b'\n');
  }
  
+-/// Write operators back to a content stream.
 +/// Write an operand as [`serialize`] does, but with an `I` that follows an `E` in a name written
 +/// `#49` and in a literal string `\111`. A source may spell those bytes so (`/A#45I`), and written
 +/// plainly they would put an `EI` after an inline image, which the renderer can take as the
@@ -399,9 +400,11 @@ index a308797..0500123 100644
 +    (dict, hex)
 +}
 +
- /// Write operators back to a content stream.
++/// Write operators back to a content stream, each as [`write_op`] does: an operator whose keyword
++/// holds `EI` is left out.
  pub fn serialize_ops(ops: &[Op]) -> Vec<u8> {
      let mut out = Vec::new();
+     for op in ops {
 diff --git a/src/cos/document/objects.rs b/src/cos/document/objects.rs
 index 2b8df8e..c7eaa74 100644
 --- a/src/cos/document/objects.rs
