@@ -649,4 +649,73 @@ fn restored_session_falls_back_to_surviving_tab_when_saved_active_fails_or_cance
     harness4.state_mut().submit_password(None);
     assert_eq!(harness4.state().views.len(), 1);
     assert_eq!(harness4.state().active, None, "interactive Home click stays active after saved-active password cancel");
+
+    // Case 5: interactive Home button click while saved-active restore is pending prevents a
+    // successful delayed completion from stealing focus from Home.
+    let plain5 = tool_open_file("suppress-home-bg", "pdf", &fixture(4));
+    let active5 = tool_open_file("suppress-home-active", "pdf", &fixture(4));
+    let plain5_path = crate::persist::last_session::absolute(&plain5.0.to_string_lossy());
+    let active5_path = crate::persist::last_session::absolute(&active5.0.to_string_lossy());
+    let (gate5, started5, release5, finished5) = open_worker::prepare_gate();
+
+    let mut harness5 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").expect("language en");
+        app.open_prepare_gate = Some(gate5);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain5_path, page: 1 },
+                crate::persist::last_session::SessionFile { path: active5_path.clone(), page: 3 },
+            ],
+            active: Some(active5_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app
+    });
+
+    release_one(&started5, &release5, &finished5, &mut harness5);
+    assert_eq!(harness5.state().views.len(), 1);
+    assert!(harness5.state().pending_opens[0].activate, "saved-active restore starts with activate=true");
+    harness5.get_by_label("Home").click();
+    harness5.step();
+    assert!(!harness5.state().pending_opens[0].activate, "explicit Home click revoked saved-active activation");
+    release_one(&started5, &release5, &finished5, &mut harness5);
+    assert_eq!(harness5.state().views.len(), 2);
+    assert_eq!(harness5.state().active, None, "successful delayed restore did not steal focus from Home");
+    assert_eq!(harness5.state().views[1].current, 3, "delayed restore still applied saved page in background");
+
+    // Case 6: explicit tab selection while saved-active restore is pending prevents a successful
+    // delayed completion from stealing focus from the chosen tab.
+    let plain6 = tool_open_file("suppress-tab-bg", "pdf", &fixture(4));
+    let active6 = tool_open_file("suppress-tab-active", "pdf", &fixture(4));
+    let plain6_path = crate::persist::last_session::absolute(&plain6.0.to_string_lossy());
+    let active6_path = crate::persist::last_session::absolute(&active6.0.to_string_lossy());
+    let (gate6, started6, release6, finished6) = open_worker::prepare_gate();
+
+    let mut harness6 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate6);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain6_path, page: 1 },
+                crate::persist::last_session::SessionFile { path: active6_path.clone(), page: 2 },
+            ],
+            active: Some(active6_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app
+    });
+
+    release_one(&started6, &release6, &finished6, &mut harness6);
+    assert_eq!(harness6.state().views.len(), 1);
+    harness6.state_mut().select_tab(0);
+    assert!(!harness6.state().pending_opens[0].activate, "explicit tab selection revoked saved-active activation");
+    release_one(&started6, &release6, &finished6, &mut harness6);
+    assert_eq!(harness6.state().views.len(), 2);
+    assert_eq!(harness6.state().active, Some(0), "successful delayed restore did not steal focus from selected tab");
+    assert_eq!(harness6.state().views[1].current, 2, "delayed restore still applied saved page in background");
 }

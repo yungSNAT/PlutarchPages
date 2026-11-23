@@ -10,9 +10,7 @@ impl PdfCraftApp {
     /// Show the Combine files tab (File ▸ Combine files…), opening it if needed.
     pub fn open_combine_tab(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.session_restore_needs_focus = false;
-        }
+        self.suppress_session_restore_activation();
         self.combine_tab.open = true;
         self.combine_tab.focused = true;
         self.active = None;

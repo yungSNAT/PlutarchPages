@@ -2,22 +2,44 @@ use super::*;
 use crate::control;
 
 impl PdfCraftApp {
-    /// Navigate explicitly to Home, cancelling any pending session-restore focus fallback.
+    /// Cancel pending session-restore focus and background activation when the user explicitly
+    /// chooses Home, Combine or a document tab, without suppressing explicit CLI, tool, link or
+    /// recovery opens.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn suppress_session_restore_activation(&mut self) {
+        self.session_restore_needs_focus = false;
+        for pending in &mut self.pending_opens {
+            if pending.reopen_page.is_some() && pending.then.is_none() && pending.after_open.is_none() && pending.recovered.is_none() {
+                pending.activate = false;
+            }
+        }
+        for deferred in &mut self.deferred_opens {
+            if deferred.reopen_page.is_some() && deferred.then.is_none() && deferred.after_open.is_none() {
+                deferred.activate = false;
+            }
+        }
+        if let Some(prompt) = self.password_prompt.as_mut()
+            && prompt.reopen_page.is_some()
+            && prompt.then.is_none()
+            && prompt.after_open.is_none()
+            && prompt.recovered.is_none()
+        {
+            prompt.activate = false;
+        }
+    }
+
+    /// Navigate explicitly to Home, cancelling any pending session-restore focus or activation.
     pub(crate) fn select_home(&mut self) {
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.session_restore_needs_focus = false;
-        }
+        self.suppress_session_restore_activation();
         self.active = None;
         self.combine_tab.focused = false;
     }
 
-    /// Focus an open document tab, cancelling any pending session-restore focus fallback.
+    /// Focus an open document tab, cancelling any pending session-restore focus or activation.
     pub(crate) fn select_tab(&mut self, index: usize) {
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.session_restore_needs_focus = false;
-        }
+        self.suppress_session_restore_activation();
         self.active = Some(index);
         self.combine_tab.focused = false;
     }
