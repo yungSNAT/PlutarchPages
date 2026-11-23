@@ -606,8 +606,8 @@ fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it
 fn added_items(doc: &Document) -> Vec<bool> {
     use pdfcraft_cos::Object;
     let page = &pdfcraft_model::pages(doc)[0];
-    let contents = page.dict.get(b"Contents").map(|c| doc.resolve(c).into_owned());
-    let Some(Object::Array(list)) = contents else { return Vec::new() };
+    let contents = page.dict.get(b"Contents").map(|c| doc.resolve(c));
+    let Some(Object::Array(list)) = contents.as_deref() else { return Vec::new() };
     list.iter().map(|s| matches!(&*doc.resolve(s), Object::Stream(s) if s.dict.get(b"PCAdded").is_some())).collect()
 }
 
