@@ -529,6 +529,10 @@ pub struct PdfCraftApp {
     /// CLI options waiting for startup background opens to finish, in exact argument order.
     #[cfg(not(target_arch = "wasm32"))]
     launch_options: Vec<state::LaunchOption>,
+    /// Set when an async last-session restore starts without CLI files so a fallback tab takes
+    /// focus if the preferred active file fails or its password prompt is cancelled.
+    #[cfg(not(target_arch = "wasm32"))]
+    session_restore_needs_focus: bool,
     #[cfg(all(test, not(target_arch = "wasm32")))]
     open_prepare_gate: Option<std::sync::Arc<open_worker::PrepareGate>>,
     /// Folders pinned to Home, and what they held when last listed.

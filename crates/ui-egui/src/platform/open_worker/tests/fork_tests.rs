@@ -380,3 +380,210 @@ fn two_paged_and_deferred_launch_options_preserve_cli_order_and_modal_safety() {
     assert_eq!(app_b.left, LeftPanel::Tool("organize"));
     assert!(!app_b.left_open, "--left closed after --tool organize stays closed");
 }
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+fn converted_launch_files_preserve_display_override_layout_target_and_activation() {
+    // Mixed PDF + text file with `--two-paged --layout single`: `ResultKind::Conversion` must apply
+    // its display override and update `launch_display_target` so `--layout single` hits the final
+    // converted tab rather than the earlier PDF.
+    let pdf = tool_open_file("conv-first", "pdf", &fixture(3));
+    let txt = tool_open_file("conv-notes", "txt", b"Hello converted launch world");
+    let pdf_path = pdf.0.to_string_lossy().into_owned();
+    let txt_path = txt.0.to_string_lossy().into_owned();
+    let (gate, started, release, finished) = open_worker::prepare_gate();
+
+    let mut harness = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate);
+        app.attach_context(&creation.egui_ctx);
+        app.open_path_with_display(&pdf_path, PageLayout::TwoUp, false);
+        app.open_path_with_display(&txt_path, PageLayout::TwoUp, false);
+        app.set_launch_layout("single").expect("queue --layout single");
+        app
+    });
+
+    release_one(&started, &release, &finished, &mut harness);
+    release_one(&started, &release, &finished, &mut harness);
+
+    let app = harness.state();
+    assert_eq!(app.views.len(), 2);
+    assert_eq!(app.views[0].layout, PageLayout::TwoUp, "earlier PDF kept --two-paged");
+    assert!(!app.views[0].continuous());
+    assert_eq!(app.views[1].layout, PageLayout::Single, "converted text tab received deferred --layout single");
+    assert!(!app.views[1].continuous());
+
+    // `ResultKind::Converted` (Office worker output) also honours display_override, launch_display_target
+    // and `activate = false` when Combine holds focus.
+    let mut app2 = PdfCraftApp::new();
+    app2.open_combine_tab();
+    let (tx_bg, rx_bg) = std::sync::mpsc::channel();
+    app2.pending_opens.push(crate::PendingOpen {
+        token: 1,
+        receiver: rx_bg,
+        name: "Report.docx".into(),
+        path: None,
+        stamp: None,
+        activate: false,
+        after_open: None,
+        recovered: None,
+        then: None,
+        display_override: Some((PageLayout::TwoUp, false)),
+        reopen_page: None,
+        ready: None,
+    });
+    tx_bg
+        .send(open_worker::ResultMessage { token: 1, kind: open_worker::ResultKind::Converted(Ok(Arc::new(fixture(2)))) })
+        .expect("send converted bg");
+    app2.poll_pending_opens();
+    assert_eq!(app2.views.len(), 1);
+    assert!(app2.combine_showing(), "background Converted completion must not steal focus from Combine");
+    assert_eq!(app2.views[0].layout, PageLayout::TwoUp);
+
+    let mut app3 = PdfCraftApp::new();
+    let (tx_fg, rx_fg) = std::sync::mpsc::channel();
+    app3.pending_opens.push(crate::PendingOpen {
+        token: 2,
+        receiver: rx_fg,
+        name: "Deck.pptx".into(),
+        path: None,
+        stamp: None,
+        activate: true,
+        after_open: None,
+        recovered: None,
+        then: None,
+        display_override: Some((PageLayout::TwoUp, false)),
+        reopen_page: None,
+        ready: None,
+    });
+    app3.set_launch_layout("continuous").expect("defer --layout continuous");
+    tx_fg
+        .send(open_worker::ResultMessage { token: 2, kind: open_worker::ResultKind::Converted(Ok(Arc::new(fixture(2)))) })
+        .expect("send converted fg");
+    app3.poll_pending_opens();
+    assert_eq!(app3.views.len(), 1);
+    assert_eq!(app3.active, Some(0));
+    assert_eq!(app3.views[0].layout, PageLayout::Single);
+    assert!(app3.views[0].continuous(), "Converted tab recorded launch_display_target for deferred --layout");
+}
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+fn pending_open_coalescing_preserves_requested_tool_and_combine_focus() {
+    let file = tool_open_file("coalesce-tool", "pdf", &fixture(3));
+    let path = crate::persist::last_session::absolute(&file.0.to_string_lossy());
+    let (gate, started, release, finished) = open_worker::prepare_gate();
+
+    let mut harness = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate);
+        app.attach_context(&creation.egui_ctx);
+        assert_eq!(app.open_session_file(&path, 2, false), crate::OpenOutcome::Pending);
+        assert_eq!(app.open_path_then(&path, Some("export.text")), crate::OpenOutcome::Pending);
+        app.combine_paths(&[]);
+        assert_eq!(app.pending_opens.len(), 1);
+        assert_eq!(app.pending_opens[0].then, Some("export.text"), "coalescing preserved requested tool");
+        assert!(app.pending_opens[0].activate, "pending open with tool retains focus against Combine");
+        app
+    });
+
+    release_one(&started, &release, &finished, &mut harness);
+
+    let app = harness.state();
+    assert!(app.pending_opens.is_empty());
+    assert_eq!(app.views.len(), 1);
+    assert_eq!(app.active, Some(0));
+    assert_eq!(app.dialog, Some(Dialog::Export(crate::export_ui::ExportKind::Text)), "requested tool executed on completion");
+}
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+fn restored_session_falls_back_to_surviving_tab_when_saved_active_fails_or_cancels() {
+    // Case 1: saved active file is encrypted and password prompt is cancelled -> surviving restored tab takes focus.
+    let plain1 = tool_open_file("fallback-plain-cancel", "pdf", &fixture(4));
+    let locked1 = tool_open_file("fallback-locked-cancel", "pdf", &encrypted_tool_fixture());
+    let plain1_path = crate::persist::last_session::absolute(&plain1.0.to_string_lossy());
+    let locked1_path = crate::persist::last_session::absolute(&locked1.0.to_string_lossy());
+    let (gate1, started1, release1, finished1) = open_worker::prepare_gate();
+
+    let mut harness1 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate1);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain1_path, page: 2 },
+                crate::persist::last_session::SessionFile { path: locked1_path.clone(), page: 1 },
+            ],
+            active: Some(locked1_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app
+    });
+
+    release_one(&started1, &release1, &finished1, &mut harness1);
+    release_one(&started1, &release1, &finished1, &mut harness1);
+    assert!(harness1.state().password_prompt.is_some());
+    harness1.state_mut().submit_password(None);
+    assert_eq!(harness1.state().views.len(), 1);
+    assert_eq!(harness1.state().active, Some(0), "surviving restored tab took focus after active password cancel");
+    assert_eq!(harness1.state().views[0].current, 2);
+
+    // Case 2: saved active file fails preparation (corrupt PDF) -> surviving restored tab takes focus.
+    let plain2 = tool_open_file("fallback-plain-corrupt", "pdf", &fixture(3));
+    let corrupt2 = tool_open_file("fallback-corrupt", "pdf", b"%PDF-1.7\nnot a valid pdf");
+    let plain2_path = crate::persist::last_session::absolute(&plain2.0.to_string_lossy());
+    let corrupt2_path = crate::persist::last_session::absolute(&corrupt2.0.to_string_lossy());
+    let (gate2, started2, release2, finished2) = open_worker::prepare_gate();
+
+    let mut harness2 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate2);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain2_path, page: 1 },
+                crate::persist::last_session::SessionFile { path: corrupt2_path.clone(), page: 0 },
+            ],
+            active: Some(corrupt2_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app
+    });
+
+    release_one(&started2, &release2, &finished2, &mut harness2);
+    release_one(&started2, &release2, &finished2, &mut harness2);
+    assert_eq!(harness2.state().views.len(), 1);
+    assert_eq!(harness2.state().active, Some(0), "surviving restored tab took focus after active parse failure");
+
+    // Case 3: explicit `--home` still keeps Home active even when fallback triggers.
+    let plain3 = tool_open_file("fallback-plain-home", "pdf", &fixture(3));
+    let corrupt3 = tool_open_file("fallback-corrupt-home", "pdf", b"%PDF-1.7\nnot a valid pdf");
+    let plain3_path = crate::persist::last_session::absolute(&plain3.0.to_string_lossy());
+    let corrupt3_path = crate::persist::last_session::absolute(&corrupt3.0.to_string_lossy());
+    let (gate3, started3, release3, finished3) = open_worker::prepare_gate();
+
+    let mut harness3 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.open_prepare_gate = Some(gate3);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain3_path, page: 1 },
+                crate::persist::last_session::SessionFile { path: corrupt3_path.clone(), page: 0 },
+            ],
+            active: Some(corrupt3_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app.set_launch_option("home", "").expect("defer --home");
+        app
+    });
+
+    release_one(&started3, &release3, &finished3, &mut harness3);
+    release_one(&started3, &release3, &finished3, &mut harness3);
+    assert_eq!(harness3.state().views.len(), 1);
+    assert_eq!(harness3.state().active, None, "explicit --home wins over restored fallback");
+}

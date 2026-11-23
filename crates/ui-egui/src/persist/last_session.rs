@@ -136,6 +136,9 @@ impl PdfCraftApp {
                             .or_else(|| candidates.last().map(|f| f.path.as_str()))
                     })
                     .flatten();
+                if !has_cli_files && !candidates.is_empty() {
+                    self.session_restore_needs_focus = true;
+                }
                 for f in candidates {
                     self.open_session_file(&f.path, f.page, active == Some(f.path.as_str()));
                 }

@@ -288,8 +288,28 @@ impl PdfCraftApp {
         waiting.append(&mut self.pending_opens);
         self.pending_opens = waiting;
         self.submit_deferred_opens();
+        self.settle_session_restore_focus();
         self.settle_launch_layout();
         self.settle_launch_options();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn finish_converted_open(&mut self, pending: &PendingOpen, active_before: Option<usize>, before: usize) {
+        if !pending.activate {
+            self.active = active_before;
+        } else if self.views.len() > before {
+            self.session_restore_needs_focus = false;
+        }
+        if self.views.len() > before
+            && let Some((layout, continuous)) = pending.display_override
+            && let Some(view) = self.views.last_mut()
+        {
+            view.set_display(layout, continuous);
+            self.launch_display_target = Some(view.id);
+        }
+        if let Some(command) = pending.then {
+            self.execute(command);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -307,23 +327,23 @@ impl PdfCraftApp {
             open_worker::ResultKind::Failed(reason) => {
                 self.notify_fmt("Couldn't open {name}: {reason}", &[("name", &pending.name), ("reason", &reason)]);
             }
-            open_worker::ResultKind::Conversion(bytes) => match self.open_converted(&pending.name, &bytes) {
-                Some(Ok(())) => {
-                    if let Some(command) = pending.then {
-                        self.execute(command);
-                    }
+            open_worker::ResultKind::Conversion(bytes) => {
+                let active_before = self.active;
+                let before = self.views.len();
+                match self.open_converted(&pending.name, &bytes) {
+                    Some(Ok(())) => self.finish_converted_open(&pending, active_before, before),
+                    Some(Err(error)) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
+                    None => {}
                 }
-                Some(Err(error)) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
-                None => {}
-            },
-            open_worker::ResultKind::Converted(created) => match self.open_converted_pdf(&pending.name, created) {
-                Ok(()) => {
-                    if let Some(command) = pending.then {
-                        self.execute(command);
-                    }
+            }
+            open_worker::ResultKind::Converted(created) => {
+                let active_before = self.active;
+                let before = self.views.len();
+                match self.open_converted_pdf(&pending.name, created) {
+                    Ok(()) => self.finish_converted_open(&pending, active_before, before),
+                    Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
                 }
-                Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
-            },
+            }
             open_worker::ResultKind::Prepared { bytes, result } => match *result {
                 Ok(prepared) => match self.finish_open(&pending.name, pending.path.clone(), bytes.len(), prepared, pending.activate) {
                     Ok(id) => {
@@ -470,6 +490,10 @@ impl PdfCraftApp {
         self.views.push(view);
         if activate {
             self.active = Some(self.views.len() - 1);
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                self.session_restore_needs_focus = false;
+            }
         }
         self.apply_initial_view(self.views.len() - 1, &initial);
         self.apply_viewer_preferences(self.views.len() - 1, &initial, activate);
@@ -746,6 +770,7 @@ impl PdfCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             {
                 self.submit_deferred_opens();
+                self.settle_session_restore_focus();
                 self.settle_launch_layout();
                 self.settle_launch_options();
             }
@@ -960,6 +985,9 @@ impl PdfCraftApp {
                 pending.after_open = after_open;
                 pending.reopen_page = None;
             }
+            if then.is_some() {
+                pending.then = then;
+            }
             return OpenOutcome::Pending;
         }
         // The same file named again while its password is being asked for joins that prompt
@@ -1092,6 +1120,20 @@ impl PdfCraftApp {
             return Ok(());
         }
         self.set_option(key, value)
+    }
+
+    /// If an async last-session restore finished without its preferred active file opening (failed
+    /// read/parse or cancelled password prompt), bring the last restored tab forward instead of
+    /// leaving the user on Home, without overriding an explicit CLI, Home or Combine choice.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn settle_session_restore_focus(&mut self) {
+        if !self.session_restore_needs_focus || !self.pending_opens.is_empty() || !self.deferred_opens.is_empty() || self.password_prompt.is_some() {
+            return;
+        }
+        self.session_restore_needs_focus = false;
+        if self.active.is_none() && !self.combine_showing() && !self.views.is_empty() {
+            self.active = Some(self.views.len() - 1);
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
