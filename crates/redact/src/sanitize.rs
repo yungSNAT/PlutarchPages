@@ -664,6 +664,9 @@ fn content_pass(doc: &mut Document, text: bool, layers: bool, write: bool) -> Re
         // them, so what it reads around them may not be what other readers draw (hidden text in a
         // broken `TJ` is neither found nor removed). As for content that doesn't decode, count the
         // page so the removal runs and refuses it.
+        if write && out.unwritable {
+            return Err(RedactError::NotReadBack(pi + 1));
+        }
         if out.unparsed || out.ambiguous {
             if write {
                 return Err(RedactError::Unreadable(pi + 1));
@@ -692,8 +695,11 @@ fn content_pass(doc: &mut Document, text: bool, layers: bool, write: bool) -> Re
                 _ => Dict::new(),
             };
             dict.remove(b"Length");
-            // The source text of an added item (Edit ▸ Add content) would keep what was removed.
-            dict.remove(b"PCAdded");
+            // The source text of an added item (Edit ▸ Add content) would keep what was removed,
+            // unless the stream was only re-encoded so an inline image keeps its end.
+            if !out.reencoded.get(i).copied().unwrap_or(false) {
+                dict.remove(b"PCAdded");
+            }
             new_list[i] = Object::Ref(doc.add(Object::Stream(pdfcraft_cos::Stream::flate(dict, &bytes))));
             changed = true;
         }

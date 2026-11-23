@@ -121,6 +121,9 @@ const MAX_FORM_DRAWS: usize = 256;
 pub(crate) struct Output {
     /// The rewritten streams (`None` = unchanged).
     pub streams: Vec<Option<Vec<u8>>>,
+    /// Per stream, whether it was rewritten only so that an inline image before it keeps its end:
+    /// its operators are the source's, re-encoded, so an added item in it stays editable.
+    pub reencoded: Vec<bool>,
     /// New XObjects the rewritten content refers to: (resource name, object).
     pub xobjects: Vec<(Vec<u8>, ObjRef)>,
     /// Resource names whose `Do` this scope dropped or pointed at a cleaned copy, so the caller
@@ -162,6 +165,9 @@ pub(crate) struct Output {
     /// ([`pdfcraft_content::Parsed::ambiguous_images`]): what this scope placed after it may not
     /// be what the page shows, so a redaction must not trust it.
     pub ambiguous: bool,
+    /// The rewritten content, in this scope or a nested form, would not read back as the operators
+    /// kept: an inline image in it would end elsewhere (see `reads_back`), so it must not be saved.
+    pub unwritable: bool,
     /// The content holds bytes the parser can't read ([`pdfcraft_content::Parsed::skipped`]), in
     /// this scope or a nested form: the walk reads past them, so text they hide (a stray `)` in a
     /// `TJ` array, say), which other readers may still draw, is neither found nor removed, and a
@@ -510,8 +516,50 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
     if scope.mode == Mode::Apply {
         clean_replacements(doc, resources, &original, &walk.clipped, &mut processed, scope.report);
     }
-    walk.out.streams = processed.into_iter().zip(comment_edges).map(|((ops, changed), edges)| changed.then(|| piece_bytes(&ops, edges))).collect();
+    let mut written: Vec<Option<Vec<u8>>> =
+        processed.iter().zip(&comment_edges).map(|((ops, changed), edges)| changed.then(|| piece_bytes(ops, *edges))).collect();
+    walk.out.reencoded = vec![false; written.len()];
+    // The renderer can end an inline image at any later `EI`, even inside a token (`FOOEI`,
+    // `/BEI`), unless shown text or enough operators come between. A rewrite at or after an image
+    // that removes those lets a copied piece's `EI` swallow what follows the image, so when the
+    // pieces as written don't read back, every copied piece from the first image on that holds `EI`
+    // is re-encoded: the writer puts `EI` only at an image's end.
+    if let Some(first) = processed.iter().position(|(ops, _)| ops.iter().any(|op| op.inline.is_some()))
+        && processed[first..].iter().any(|(_, changed)| *changed)
+        && !reads_back(&written, streams, &processed)
+    {
+        for (i, ((ops, _), stream)) in processed.iter().zip(streams).enumerate().skip(first) {
+            if written[i].is_none() && stream.windows(2).any(|pair| pair == b"EI") {
+                written[i] = Some(piece_bytes(ops, comment_edges[i]));
+                walk.out.reencoded[i] = true;
+            }
+        }
+        // The writer's guarantee failed: refuse the page rather than save what it can't read back.
+        walk.out.unwritable = !walk.out.reencoded.contains(&true) || !reads_back(&written, streams, &processed);
+    }
+    walk.out.streams = written;
     walk.out
+}
+
+/// Whether the renderer reads the pieces as written (`None`: the source piece, copied) as the
+/// operators kept, each as the writer writes it, operands and image data included. A rewritten
+/// piece leaves out keywords holding `EI` (`write_op`).
+pub(crate) fn reads_back(written: &[Option<Vec<u8>>], streams: &[Vec<u8>], processed: &[(Vec<Op>, bool)]) -> bool {
+    let pieces: Vec<&[u8]> = written.iter().zip(streams).map(|(new, old)| new.as_deref().unwrap_or(old)).collect();
+    let parsed = Pieces::join(&pieces).parse();
+    let kept = written
+        .iter()
+        .zip(processed)
+        .flat_map(|(new, (ops, _))| ops.iter().filter(move |op| new.is_none() || !op.op.windows(2).any(|pair| pair == b"EI")));
+    parsed.ambiguous_images == 0 && parsed.skipped == 0 && parsed.ops.iter().map(as_written).eq(kept.map(as_written))
+}
+
+/// An operator's keyword and its bytes as the writer writes it: a number read back as another
+/// type, or image data read back ASCIIHex, writes as it did.
+fn as_written(op: &Op) -> (&[u8], Vec<u8>) {
+    let mut bytes = Vec::new();
+    pdfcraft_content::write_op(op, &mut bytes);
+    (&op.op, bytes)
 }
 
 /// A redacted image is redacted in every draw of it in this scope, matched by object (so through
@@ -1452,6 +1500,7 @@ fn xobject(
             out.vertical |= inner.vertical;
             out.dropped_codes |= inner.dropped_codes;
             out.ambiguous |= inner.ambiguous;
+            out.unwritable |= inner.unwritable;
             out.unparsed |= inner.unparsed;
             out.doomed.extend_from_slice(&inner.doomed);
             out.retired_properties.extend(inner.retired_properties);
