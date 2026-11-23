@@ -36,6 +36,9 @@ struct CommandSpec {
     extra_options: &'static [OptionSpec],
 }
 
+/// Public subcommands advertised in `USAGE` (plus `help`).
+/// `check-one` is the internal child-process entry point spawned by `check` (`check.rs`)
+/// and is deliberately omitted from `USAGE` and public shell completions.
 const COMMANDS: &[CommandSpec] = &[
     CommandSpec { name: "info", summary: "Document summary as JSON", options: INFO_OPTIONS, extra_options: &[] },
     CommandSpec { name: "render", summary: "Render a page to an image", options: RENDER_OPTIONS, extra_options: &[] },
@@ -272,4 +275,26 @@ fn powershell() -> String {
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{COMMANDS, SHELLS, generate};
+
+    fn usage_commands() -> std::collections::BTreeSet<&'static str> {
+        crate::USAGE.lines().filter_map(|line| line.strip_prefix("pdfcraft-cli ")).filter_map(|rest| rest.split_whitespace().next()).collect()
+    }
+
+    #[test]
+    fn public_commands_match_usage_and_omit_internal_check_one() {
+        let usage = usage_commands();
+        let advertised: std::collections::BTreeSet<&str> = COMMANDS.iter().map(|c| c.name).filter(|&name| name != "help").collect();
+        assert_eq!(advertised, usage, "COMMANDS (excluding help) must match the commands listed in USAGE");
+        assert!(!usage.contains("check-one"), "check-one is internal and omitted from USAGE");
+        assert!(!COMMANDS.iter().any(|c| c.name == "check-one"), "check-one must not be offered in completions");
+        for shell in SHELLS {
+            let script = generate(shell).unwrap();
+            assert!(!script.contains("check-one"), "{shell} completions must omit internal check-one");
+        }
+    }
 }

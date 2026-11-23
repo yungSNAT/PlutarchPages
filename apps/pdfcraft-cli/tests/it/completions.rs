@@ -53,6 +53,27 @@ fn generates_completions_for_every_supported_shell() {
         assert_eq!(stdout.contains(compact_needle), cfg!(feature = "mcp"), "{shell}: mcp compact mismatch");
         assert_eq!(stdout.contains("automation-read-root"), cfg!(feature = "mcp"), "{shell}: mcp read-root mismatch");
         assert_eq!(stdout.contains("automation-write-root"), cfg!(feature = "mcp"), "{shell}: mcp write-root mismatch");
+        assert!(!stdout.contains("check-one"), "{shell}: internal check-one must not be offered");
+    }
+}
+
+#[test]
+fn completions_match_public_usage_commands_and_omit_check_one() {
+    let help = run(&["--help"]);
+    assert!(help.status.success(), "{:?}", help.status);
+    let usage = text(&help.stdout);
+    let usage_cmds: Vec<&str> =
+        usage.lines().filter_map(|line| line.strip_prefix("pdfcraft-cli ")).filter_map(|rest| rest.split_whitespace().next()).collect();
+    assert!(!usage_cmds.is_empty());
+    assert!(!usage_cmds.contains(&"check-one"));
+    for shell in ["bash", "zsh", "fish", "powershell"] {
+        let out = run(&["completions", shell]);
+        assert!(out.status.success(), "{shell}: {:?}", out.status);
+        let stdout = text(&out.stdout);
+        assert!(!stdout.contains("check-one"), "{shell}: must not offer internal check-one");
+        for cmd in &usage_cmds {
+            assert!(stdout.contains(cmd), "{shell}: missing USAGE command {cmd}");
+        }
     }
 }
 
