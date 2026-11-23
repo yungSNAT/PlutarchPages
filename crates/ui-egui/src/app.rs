@@ -180,6 +180,8 @@ impl PdfCraftApp {
             launch_layout: None,
             #[cfg(not(target_arch = "wasm32"))]
             launch_display_target: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            launch_options: Vec::new(),
             #[cfg(all(test, not(target_arch = "wasm32")))]
             open_prepare_gate: None,
             pinned: Default::default(),

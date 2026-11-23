@@ -2,6 +2,13 @@ use super::*;
 use crate::control;
 
 impl PdfCraftApp {
+    /// Attach the host's [`egui::Context`] before the first frame so startup file opens run on
+    /// the background open worker instead of blocking the UI thread.
+    pub fn attach_context(&mut self, ctx: &egui::Context) {
+        self.ctx = Some(ctx.clone());
+        self.apply_status_captions(i18n::Lang::from_pref(&self.language));
+    }
+
     /// Enable the UI control channel on `ctx` (opt-in; see [`control`]). Returns a client that
     /// sends requests to this app; [`control::serve`] exposes it on loopback.
     pub fn attach_control(&mut self, ctx: &egui::Context) -> control::ControlClient {

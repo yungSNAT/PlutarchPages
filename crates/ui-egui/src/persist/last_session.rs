@@ -105,6 +105,26 @@ impl PdfCraftApp {
         if self.reopen_last_session {
             let skip: Vec<String> =
                 skip.iter().map(|p| absolute(p)).chain(self.recoverable.iter().filter_map(|m| m.path.as_deref().map(absolute))).collect();
+            if self.ctx.is_some() && !self.run_inline {
+                let candidates: Vec<&SessionFile> = last
+                    .files
+                    .iter()
+                    .filter(|f| {
+                        !skip.contains(&f.path)
+                            && std::path::Path::new(&f.path).is_file()
+                            && !self
+                                .views
+                                .iter()
+                                .any(|v| self.session.get(v.id).and_then(|d| d.path.as_deref()).map(absolute).as_deref() == Some(f.path.as_str()))
+                    })
+                    .collect();
+                let active =
+                    last.active.as_deref().filter(|p| candidates.iter().any(|f| f.path == *p)).or_else(|| candidates.last().map(|f| f.path.as_str()));
+                for f in candidates {
+                    self.open_session_file(&f.path, f.page, active == Some(f.path.as_str()));
+                }
+                return;
+            }
             let mut active = None;
             let mut prompt = self.password_prompt.take();
             for f in &last.files {

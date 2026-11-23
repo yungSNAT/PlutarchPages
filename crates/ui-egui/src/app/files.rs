@@ -12,6 +12,48 @@ fn asks_for_password(kind: &open_worker::ResultKind) -> bool {
     )
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Default)]
+struct FileOpenOptions {
+    after_open: Option<pdfcraft_render::RemoteDestination>,
+    then: Option<&'static str>,
+    display_override: Option<(canvas::PageLayout, bool)>,
+    activate: bool,
+    reopen_page: Option<usize>,
+}
+
+/// Whether CLI option `key` targets an open document, panel or modal and must wait for startup
+/// background opens to finish before running.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_post_open_option(key: &str) -> bool {
+    matches!(
+        key,
+        "page"
+            | "zoom"
+            | "layout"
+            | "continuous"
+            | "page-gaps"
+            | "cover"
+            | "organize"
+            | "thumbnail-zoom"
+            | "grid-zoom"
+            | "rotate"
+            | "layer"
+            | "find"
+            | "fields"
+            | "select"
+            | "notice"
+            | "comment"
+            | "dialog"
+            | "panel"
+            | "home"
+            | "tool"
+            | "tools"
+            | "palette"
+            | "quick"
+    )
+}
+
 /// Whether `a` and `b` name the same file: equal, or equal once made absolute against the
 /// current directory (links are not resolved, as in `last_session`).
 pub(crate) fn same_file(a: &str, b: &str) -> bool {
@@ -153,6 +195,7 @@ impl PdfCraftApp {
             recovered: request.recovered,
             then: request.then,
             display_override: None,
+            reopen_page: None,
             ready: None,
         });
         Ok(token)
@@ -172,7 +215,16 @@ impl PdfCraftApp {
         let mut queue = std::mem::take(&mut self.deferred_opens);
         while self.deferred_opens.is_empty() && self.pending_opens.len() < self.open_slots() {
             let Some(next) = queue.pop_front() else { break };
-            self.open_file_request(&next.path, next.after_open, next.then, next.display_override);
+            self.open_file_request(
+                &next.path,
+                FileOpenOptions {
+                    after_open: next.after_open,
+                    then: next.then,
+                    display_override: next.display_override,
+                    activate: next.activate,
+                    reopen_page: next.reopen_page,
+                },
+            );
         }
         // A file put back (the queue filled again) stays ahead of the ones behind it.
         self.deferred_opens.append(&mut queue);
@@ -233,6 +285,7 @@ impl PdfCraftApp {
         self.pending_opens = waiting;
         self.submit_deferred_opens();
         self.settle_launch_layout();
+        self.settle_launch_options();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -276,6 +329,11 @@ impl PdfCraftApp {
                         if let Some(destination) = pending.after_open {
                             self.apply_remote_destination(destination);
                         }
+                        if let Some(page) = pending.reopen_page
+                            && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
+                        {
+                            view.go_to_page(page);
+                        }
                         if let Some((layout, continuous)) = pending.display_override
                             && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
                         {
@@ -306,6 +364,7 @@ impl PdfCraftApp {
                         then: pending.then,
                         after_open: pending.after_open,
                         display_override: pending.display_override,
+                        reopen_page: pending.reopen_page,
                     });
                 }
                 Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error.to_string())]),
@@ -346,6 +405,8 @@ impl PdfCraftApp {
                     then: None,
                     after_open: None,
                     display_override: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    reopen_page: None,
                 });
                 return Ok(());
             }
@@ -679,7 +740,10 @@ impl PdfCraftApp {
                 self.recoverable.push(meta);
             }
             #[cfg(not(target_arch = "wasm32"))]
-            self.settle_launch_layout();
+            {
+                self.settle_launch_layout();
+                self.settle_launch_options();
+            }
             return;
         };
         #[cfg(not(target_arch = "wasm32"))]
@@ -699,6 +763,7 @@ impl PdfCraftApp {
                 && let Some(pending) = self.pending_opens.iter_mut().find(|pending| pending.token == *token)
             {
                 pending.display_override = p.display_override;
+                pending.reopen_page = p.reopen_page;
                 // Replies behind it that ask for a password wait for its outcome
                 // (`poll_pending_opens`).
                 self.password_retry = Some(*token);
@@ -732,6 +797,12 @@ impl PdfCraftApp {
                 if let Some(destination) = after_open {
                     self.apply_remote_destination(destination);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(page) = p.reopen_page
+                    && let Some(view) = self.views.last_mut()
+                {
+                    view.go_to_page(page);
+                }
                 if let Some((layout, continuous)) = p.display_override
                     && let Some(view) = self.views.last_mut()
                 {
@@ -756,11 +827,18 @@ impl PdfCraftApp {
                     prompt.then = p.then;
                     prompt.after_open = after_open;
                     prompt.display_override = p.display_override;
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        prompt.reopen_page = p.reopen_page;
+                    }
                 }
             }
         }
         #[cfg(not(target_arch = "wasm32"))]
-        self.settle_launch_layout();
+        {
+            self.settle_launch_layout();
+            self.settle_launch_options();
+        }
     }
 
     /// Ask for the active document's permissions password, then run `then` (if any).
@@ -824,26 +902,30 @@ impl PdfCraftApp {
         self.open_path_request(path, then, None)
     }
 
+    /// Reopen one file from the previous session on the background worker when live, at `page`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_session_file(&mut self, path: &str, page: usize, activate: bool) -> OpenOutcome {
+        self.open_file_request(path, FileOpenOptions { activate, reopen_page: Some(page), ..Default::default() })
+    }
+
     #[cfg(not(target_arch = "wasm32"))]
     fn open_path_request(&mut self, path: &str, then: Option<&'static str>, display_override: Option<(canvas::PageLayout, bool)>) -> OpenOutcome {
         // `manual.pdf#nameddest=Intro`, as a help system starts a PDF reader (#3425): the file,
         // shown at that destination once open. A path that names a file is never split.
         match pdfcraft_engine::open_parameters::split(path, |p| std::path::Path::new(p).is_file()) {
-            Some((file, destination)) => self.open_file_request(&file, Some(destination), then, display_override),
-            None => self.open_file_request(path, None, then, display_override),
+            Some((file, destination)) => self.open_file_request(
+                &file,
+                FileOpenOptions { after_open: Some(destination), then, display_override, activate: true, reopen_page: None },
+            ),
+            None => self.open_file_request(path, FileOpenOptions { after_open: None, then, display_override, activate: true, reopen_page: None }),
         }
     }
 
     /// Open the file `path`, shown at `after_open` once open. A file that waits for room in the
     /// worker's queue keeps its destination with it, as its path is the file alone (#3425).
     #[cfg(not(target_arch = "wasm32"))]
-    fn open_file_request(
-        &mut self,
-        path: &str,
-        after_open: Option<pdfcraft_render::RemoteDestination>,
-        then: Option<&'static str>,
-        display_override: Option<(canvas::PageLayout, bool)>,
-    ) -> OpenOutcome {
+    fn open_file_request(&mut self, path: &str, options: FileOpenOptions) -> OpenOutcome {
+        let FileOpenOptions { after_open, then, display_override, activate, reopen_page } = options;
         // One file, one tab (#2166): a file that is open already comes to the front instead,
         // and the tool it was opened for runs on it. One still being opened is left to that.
         if let Some(i) = self.tab_showing(path) {
@@ -864,6 +946,7 @@ impl PdfCraftApp {
             return OpenOutcome::Focused;
         }
         if let Some(pending) = self.pending_opens.iter_mut().find(|p| p.path.as_deref().is_some_and(|p| same_file(p, path))) {
+            pending.activate |= activate;
             if display_override.is_some() {
                 pending.display_override = display_override;
             }
@@ -889,6 +972,7 @@ impl PdfCraftApp {
             return OpenOutcome::Pending;
         }
         if let Some(deferred) = self.deferred_opens.iter_mut().find(|d| same_file(&d.path, path)) {
+            deferred.activate |= activate;
             if display_override.is_some() {
                 deferred.display_override = display_override;
             }
@@ -958,7 +1042,7 @@ impl PdfCraftApp {
             // The worker queue is bounded. A long file list (a launch behind a password prompt,
             // or many files at once) waits here, in order, and is submitted as opens finish.
             if self.pending_opens.len() >= self.open_slots() || !self.deferred_opens.is_empty() {
-                self.deferred_opens.push_back(DeferredOpen { path: path.to_string(), after_open, then, display_override });
+                self.deferred_opens.push_back(DeferredOpen { path: path.to_string(), after_open, then, display_override, activate, reopen_page });
                 return OpenOutcome::Pending;
             }
             match self.schedule_open(OpenRequest {
@@ -967,7 +1051,7 @@ impl PdfCraftApp {
                 stamp,
                 input: open_worker::Input::Path(std::path::PathBuf::from(path)),
                 password: None,
-                activate: true,
+                activate,
                 after_open,
                 recovered: None,
                 then,
@@ -975,6 +1059,7 @@ impl PdfCraftApp {
                 Ok(token) => {
                     if let Some(pending) = self.pending_opens.iter_mut().find(|pending| pending.token == token) {
                         pending.display_override = display_override;
+                        pending.reopen_page = reopen_page;
                     }
                     OpenOutcome::Pending
                 }
@@ -982,6 +1067,31 @@ impl PdfCraftApp {
                     self.notify_fmt("Couldn't open {name}: {e}", &[("name", &name), ("e", &error)]);
                     OpenOutcome::Failed
                 }
+            }
+        }
+    }
+
+    /// Apply a command-line view option (`--page`, `--zoom`, `--theme`, …). App preferences run
+    /// at once so opening documents inherit them; document, panel and modal options wait while
+    /// startup files are still opening in the background worker.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_launch_option(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let opening = !self.pending_opens.is_empty() || !self.deferred_opens.is_empty() || self.password_prompt.is_some();
+        if opening && is_post_open_option(key) {
+            self.launch_options.push((key.to_string(), value.to_string()));
+            return Ok(());
+        }
+        self.set_option(key, value)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn settle_launch_options(&mut self) {
+        if !self.pending_opens.is_empty() || !self.deferred_opens.is_empty() || self.password_prompt.is_some() {
+            return;
+        }
+        for (key, value) in std::mem::take(&mut self.launch_options) {
+            if let Err(error) = self.set_option(&key, &value) {
+                log::warn!("--{key} {value}: {error}");
             }
         }
     }

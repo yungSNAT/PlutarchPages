@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 
 use crate::{PdfCraftApp, control::ControlClient, open_worker};
 
+mod fork_tests;
+
 fn fixture(pages: usize) -> Vec<u8> {
     let mut objects = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string()];
     let kids = (0..pages).map(|page| format!("{} 0 R", 4 + 2 * page)).collect::<Vec<_>>().join(" ");
@@ -768,6 +770,7 @@ fn launch_layout_waits_for_cli_opens_and_preserves_restored_tabs() {
                         recovered: None,
                         then: None,
                         display_override: Some((PageLayout::TwoUp, false)),
+                        reopen_page: None,
                         ready: None,
                     });
                     replies.push((
@@ -826,6 +829,7 @@ fn launch_layout_failed_or_cancelled_opens_do_not_target_existing_documents() {
             recovered: None,
             then: None,
             display_override: Some((PageLayout::TwoUp, false)),
+            reopen_page: None,
             ready: None,
         });
         app.set_launch_layout("single").unwrap();
@@ -919,7 +923,14 @@ fn a_repeated_waiting_open_keeps_the_tool_it_brings() {
     let file = tool_open_file("deferred-tool", "pdf", &fixture(1));
     let path = file.0.to_string_lossy().into_owned();
     let mut app = PdfCraftApp::new();
-    app.deferred_opens.push_back(crate::DeferredOpen { path: path.clone(), after_open: None, then: None, display_override: None });
+    app.deferred_opens.push_back(crate::DeferredOpen {
+        path: path.clone(),
+        after_open: None,
+        then: None,
+        display_override: None,
+        activate: true,
+        reopen_page: None,
+    });
     assert_eq!(app.open_path_then(&path, Some("export.text")), crate::OpenOutcome::Pending);
     assert_eq!(app.deferred_opens.len(), 1);
     assert_eq!(app.deferred_opens.front().and_then(|d| d.then), Some("export.text"));

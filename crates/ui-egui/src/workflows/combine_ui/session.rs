@@ -416,6 +416,11 @@ impl PdfCraftApp {
                 pending.activate = false;
             }
         }
+        for deferred in &mut self.deferred_opens {
+            if deferred.then.is_none() && deferred.after_open.is_none() {
+                deferred.activate = false;
+            }
+        }
         if let Some(prompt) = self.password_prompt.as_mut()
             && prompt.then.is_none()
             && prompt.after_open.is_none()

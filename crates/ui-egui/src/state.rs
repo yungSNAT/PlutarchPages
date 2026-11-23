@@ -377,6 +377,9 @@ pub struct PasswordPrompt {
     pub(crate) after_open: Option<pdfcraft_render::RemoteDestination>,
     /// A launch-time display override, applied only after this PDF is unlocked.
     pub(crate) display_override: Option<(canvas::PageLayout, bool)>,
+    /// A restored last-session page, applied after this PDF is unlocked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) reopen_page: Option<usize>,
 }
 
 impl Drop for PasswordPrompt {
