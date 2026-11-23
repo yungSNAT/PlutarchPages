@@ -347,6 +347,12 @@ fn a_save_refuses_while_a_named_destination_holds_redacted_text() {
 }
 
 #[test]
+fn a_save_refuses_while_a_file_an_action_opens_is_named_with_redacted_text() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /Launch /F 7 0 R >> >>";
+    refusal("", "/Annots [6 0 R]", &[link, "<< /Type /Filespec /F (bluefin.pdf) >>"], "link, action or script");
+}
+
+#[test]
 fn a_save_refuses_while_a_form_field_value_holds_redacted_text() {
     let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "1 form field");
     assert!(said.contains("Form fields"), "{said}");

@@ -230,7 +230,7 @@ fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, hit: &d
 }
 
 fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, depth: usize, hit: &dyn Fn(&str) -> bool, found: &mut HashSet<Place>) {
-    let own = place_of(d, place);
+    let own = place_of(d, place, depth);
     // A script may be a stream of its own, which says nothing of what it is.
     if own == Some(Place::Links)
         && let Some(js) = d.get(b"JS")
@@ -245,8 +245,8 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
 }
 
 /// The place of a dictionary's own strings, from what it is; `parent` is the place of the
-/// dictionary holding it directly.
-fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>) -> Option<Place> {
+/// dictionary holding it directly, and `depth` 0 for an object of its own.
+fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>, depth: usize) -> Option<Place> {
     let has = |k: &[u8]| d.get(k).is_some();
     let kind = d.name(b"Type");
     // Signatures and the encryption dictionary hold binary strings; XMP is counted on its own.
@@ -268,19 +268,19 @@ fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>) -> Option<Place> {
     if has(b"Title") && [b"Parent".as_slice(), b"Next", b"Prev", b"First", b"Last"].into_iter().any(has) {
         return None;
     }
-    // Embedded file specifications are counted with the attachments.
-    if kind == Some(b"Filespec".as_slice()) && has(b"EF") {
-        return None;
+    // A file specification: one inside what a walk above counts (a file attachment annotation's)
+    // is counted there, one with its file (an associated file) is an attachment, and any other is
+    // a file an action names. Those in the embedded file list are skipped with it.
+    if kind == Some(b"Filespec".as_slice()) {
+        return match (parent, depth) {
+            (None, 1..) => None,
+            _ if has(b"EF") => Some(Place::Attachments),
+            _ => Some(Place::Links),
+        };
     }
-    // An action (a structure element has a parent), a file it names, a name tree's names.
+    // An action (a structure element has a parent), a name tree's names.
     let action = has(b"S") && !has(b"P") && kind != Some(b"StructElem".as_slice());
-    if action
-        || kind == Some(b"Filespec".as_slice())
-        || matches!(d.get(b"Names"), Some(Object::Array(_)))
-        || has(b"Limits")
-        || has(b"URI")
-        || has(b"JS")
-    {
+    if action || matches!(d.get(b"Names"), Some(Object::Array(_))) || has(b"Limits") || has(b"URI") || has(b"JS") {
         return Some(Place::Links);
     }
     Some(parent.unwrap_or(Place::Other))
@@ -298,7 +298,8 @@ fn stream_holds(doc: &Document, s: &pdfcraft_cos::Stream, hit: &dyn Fn(&str) -> 
     }
 }
 
-/// The nodes of the `/EmbeddedFiles` name tree, whose names [`attachments`] counts.
+/// The nodes of the `/EmbeddedFiles` name tree and the file specifications they list, whose
+/// names [`attachments`] counts.
 fn embedded_file_tree(doc: &Document) -> HashSet<ObjRef> {
     let mut nodes = HashSet::new();
     let tree = doc
@@ -311,8 +312,14 @@ fn embedded_file_tree(doc: &Document) -> HashSet<ObjRef> {
         if depth > MAX_NAME_TREE_DEPTH || nodes.len() >= MAX_NAME_TREE_NODES || !nodes.insert(r) {
             continue;
         }
-        if let Some(kids) = doc.get(r).as_dict().and_then(|n| n.get(b"Kids")).and_then(|k| doc.resolve(k).as_array().cloned()) {
+        let node = doc.get(r);
+        let Some(node) = node.as_dict() else { continue };
+        if let Some(kids) = node.get(b"Kids").and_then(|k| doc.resolve(k).as_array().cloned()) {
             next.extend(kids.into_iter().map(|k| (k, depth.saturating_add(1))));
+        }
+        // The file specifications it lists, whose names and descriptions it counts.
+        if let Some(leaves) = node.get(b"Names").and_then(|l| doc.resolve(l).as_array().cloned()) {
+            nodes.extend(leaves.iter().skip(1).step_by(2).filter_map(Object::as_ref));
         }
     }
     nodes
