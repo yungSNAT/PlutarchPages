@@ -573,8 +573,8 @@ fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
 /// image are redacted away, the image could swallow the operators up to that `EI`.
 #[test]
 fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it() {
-    // 20 operators after the image let the renderer take its real `EI` in the source; the 18 that
-    // fill the redacted rectangles go.
+    // 20 operators after the image, and the copied stream's first, let the renderer take its real
+    // `EI` in the source; the 18 that fill the redacted rectangles go.
     let first = [&b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI 1 0 0 1 5 5 cm 0 0 0 rg"[..], &b" 0 210 10 10 re f".repeat(9)].concat();
     let ends = |content: &[u8]| {
         let parsed = pdfcraft_content::parse(content);
@@ -588,7 +588,7 @@ fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
             b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>".to_vec(),
             stream("", &first),
-            stream("", tail),
+            stream("/PCAdded << /Kind /Shape >>", tail),
             FONT.replace("95 0 R", "7 0 R").into_bytes(),
             widths(),
         ]);
@@ -597,5 +597,38 @@ fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it
         apply(&mut doc, None).unwrap();
         let after = content(&doc, 0);
         assert_eq!(ends(after.as_bytes()), (0, Some(b"7F>".to_vec()), 1), "redacted, {label}: {after}");
+        // Re-encoded only, the copied stream draws what it drew, so its added item stays editable.
+        assert_eq!(added_items(&doc)[..2], [false, true], "{label}");
     }
+}
+
+/// Whether each of page 0's content streams (the redaction's overlay last) carries an added item's `/PCAdded`.
+fn added_items(doc: &Document) -> Vec<bool> {
+    use pdfcraft_cos::Object;
+    let page = &pdfcraft_model::pages(doc)[0];
+    let contents = page.dict.get(b"Contents").map(|c| doc.resolve(c).into_owned());
+    let Some(Object::Array(list)) = contents else { return Vec::new() };
+    list.iter().map(|s| matches!(&*doc.resolve(s), Object::Stream(s) if s.dict.get(b"PCAdded").is_some())).collect()
+}
+
+/// An added item after an inline image whose shown text holds `EI` (`RECEIPT`) can't end the image:
+/// shown text after an image makes the renderer keep its real `EI`. A redaction elsewhere on the
+/// page copies the item, which stays editable.
+#[test]
+fn an_added_item_whose_text_holds_ei_stays_editable_after_a_redaction_elsewhere() {
+    let mut doc = pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents [4 0 R 5 0 R 6 0 R] /Resources << /Font << /F1 7 0 R >> >> >>".to_vec(),
+        stream("", b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI Q"),
+        stream("", b"BT /F1 12 Tf 10 250 Td (SECRET) Tj ET"),
+        stream("/PCAdded << /Kind /Text >>", b"BT /F1 12 Tf 10 50 Td (RECEIPT) Tj ET"),
+        FONT.replace("95 0 R", "8 0 R").into_bytes(),
+        widths(),
+    ]);
+    mark(&mut doc, 0, &[[0.0, 240.0, 300.0, 270.0]], "");
+    apply(&mut doc, None).unwrap();
+    let after = content(&doc, 0);
+    assert!(!after.contains("SECRET") && after.contains("(RECEIPT) Tj"), "{after}");
+    assert_eq!(added_items(&doc)[..3], [false, false, true]);
 }

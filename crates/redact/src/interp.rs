@@ -121,6 +121,9 @@ const MAX_FORM_DRAWS: usize = 256;
 pub(crate) struct Output {
     /// The rewritten streams (`None` = unchanged).
     pub streams: Vec<Option<Vec<u8>>>,
+    /// Per stream, whether it was rewritten only so that an inline image before it keeps its end:
+    /// its operators are the source's, re-encoded, so an added item in it stays editable.
+    pub reencoded: Vec<bool>,
     /// New XObjects the rewritten content refers to: (resource name, object).
     pub xobjects: Vec<(Vec<u8>, ObjRef)>,
     /// Resource names whose `Do` this scope dropped or pointed at a cleaned copy, so the caller
@@ -510,20 +513,42 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
     if scope.mode == Mode::Apply {
         clean_replacements(doc, resources, &original, &walk.clipped, &mut processed, scope.report);
     }
+    let mut written: Vec<Option<Vec<u8>>> =
+        processed.iter().zip(&comment_edges).map(|((ops, changed), edges)| changed.then(|| piece_bytes(ops, *edges))).collect();
+    walk.out.reencoded = vec![false; written.len()];
     // The renderer can end an inline image at any later `EI`, even inside a token (`FOOEI`,
-    // `/BEI`), unless shown text or enough operators come between: a rewrite that removes those
-    // would let a copied piece's `EI` swallow what follows the image. The writer puts `EI` only at
-    // an image's end, so once anything is rewritten, so is every piece from the first inline image
-    // on that holds `EI`.
-    if processed.iter().any(|(_, changed)| *changed)
-        && let Some(first) = processed.iter().position(|(ops, _)| ops.iter().any(|op| op.inline.is_some()))
+    // `/BEI`), unless shown text or enough operators come between. A rewrite at or after an image
+    // that removes those lets a copied piece's `EI` swallow what follows the image. The writer puts
+    // `EI` only at an image's end, so when the pieces as written don't read back as the operators
+    // kept, every copied piece from the first image on that holds `EI` is written anew too: the same
+    // operators, re-encoded.
+    if let Some(first) = processed.iter().position(|(ops, _)| ops.iter().any(|op| op.inline.is_some()))
+        && processed[first..].iter().any(|(_, changed)| *changed)
+        && !reads_back(&written, streams, &processed)
     {
-        for ((_, changed), stream) in processed.iter_mut().zip(streams).skip(first) {
-            *changed |= stream.windows(2).any(|pair| pair == b"EI");
+        for (i, ((ops, _), stream)) in processed.iter().zip(streams).enumerate().skip(first) {
+            if written[i].is_none() && stream.windows(2).any(|pair| pair == b"EI") {
+                written[i] = Some(piece_bytes(ops, comment_edges[i]));
+                walk.out.reencoded[i] = true;
+            }
         }
+        // The writer's guarantee failed: refuse the page rather than save what it can't read back.
+        walk.out.ambiguous |= !reads_back(&written, streams, &processed);
     }
-    walk.out.streams = processed.into_iter().zip(comment_edges).map(|((ops, changed), edges)| changed.then(|| piece_bytes(&ops, edges))).collect();
+    walk.out.streams = written;
     walk.out
+}
+
+/// Whether the renderer reads the pieces as written (`None`: the source piece, copied) as the
+/// operators kept, keyword for keyword: an inline image whose end moved swallows operators or lets
+/// its data read as some. A rewritten piece leaves out keywords holding `EI` (`write_op`).
+fn reads_back(written: &[Option<Vec<u8>>], streams: &[Vec<u8>], processed: &[(Vec<Op>, bool)]) -> bool {
+    let pieces: Vec<&[u8]> = written.iter().zip(streams).map(|(new, old)| new.as_deref().unwrap_or(old)).collect();
+    let parsed = Pieces::join(&pieces).parse();
+    let kept = written.iter().zip(processed).flat_map(|(new, (ops, _))| {
+        ops.iter().filter(move |op| new.is_none() || !op.op.windows(2).any(|pair| pair == b"EI"))
+    });
+    parsed.ambiguous_images == 0 && parsed.skipped == 0 && parsed.ops.iter().map(|op| &op.op).eq(kept.map(|op| &op.op))
 }
 
 /// A redacted image is redacted in every draw of it in this scope, matched by object (so through

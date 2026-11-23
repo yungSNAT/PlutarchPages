@@ -692,8 +692,11 @@ fn content_pass(doc: &mut Document, text: bool, layers: bool, write: bool) -> Re
                 _ => Dict::new(),
             };
             dict.remove(b"Length");
-            // The source text of an added item (Edit ▸ Add content) would keep what was removed.
-            dict.remove(b"PCAdded");
+            // The source text of an added item (Edit ▸ Add content) would keep what was removed,
+            // unless the stream was only re-encoded so an inline image keeps its end.
+            if !out.reencoded.get(i).copied().unwrap_or(false) {
+                dict.remove(b"PCAdded");
+            }
             new_list[i] = Object::Ref(doc.add(Object::Stream(pdfcraft_cos::Stream::flate(dict, &bytes))));
             changed = true;
         }
