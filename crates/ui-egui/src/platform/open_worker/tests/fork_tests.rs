@@ -440,6 +440,30 @@ fn converted_launch_files_preserve_display_override_layout_target_and_activation
     assert!(app2.combine_showing(), "background Converted completion must not steal focus from Combine");
     assert_eq!(app2.views[0].layout, PageLayout::TwoUp);
 
+    // Background `ResultKind::Converted` also preserves an already-active document tab.
+    app2.select_tab(0);
+    let (tx_bg2, rx_bg2) = std::sync::mpsc::channel();
+    app2.pending_opens.push(crate::PendingOpen {
+        token: 3,
+        receiver: rx_bg2,
+        name: "Sheet.xlsx".into(),
+        path: None,
+        stamp: None,
+        activate: false,
+        after_open: None,
+        recovered: None,
+        then: None,
+        display_override: None,
+        reopen_page: None,
+        ready: None,
+    });
+    tx_bg2
+        .send(open_worker::ResultMessage { token: 3, kind: open_worker::ResultKind::Converted(Ok(Arc::new(fixture(2)))) })
+        .expect("send second converted bg");
+    app2.poll_pending_opens();
+    assert_eq!(app2.views.len(), 2);
+    assert_eq!(app2.active, Some(0), "background Converted completion must preserve an already-active document tab");
+
     let mut app3 = PdfCraftApp::new();
     let (tx_fg, rx_fg) = std::sync::mpsc::channel();
     app3.pending_opens.push(crate::PendingOpen {
@@ -586,4 +610,43 @@ fn restored_session_falls_back_to_surviving_tab_when_saved_active_fails_or_cance
     release_one(&started3, &release3, &finished3, &mut harness3);
     assert_eq!(harness3.state().views.len(), 1);
     assert_eq!(harness3.state().active, None, "explicit --home wins over restored fallback");
+
+    // Case 4: interactive Home button click while a saved-active restore is still unresolved
+    // cancels the fallback so Home stays active when the saved-active file fails or cancels.
+    let plain4 = tool_open_file("fallback-plain-interactive-home", "pdf", &fixture(3));
+    let locked4 = tool_open_file("fallback-locked-interactive-home", "pdf", &encrypted_tool_fixture());
+    let plain4_path = crate::persist::last_session::absolute(&plain4.0.to_string_lossy());
+    let locked4_path = crate::persist::last_session::absolute(&locked4.0.to_string_lossy());
+    let (gate4, started4, release4, finished4) = open_worker::prepare_gate();
+
+    let mut harness4 = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").expect("language en");
+        app.open_prepare_gate = Some(gate4);
+        app.reopen_last_session = true;
+        app.last_session = crate::persist::last_session::LastSession {
+            files: vec![
+                crate::persist::last_session::SessionFile { path: plain4_path, page: 1 },
+                crate::persist::last_session::SessionFile { path: locked4_path.clone(), page: 0 },
+            ],
+            active: Some(locked4_path),
+        };
+        app.attach_context(&creation.egui_ctx);
+        app.reopen_last_files(&[]);
+        app
+    });
+
+    // Background tab arrives first while the saved-active encrypted file is still paused at the gate.
+    release_one(&started4, &release4, &finished4, &mut harness4);
+    assert_eq!(harness4.state().views.len(), 1);
+    assert_eq!(harness4.state().active, None);
+    // User explicitly clicks the tab-strip Home button before the saved-active file resolves.
+    harness4.get_by_label("Home").click();
+    harness4.step();
+    // Now release the saved-active encrypted file and cancel its password prompt.
+    release_one(&started4, &release4, &finished4, &mut harness4);
+    assert!(harness4.state().password_prompt.is_some());
+    harness4.state_mut().submit_password(None);
+    assert_eq!(harness4.state().views.len(), 1);
+    assert_eq!(harness4.state().active, None, "interactive Home click stays active after saved-active password cancel");
 }

@@ -2,6 +2,26 @@ use super::*;
 use crate::control;
 
 impl PdfCraftApp {
+    /// Navigate explicitly to Home, cancelling any pending session-restore focus fallback.
+    pub(crate) fn select_home(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.session_restore_needs_focus = false;
+        }
+        self.active = None;
+        self.combine_tab.focused = false;
+    }
+
+    /// Focus an open document tab, cancelling any pending session-restore focus fallback.
+    pub(crate) fn select_tab(&mut self, index: usize) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.session_restore_needs_focus = false;
+        }
+        self.active = Some(index);
+        self.combine_tab.focused = false;
+    }
+
     /// Attach the host's [`egui::Context`] before the first frame so startup file opens run on
     /// the background open worker instead of blocking the UI thread.
     pub fn attach_context(&mut self, ctx: &egui::Context) {
@@ -103,7 +123,7 @@ impl PdfCraftApp {
             }
             ("left", _) => self.left_open = value != "closed",
             ("home", _) => {
-                self.active = None;
+                self.select_home();
                 // With no document open the expanded All tools view covers Home itself, so no
                 // other tab comes forward to put it away.
                 self.all_tools_full = false;
