@@ -65,7 +65,7 @@ impl crate::PdfCraftApp {
                 if let Some(path) = self.closed_tabs.last().cloned() {
                     // A tab may already have been reopened through File > Open.
                     if let Some(index) = self.views.iter().position(|v| self.session.get(v.id).is_some_and(|d| d.path.as_deref() == Some(&path))) {
-                        self.active = Some(index);
+                        self.select_tab(index);
                         self.closed_tabs.pop();
                     } else {
                         let tabs = self.views.len();

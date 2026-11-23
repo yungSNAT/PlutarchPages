@@ -9,6 +9,8 @@ use super::{Arc, BTreeSet, CombineTab, HISTORY, Modifiers, PdfCraftApp};
 impl PdfCraftApp {
     /// Show the Combine files tab (File ▸ Combine files…), opening it if needed.
     pub fn open_combine_tab(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.suppress_session_restore_activation();
         self.combine_tab.open = true;
         self.combine_tab.focused = true;
         self.active = None;
@@ -414,6 +416,11 @@ impl PdfCraftApp {
         for pending in &mut self.pending_opens {
             if pending.then.is_none() && pending.after_open.is_none() && pending.recovered.is_none() {
                 pending.activate = false;
+            }
+        }
+        for deferred in &mut self.deferred_opens {
+            if deferred.then.is_none() && deferred.after_open.is_none() {
+                deferred.activate = false;
             }
         }
         if let Some(prompt) = self.password_prompt.as_mut()

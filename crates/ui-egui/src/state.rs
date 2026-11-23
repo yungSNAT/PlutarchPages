@@ -377,6 +377,11 @@ pub struct PasswordPrompt {
     pub(crate) after_open: Option<pdfcraft_render::RemoteDestination>,
     /// A launch-time display override, applied only after this PDF is unlocked.
     pub(crate) display_override: Option<(canvas::PageLayout, bool)>,
+    /// A restored last-session page, applied after this PDF is unlocked.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) reopen_page: Option<usize>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) from_session_restore: bool,
 }
 
 impl Drop for PasswordPrompt {
@@ -496,4 +501,12 @@ pub enum OpenOutcome {
     Pending,
     /// The file could not be read or opened; the user was told.
     Failed,
+}
+
+/// A command-line launch option waiting for startup background opens to settle, preserving CLI
+/// argument order between ordinary view options and `--two-paged` deferred `--layout`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) enum LaunchOption {
+    Option { key: String, value: String },
+    Layout(canvas::PageLayout, bool),
 }

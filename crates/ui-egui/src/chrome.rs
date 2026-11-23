@@ -69,8 +69,7 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     ui.add_space(window_controls::SIDE_GAP - 4.0);
                 }
                 if icons::button(ui, "house", button, app.active.is_none() && !app.combine_showing(), tl!("Home")).clicked() {
-                    app.active = None;
-                    app.combine_tab.focused = false;
+                    app.select_home();
                 }
                 // Reserve the three icon buttons, Discord and their gaps outside the scrolling tabs.
                 let controls_width = ui.fonts_mut(|f| f.layout_no_wrap("Discord".into(), theme::medium(13.0), t.text).size().x)
@@ -162,7 +161,7 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                 }
                                 response.context_menu(|ui| tab_menu(app, ui, i, &mut action));
                                 if response.clicked() {
-                                    app.active = Some(i);
+                                    app.select_tab(i);
                                 }
                                 // A middle click closes the tab, as in Acrobat and browsers (#1853);
                                 // unsaved changes ask first, as the close button does.
@@ -406,8 +405,7 @@ pub(crate) fn pane_tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui, strip: Re
         }
         response.context_menu(|ui| tab_menu(app, ui, i, &mut action));
         if response.clicked() {
-            app.active = Some(i);
-            app.combine_tab.focused = false;
+            app.select_tab(i);
         }
         // A middle click closes the tab, as in the main strip (#1853).
         if response.middle_clicked() {

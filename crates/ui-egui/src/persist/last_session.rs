@@ -103,15 +103,54 @@ impl PdfCraftApp {
         let last = std::mem::take(&mut self.last_session);
         #[cfg(not(target_arch = "wasm32"))]
         if self.reopen_last_session {
-            let skip: Vec<String> =
-                skip.iter().map(|p| absolute(p)).chain(self.recoverable.iter().filter_map(|m| m.path.as_deref().map(absolute))).collect();
+            let has_cli_files = !skip.is_empty();
+            let skip: Vec<String> = skip
+                .iter()
+                .map(|p| {
+                    let file = pdfcraft_engine::open_parameters::split(p, |f| std::path::Path::new(f).is_file())
+                        .map_or_else(|| p.as_str().to_string(), |(f, _)| f);
+                    absolute(&file)
+                })
+                .chain(self.recoverable.iter().filter_map(|m| m.path.as_deref().map(absolute)))
+                .collect();
+            if self.ctx.is_some() && !self.run_inline {
+                let mut candidates: Vec<&SessionFile> = Vec::new();
+                for f in &last.files {
+                    let already_open = self
+                        .views
+                        .iter()
+                        .any(|v| self.session.get(v.id).and_then(|d| d.path.as_deref()).map(absolute).as_deref() == Some(f.path.as_str()));
+                    if !skip.iter().any(|s| crate::app::same_file(s, &f.path))
+                        && std::path::Path::new(&f.path).is_file()
+                        && !already_open
+                        && !candidates.iter().any(|c| crate::app::same_file(&c.path, &f.path))
+                    {
+                        candidates.push(f);
+                    }
+                }
+                let active = (!has_cli_files)
+                    .then(|| {
+                        last.active
+                            .as_deref()
+                            .and_then(|p| candidates.iter().find(|f| crate::app::same_file(&f.path, p)).map(|f| f.path.as_str()))
+                            .or_else(|| candidates.last().map(|f| f.path.as_str()))
+                    })
+                    .flatten();
+                if !has_cli_files && !candidates.is_empty() {
+                    self.session_restore_needs_focus = true;
+                }
+                for f in candidates {
+                    self.open_session_file(&f.path, f.page, active == Some(f.path.as_str()));
+                }
+                return;
+            }
             let mut active = None;
             let mut prompt = self.password_prompt.take();
             for f in &last.files {
                 let open = |app: &Self| {
                     app.views.iter().any(|v| app.session.get(v.id).and_then(|d| d.path.as_deref()).map(absolute).as_deref() == Some(f.path.as_str()))
                 };
-                if skip.contains(&f.path) || !std::path::Path::new(&f.path).is_file() || open(self) {
+                if skip.iter().any(|s| crate::app::same_file(s, &f.path)) || !std::path::Path::new(&f.path).is_file() || open(self) {
                     continue;
                 }
                 let before = self.views.len();

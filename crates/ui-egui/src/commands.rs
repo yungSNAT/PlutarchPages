@@ -869,7 +869,7 @@ impl PdfCraftApp {
         let current = if self.combine_showing() { Some(tabs.len()) } else { self.active.and_then(|a| tabs.iter().position(|&i| i == a)) };
         let Some(next) = tab_after(current, count, forward) else { return };
         match tabs.get(next) {
-            Some(&i) => self.active = Some(i),
+            Some(&i) => self.select_tab(i),
             None => self.open_combine_tab(),
         }
     }

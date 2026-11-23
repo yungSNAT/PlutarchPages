@@ -100,7 +100,7 @@ impl PdfCraftApp {
     /// tab, and say what the conversion couldn't keep. Returns `None` when `bytes` is not something
     /// Create understands (the caller then tries to open it as a PDF). HTML and Office documents
     /// convert on a thread of their own and open when ready.
-    pub(crate) fn open_converted(&mut self, name: &str, bytes: &[u8]) -> Option<Result<(), String>> {
+    pub(crate) fn open_converted_with_focus(&mut self, name: &str, bytes: &[u8], activate: bool) -> Option<Result<(), String>> {
         use pdfcraft_engine::SourceKind;
         match pdfcraft_engine::source_kind(name, bytes) {
             None | Some(SourceKind::Pdf) => return None,
@@ -116,7 +116,7 @@ impl PdfCraftApp {
             Ok((_, pdf, notes)) => (Ok(pdf), notes),
             Err(e) => (Err(e.to_string()), Vec::new()),
         };
-        let opened = self.open_created_bytes(&format!("{}.pdf", stem(name)), pdf);
+        let opened = self.open_created_bytes_with_focus(&format!("{}.pdf", stem(name)), pdf, activate);
         if opened.is_ok() && !notes.is_empty() {
             self.notify_fmt("Converted {name}: {notes}", &[("name", name), ("notes", &notes.join("; "))]);
         }
@@ -125,11 +125,16 @@ impl PdfCraftApp {
 
     /// Open `created`, the PDF converted from the file `name`, as a new, unsaved tab named after
     /// it (`Report.docx` → `Report.pdf`).
-    pub(crate) fn open_converted_pdf(&mut self, name: &str, created: Result<Arc<Vec<u8>>, String>) -> Result<(), String> {
-        self.open_created_bytes(&format!("{}.pdf", stem(name)), created)
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn open_converted_pdf_with_focus(&mut self, name: &str, created: Result<Arc<Vec<u8>>, String>, activate: bool) -> Result<(), String> {
+        self.open_created_bytes_with_focus(&format!("{}.pdf", stem(name)), created, activate)
     }
 
     pub(crate) fn open_created_bytes(&mut self, name: &str, created: Result<Arc<Vec<u8>>, String>) -> Result<(), String> {
+        self.open_created_bytes_with_focus(name, created, true)
+    }
+
+    pub(crate) fn open_created_bytes_with_focus(&mut self, name: &str, created: Result<Arc<Vec<u8>>, String>, activate: bool) -> Result<(), String> {
         let bytes = created?;
         let id = self.session.open_new(name, bytes).map_err(|e| e.to_string())?;
         // The reading-colours preference is app-wide: the newly created document starts with it.
@@ -140,7 +145,9 @@ impl PdfCraftApp {
             view.enter_presentation();
         }
         self.views.push(view);
-        self.active = Some(self.views.len() - 1);
+        if activate {
+            self.select_tab(self.views.len() - 1);
+        }
         Ok(())
     }
 
