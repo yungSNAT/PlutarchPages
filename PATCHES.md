@@ -215,6 +215,14 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   for every draw of it, through any resource name (`23005ebd`), and redacts an image or form that
   several pages draw with the marks of all of them (`ac75a54f`). Keep these in
   `crates/redact/src/interp.rs` and `lib.rs`; the tests are in `crates/redact/src/tests.rs`.
+- Once a redaction rewrites any of a page's or form's content streams, it also rewrites every
+  stream from the first inline image on that holds `EI`. A copied stream's `EI`, even inside a
+  token (`FOOEI`, `/BEI`), could otherwise become the image's end in the renderer once the
+  redaction removed the text or operators that made it accept the real one, and the image would
+  swallow the operators between. `process_from` in
+  `crates/redact/src/interp.rs`, test
+  `a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it` in
+  `crates/redact/src/tests/fork_tests.rs`.
 - Reduce File Size saves its copy only when it is smaller by more than a new `/ModDate` can
   explain (`reduce_saves` in `crates/engine/src/optimizer.rs`, `2b56095f`, for upstream issue
   #490, still open). The app and automation both call it.
