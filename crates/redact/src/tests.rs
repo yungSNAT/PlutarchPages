@@ -862,21 +862,25 @@ fn an_image_whose_subtype_is_a_reference_is_redacted() {
 }
 
 /// An XObject the redactor cannot classify (no `/Subtype`, or one it does not know) may still draw
-/// something under a mark. Apply removes it there and verification counts it; one elsewhere stays.
+/// something under a mark. Apply removes it there and verification counts it. PlutarchPages: drawn
+/// outside the mark too, it is content used where the mark doesn't reach, so apply refuses
+/// (PATCHES.md, 'Stricter than upstream on purpose'); upstream keeps the placement outside.
 #[test]
 fn an_xobject_of_unknown_subtype_under_a_mark_goes() {
     for subtype in ["", "/Subtype /PS", "/Subtype 42"] {
-        let x = stream(&format!("/Type /XObject {subtype} /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8"), [0]);
-        let src = b"q 10 0 0 10 10 10 cm /X1 Do Q q 10 0 0 10 200 200 cm /X1 Do Q";
-        let mut doc = one_page(src, "/XObject << /X1 7 0 R >>", vec![x]);
+        let x = || stream(&format!("/Type /XObject {subtype} /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8"), [0]);
         let rects = [[5.0, 5.0, 25.0, 25.0]];
+        let src = b"q 10 0 0 10 10 10 cm /X1 Do Q q 10 0 0 10 200 200 cm /X1 Do Q";
+        let mut doc = one_page(src, "/XObject << /X1 7 0 R >>", vec![x()]);
         assert_eq!(under(&mut doc, 0, &rects), 1, "{subtype:?}: verification counts it");
+        mark(&mut doc, 0, &rects, "");
+        assert!(matches!(apply(&mut doc, None), Err(RedactError::StillUsed(_))), "{subtype:?}");
+        let mut doc = one_page(b"q 10 0 0 10 10 10 cm /X1 Do Q", "/XObject << /X1 7 0 R >>", vec![x()]);
         mark(&mut doc, 0, &rects, "");
         let r = apply(&mut doc, None).unwrap();
         assert_eq!(r.forms_removed, 1, "{subtype:?}: {r:?}");
         let c = content(&doc, 0);
-        assert_eq!(c.matches("/X1 Do").count(), 1, "{subtype:?}: only the placement outside the mark stays: {c}");
-        assert!(c.contains("200 200 cm"), "{subtype:?}: {c}");
+        assert!(!c.contains("/X1 Do"), "{subtype:?}: {c}");
     }
 }
 

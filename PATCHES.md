@@ -21,8 +21,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - **Redaction** refuses when content under the marks is also used where the marks don't reach.
   Upstream goes ahead. Tests in `crates/redact` and `crates/automation`. This check runs before
   upstream's pattern guard, so 2 upstream tests in `crates/redact/tests/pattern_redaction.rs`
-  expect its `StillUsed` refusal where both would refuse. A page whose drawn content is too large
-  or can't be read to check refuses with `Unchecked` instead. An inline widget under a mark is
+  expect its `StillUsed` refusal where both would refuse, and so does upstream's
+  `an_xobject_of_unknown_subtype_under_a_mark_goes` in `crates/redact/src/tests.rs`. A page whose
+  drawn content is too large or can't be read to check refuses with `Unchecked` instead. An inline widget under a mark is
   removed with its field, as upstream does (`an_inline_widget_under_a_mark_takes_its_field`).
 - **Copy-restricted documents** refuse text extraction through the tools, including `text_find`.
 - **An empty password** never skips the Document Open prompt or lifts restrictions. `pdfcraft-cli
