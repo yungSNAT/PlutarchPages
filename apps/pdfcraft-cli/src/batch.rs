@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::{CliError, OptionSpec, automation, flag, print_output, validate_options};
 
-const OPTIONS: &[OptionSpec] = &[
+pub(crate) const OPTIONS: &[OptionSpec] = &[
     OptionSpec { name: "--root", takes_value: true },
     OptionSpec { name: "--out-dir", takes_value: true },
     OptionSpec { name: "--steps", takes_value: true },

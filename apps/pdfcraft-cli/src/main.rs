@@ -55,6 +55,7 @@ macro_rules! mcp_usage {
 
 mod check;
 mod commands;
+mod completions;
 mod options;
 mod run;
 mod ui;
@@ -94,6 +95,7 @@ pdfcraft-cli run    --script steps.json [--root DIR] [--report]
     "\
 pdfcraft-cli ui     --control FILE <method> [key=value …] [--out shot.png]
                                                            drive a running app started with --control FILE
+pdfcraft-cli completions <bash|zsh|fish|powershell>       shell completion script
 report problems: https://github.com/yungSNAT/PlutarchPages/issues"
 );
 
@@ -145,6 +147,7 @@ fn main() -> ExitCode {
         Some("run") => run(&args[1..]),
         Some("batch") => batch::run(&args[1..]),
         Some("ui") => ui(&args[1..]),
+        Some("completions") => completions::completions(&args[1..]),
         #[cfg(feature = "mcp")]
         Some("mcp") => mcp(&args[1..]),
         #[cfg(not(feature = "mcp"))]

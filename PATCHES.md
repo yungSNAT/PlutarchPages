@@ -306,6 +306,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   launch. If that run fails before the app starts, upstream's run (Direct3D 12 and OpenGL) and then
   eframe's OpenGL follow, and the `dx12-alone-failed` file in the settings folder skips the first
   run on later launches with the same display GPUs. Keep these runs at the next merge.
+- `pdfcraft-cli completions <bash|zsh|fish|powershell>` prints zero-dependency shell completion
+  scripts matching the CLI subcommands and options (`apps/pdfcraft-cli/src/completions.rs`, wired
+  into `apps/pdfcraft-cli/src/main.rs` and `apps/pdfcraft-cli/src/batch.rs`; tests in
+  `apps/pdfcraft-cli/tests/it/completions.rs`). Keep this when upstream changes `pdfcraft-cli`.
 
 ## Fixed differently upstream
 
