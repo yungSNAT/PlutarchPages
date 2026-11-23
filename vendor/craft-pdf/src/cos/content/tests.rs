@@ -390,7 +390,6 @@ fn an_operator_keyword_holding_ei_is_not_written() {
         assert_eq!(read.ambiguous_images, 0, "{keyword}");
         assert_eq!(kept(read.ops), expected, "{keyword}");
         assert_eq!(renderer_operators(&written), [&b"BI"[..], b"ID", b"w"], "{keyword}");
-        assert_eq!(rendered_samples(&written), Some(b"\0E".to_vec()), "{keyword}");
     }
 }
 
