@@ -373,6 +373,27 @@ fn a_name_or_string_after_an_inline_image_is_written_without_an_ei() {
     assert_eq!(parse(&written).ops[0].operands, op.operands);
 }
 
+/// From the scheduled `round_trip` fuzz job (23 November 2026). No PDF operator but `EI` holds an
+/// `EI`, and outside an image that one draws nothing either, but a source can hold such a keyword
+/// (`EEI`). Written after an inline image, its `EI` is one the renderer can take as the image's
+/// end, when fewer than 21 operators and no text shown come between: the image then swallows the
+/// operators before it, and its data, holding `EI`, is written ASCIIHex the next round.
+#[test]
+fn an_operator_keyword_holding_ei_is_not_written() {
+    let image = Op { inline: Some((Dict::new(), b"\0E".to_vec())), ..Op::new("BI", Vec::new()) };
+    let kept = |ops: Vec<Op>| ops.into_iter().map(|o| (o.op, o.operands, o.inline)).collect::<Vec<_>>();
+    let expected = kept(vec![image.clone(), Op::new("ID", Vec::new()), Op::new("w", vec![Object::Int(2)])]);
+    for keyword in ["EEI", "EI", "AEIB"] {
+        let ops = [image.clone(), Op::new("ID", Vec::new()), Op::new(keyword, vec![Object::Int(1)]), Op::new("w", vec![Object::Int(2)])];
+        let written = serialize_ops(&ops);
+        let read = parse(&written);
+        assert_eq!(read.ambiguous_images, 0, "{keyword}");
+        assert_eq!(kept(read.ops), expected, "{keyword}");
+        assert_eq!(renderer_operators(&written), [&b"BI"[..], b"ID", b"w"], "{keyword}");
+        assert_eq!(rendered_samples(&written), Some(b"\0E".to_vec()), "{keyword}");
+    }
+}
+
 fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
     use crate::cos::{Document, SaveOptions, Stream, write_full};
 
