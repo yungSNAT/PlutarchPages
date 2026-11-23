@@ -565,3 +565,36 @@ fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
     assert_eq!(drawn_names(&doc, &page.dict, 0, &roots, &mut full), Some(expected));
     assert!(full.streams.is_empty(), "nothing more kept past the budget");
 }
+
+/// A redaction rewrites only the content streams it changes and copies the others as they are. A
+/// later stream can hold `EI` inside a token (`FOOEI`, an operator allowed inside `BX`/`EX`, or the
+/// name `/BEI`). The renderer reads such an `EI` as a possible image end when no shown text and
+/// fewer than 21 operators lie between it and an image's real `EI`. So once the text after an
+/// inline image is redacted away, the image could swallow the operators up to that `EI`.
+#[test]
+fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it() {
+    let first = b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI 1 0 0 1 5 5 cm BT /F1 10 Tf 20 230 Td (SECRET) Tj ET";
+    let ends = |content: &[u8]| {
+        let parsed = pdfcraft_content::parse(content);
+        let image = parsed.ops.iter().find_map(|o| o.inline.as_ref().map(|(_, data)| data.clone()));
+        (parsed.ambiguous_images, image, parsed.ops.iter().filter(|o| o.is("cm") || o.is("Q")).count())
+    };
+    for tail in [&b"BX 1 FOOEI EX Q"[..], b"/BEI gs Q"] {
+        let label = String::from_utf8_lossy(tail);
+        let mut doc = pdf(vec![
+            b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+            b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>".to_vec(),
+            stream("", first),
+            stream("", tail),
+            FONT.replace("95 0 R", "7 0 R").into_bytes(),
+            widths(),
+        ]);
+        assert_eq!(ends(content(&doc, 0).as_bytes()), (0, Some(b"7F>".to_vec()), 2), "the source, {label}");
+        mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
+        apply(&mut doc, None).unwrap();
+        let after = content(&doc, 0);
+        assert!(!after.contains("SECRET"), "{label}");
+        assert_eq!(ends(after.as_bytes()), (0, Some(b"7F>".to_vec()), 2), "redacted, {label}: {after}");
+    }
+}
