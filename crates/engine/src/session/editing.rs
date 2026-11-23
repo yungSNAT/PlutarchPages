@@ -395,7 +395,8 @@ impl Session {
         }
         take_xfa_output(doc, cx.xfa_out, cx.xfa_ran_away);
         self.last_color_report = cx.colors.take();
-        self.last_redaction_report = cx.redaction.take();
+        // The removed text stays only in `Editor::held`: never in a report kept past the save.
+        self.last_redaction_report = cx.redaction.take().map(|r| pdfcraft_redact::Report { removed: pdfcraft_redact::Removed::default(), ..r });
         Ok(cx.prepared)
     }
 

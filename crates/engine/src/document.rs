@@ -139,17 +139,6 @@ impl std::fmt::Display for EditNotice {
 
 /// [`EditNotice::RedactionElsewhere`] in words (English; the interface has its own wording).
 fn elsewhere_text(e: &pdfcraft_redact::Elsewhere, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let list = places_text(e, true);
-    if e.unsearched {
-        write!(f, "the redacted text couldn't be searched for, so {list} may still hold it (Remove hidden information removes them)")
-    } else {
-        write!(f, "the redacted text also appears in {list}, which redaction doesn't change (Remove hidden information removes them)")
-    }
-}
-
-/// The places `e` counts, as a list ("1 bookmark title, 2 links and 1 other object"); `other`
-/// only when `with_other`.
-fn places_text(e: &pdfcraft_redact::Elsewhere, with_other: bool) -> String {
     let count = |n: usize, one: &str, many: &str| match n {
         0 => None,
         1 => Some(format!("1 {one}")),
@@ -163,34 +152,92 @@ fn places_text(e: &pdfcraft_redact::Elsewhere, with_other: bool) -> String {
         count(e.info, "document information entry", "document information entries"),
         count(e.links, "link, action or script", "links, actions or scripts"),
         count(e.fields, "form field", "form fields"),
-        count(if with_other { e.other } else { 0 }, "other object", "other objects"),
+        count(e.other, "other object", "other objects"),
     ]
     .into_iter()
     .flatten()
     .collect();
-    match places.split_last() {
+    let list = and_list(&places);
+    if e.unsearched {
+        write!(f, "the redacted text couldn't be searched for, so {list} may still hold it (Remove hidden information removes them)")
+    } else {
+        write!(f, "the redacted text also appears in {list}, which redaction doesn't change (Remove hidden information removes them)")
+    }
+}
+
+/// "a", "a and b", "a, b and c".
+fn and_list(items: &[String]) -> String {
+    match items.split_last() {
         None => "no place counted".to_string(),
         Some((last, [])) => last.clone(),
         Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
     }
 }
 
-/// Why a save refused ([`crate::EditError::RedactedTextSurvives`]): where the redacted text is, and
-/// the Remove hidden information categories that remove it.
-pub(crate) fn refusal_text(e: &pdfcraft_redact::Elsewhere) -> String {
-    let categories: Vec<&str> = [
-        (e.bookmarks > 0, "Bookmarks"),
-        (e.attachments > 0, "Attachments"),
-        (e.comments > 0, "Comments"),
-        (e.xmp > 0 || e.info > 0, "Metadata"),
-        (e.links > 0, "Links, actions and scripts"),
-        (e.fields > 0, "Form fields"),
-    ]
-    .into_iter()
-    .filter_map(|(on, name)| on.then_some(name))
-    .collect();
-    let held = if e.unsearched { "the redacted text couldn't be searched for, and these places hold text" } else { "the redacted text is still in" };
-    format!("not saved: {held}: {} (Remove hidden information removes them: {})", places_text(e, false), categories.join(", "))
+/// Why a save refused ([`crate::EditError::RedactedTextSurvives`]): each place that still holds the
+/// redacted text, by where it is and never by what it says, and how to clear it: one at a time, or
+/// all of a kind with Remove hidden information.
+pub(crate) fn refusal_text(s: &pdfcraft_redact::Survivors) -> String {
+    use pdfcraft_redact::Place;
+    let mut places: Vec<String> = s.items.iter().map(survivor_text).collect();
+    if s.more > 0 {
+        places.push(format!("{} more", s.more));
+    }
+    let mut categories: Vec<String> = Vec::new();
+    for item in &s.items {
+        let category = match item.place {
+            Place::Bookmark => "Bookmarks",
+            Place::Attachment => "Attachments",
+            Place::Comment => "Comments",
+            Place::Xmp | Place::Info => "Metadata",
+            Place::Link => "Links, actions and scripts",
+            Place::Field => "Form fields",
+            Place::PrivateData => "Private data",
+            Place::Other | Place::Unread => continue,
+        };
+        if !categories.iter().any(|c| c == category) {
+            categories.push(category.to_string());
+        }
+    }
+    let held = if s.unsearched {
+        "the redacted text couldn't be searched for, so these places, which hold text, may still hold it"
+    } else {
+        "the redacted text is still in"
+    };
+    let mut out = format!("not saved: {held}: {}. Remove or change each one", places.join("; "));
+    if !categories.is_empty() {
+        out.push_str(&format!(" (Remove hidden information's {} removes all of them", and_list(&categories)));
+        if categories.iter().any(|c| c == "Form fields") {
+            out.push_str("; it flattens form fields, so their values stay on the page, to redact there");
+        }
+        out.push(')');
+    }
+    out
+}
+
+/// One place of a refusal: "bookmark 2 in the outline", "a link on page 3 (object 14)".
+fn survivor_text(s: &pdfcraft_redact::Survivor) -> String {
+    use pdfcraft_redact::Place;
+    let ordinal = |any: &str, what: &str, list: &str| s.nth.map_or(any.to_string(), |n| format!("{what} {} in {list}", n.saturating_add(1)));
+    let mut out = match s.place {
+        Place::Bookmark => ordinal("a bookmark", "bookmark", "the outline"),
+        Place::Attachment => ordinal("an attachment", "attachment", "the attachments list"),
+        Place::Comment => "a comment".into(),
+        Place::Xmp => "an object's XMP metadata".into(),
+        Place::Info => "the document properties (document information)".into(),
+        Place::Link => "a link, action or script".into(),
+        Place::Field => "a form field".into(),
+        Place::PrivateData => "another application's private data".into(),
+        Place::Other => "an object".into(),
+        Place::Unread => "an object that couldn't be read or searched in full".into(),
+    };
+    if let Some(p) = s.page {
+        out.push_str(&format!(" on page {}", p.saturating_add(1)));
+    }
+    if let Some(r) = s.object {
+        out.push_str(&format!(" (object {})", r.num));
+    }
+    out
 }
 
 /// 0-based pages as 1-based runs: `[0, 1, 2, 5]` is "1-3, 6".

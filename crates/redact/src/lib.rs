@@ -44,7 +44,7 @@ pub(crate) mod type3_tables;
 pub mod user_regex;
 pub mod verify;
 
-pub use elsewhere::{Elsewhere, Removed, survivors};
+pub use elsewhere::{Elsewhere, Place, Removed, Survivor, Survivors, survivors};
 pub use identification::{Claim, Identification};
 use interp::{Mode, Scope, process};
 pub use pattern_guard::PatternProblem;

@@ -181,6 +181,26 @@ fn mentions(text: &str, terms: &[String], squeezed: &[String], work: &Work) -> b
         || squeezed.iter().any(|t| letters.contains(t.as_str()))
 }
 
+/// The fewest letters or digits a removed run needs for [`holds_whole`]: a shorter one ("12", a
+/// page number, a year's last digits) is in too many names and values by chance.
+const MIN_WHOLE: usize = 4;
+
+/// Does `text` hold a whole removed run (one of at least [`MIN_WHOLE`] letters or digits), by its
+/// letters and digits alone, beginning and ending at word edges? "Bluefin" is in
+/// "https://example.com/bluefin" and "BLUE-FIN plans", not in "bluefins" or "D:20231114" (for
+/// "2023"). Too much text to search counts as holding it (fail-closed).
+fn holds_whole(text: &str, runs: &[Run], work: &Work) -> bool {
+    let Some(text) = normalize(text) else { return true };
+    let hay = Run::new(text);
+    !work.spend(hay.letters.len().saturating_mul(runs.len()))
+        || runs.iter().filter(|r| r.letters.chars().count() >= MIN_WHOLE).any(|r| hay.holds_letters(&r.letters))
+}
+
+/// Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation forms.
+fn right_to_left(c: char) -> bool {
+    matches!(c, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
 /// Is `value` itself part of one of the removed `runs`, as whole words, compared as written or by
 /// letters and digits alone ("Bluefin" is part of "b l u e f i n")? It needs three letters or
 /// digits, so an entry such as "by" doesn't go with every sentence that contains it, and word
@@ -397,6 +417,11 @@ pub(crate) fn xmp_text(doc: &Document, o: &Object) -> Option<String> {
 pub(crate) struct Search {
     lookup: Lookup,
     work: Work,
+    /// The searching left for stream data (attachments, scripts, XFA), kept apart so that one
+    /// large file can't use up what the other places need.
+    data: Work,
+    /// Only whole removed runs count, not their words ([`holds_whole`]): a save's check.
+    whole: bool,
 }
 
 enum Lookup {
@@ -415,6 +440,11 @@ impl Search {
     /// tests). `complete` is false when the collection of removed text was cut short; then, as
     /// when the terms exceed their limits, everything matches.
     pub(crate) fn new(removed: &[String], complete: bool, limit: usize) -> Self {
+        // Right-to-left text is collected in the order it is drawn, which is often the reverse of
+        // the order it is stored in elsewhere: it is searched for both ways.
+        let reversed = removed.iter().filter(|r| r.chars().any(right_to_left)).map(|r| r.chars().rev().collect::<String>());
+        let removed: Vec<String> = removed.iter().cloned().chain(reversed).collect();
+        let removed = removed.as_slice();
         let runs: Option<Vec<String>> = removed.iter().map(|r| normalize(r)).collect();
         let lookup = match (terms(removed).filter(|_| complete), runs) {
             (Some(t), _) if t.is_empty() => Lookup::Nothing,
@@ -427,7 +457,25 @@ impl Search {
             }
             _ => Lookup::Everything,
         };
-        Self { lookup, work: Work::new(limit) }
+        Self { lookup, work: Work::new(limit), data: Work::new(limit), whole: false }
+    }
+
+    /// The search a save makes ([`crate::survivors`]): only a whole removed run of at least
+    /// [`MIN_WHOLE`] letters or digits, at word edges, or a value wholly part of a removed run,
+    /// holds it. A false match there refuses the save, where the metadata scrub's only removes an
+    /// entry.
+    pub(crate) fn whole(removed: &[String], complete: bool) -> Self {
+        Self { whole: true, ..Self::new(removed, complete, MAX_WORK) }
+    }
+
+    /// Only whole runs count ([`Search::whole`]).
+    pub(crate) fn is_whole(&self) -> bool {
+        self.whole
+    }
+
+    /// The work limit ran out: every answer since was "yes" without searching.
+    pub(crate) fn exhausted(&self) -> bool {
+        self.work.0.get() == 0 || self.data.0.get() == 0
     }
 
     /// [`Search::new`] with the whole work limit.
@@ -448,10 +496,20 @@ impl Search {
     /// Does `text` hold the removed text: a term, or wholly part of a removed run? Past the
     /// work limit, yes (fail-closed).
     pub(crate) fn text(&self, text: &str) -> bool {
+        self.text_within(text, &self.work)
+    }
+
+    /// [`Search::text`] for stream data, with its own work limit.
+    pub(crate) fn data(&self, text: &str) -> bool {
+        self.text_within(text, &self.data)
+    }
+
+    fn text_within(&self, text: &str, work: &Work) -> bool {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
-            Lookup::Terms(terms, squeezed, runs) => mentions(text, terms, squeezed, &self.work) || within(text, runs, &self.work),
+            Lookup::Terms(_, _, runs) if self.whole => holds_whole(text, runs, work) || within(text, runs, work),
+            Lookup::Terms(terms, squeezed, runs) => mentions(text, terms, squeezed, work) || within(text, runs, work),
         }
     }
 
@@ -461,6 +519,8 @@ impl Search {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
+            Lookup::Terms(_, _, runs) if self.whole => xmp_values(doc, o)
+                .is_none_or(|values| holds_whole(&values.join(" "), runs, &self.work) || values.iter().any(|v| within(v, runs, &self.work))),
             Lookup::Terms(terms, squeezed, runs) => xmp_values(doc, o)
                 .is_none_or(|values| mentions(&values.join(" "), terms, squeezed, &self.work) || values.iter().any(|v| within(v, runs, &self.work))),
         }

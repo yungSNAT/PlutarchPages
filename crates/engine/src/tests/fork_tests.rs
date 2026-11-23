@@ -329,7 +329,7 @@ fn refusal(catalog: &str, page: &str, extra: &[&str], place: &str) -> String {
 #[test]
 fn a_save_refuses_while_a_link_address_holds_redacted_text() {
     let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
-    let said = refusal("", "/Annots [6 0 R]", &[link], "1 link, action or script");
+    let said = refusal("", "/Annots [6 0 R]", &[link], "a link, action or script on page 1");
     assert!(said.contains("Links, actions and scripts"), "{said}");
 }
 
@@ -346,9 +346,12 @@ fn a_save_refuses_while_a_script_stream_holds_redacted_text() {
     refusal("/OpenAction 6 0 R", "", &["<< /S /JavaScript /JS 7 0 R >>", &stream], "link, action or script");
 }
 
+/// A named destination's name is told, not refused: nothing removes one name (review B2).
 #[test]
-fn a_save_refuses_while_a_named_destination_holds_redacted_text() {
-    refusal("/Names << /Dests << /Names [(Bluefin plans) [3 0 R /Fit]] >> >>", "", &[], "link, action or script");
+fn a_named_destination_holding_redacted_text_is_told_and_saved() {
+    let (s, id, saved) = redact_then_save(leaky_page("/Names << /Dests << /Names [(Bluefin plans) [3 0 R /Fit]] >> >>", "", &[]), |_, _| {});
+    saved.expect("a destination's name alone doesn't refuse the save");
+    assert_eq!(s.get(id).unwrap().redaction_elsewhere().map(|e| e.other), Some(1));
 }
 
 #[test]
@@ -359,7 +362,7 @@ fn a_save_refuses_while_a_file_an_action_opens_is_named_with_redacted_text() {
 
 #[test]
 fn a_save_refuses_while_a_form_field_value_holds_redacted_text() {
-    let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "1 form field");
+    let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "a form field (object 6)");
     assert!(said.contains("Form fields"), "{said}");
 }
 
@@ -368,7 +371,7 @@ fn a_save_refuses_while_an_attached_file_holds_redacted_text() {
     let data = "draft: Codename BLUEFIN report";
     let file = format!("<< /Type /EmbeddedFile /Length {} >>\nstream\n{data}\nendstream", data.len());
     let names = "/Names << /EmbeddedFiles << /Names [(notes.txt) 6 0 R] >> >>";
-    refusal(names, "", &["<< /Type /Filespec /F (notes.txt) /EF << /F 7 0 R >> >>", &file], "1 attachment");
+    refusal(names, "", &["<< /Type /Filespec /F (notes.txt) /EF << /F 7 0 R >> >>", &file], "attachment 1 in the attachments list");
 }
 
 #[test]
@@ -378,7 +381,7 @@ fn a_save_refuses_while_a_bookmark_holds_redacted_text_and_goes_ahead_once_it_is
         s.apply(id, Edit::AddBookmark { parent: vec![], index: 0, title, page: 0, left: None, top: None }).unwrap();
     });
     let said = saved.expect_err("the bookmark title still holds the word").to_string();
-    assert!(said.contains("1 bookmark title") && said.contains("Bookmarks"), "{said}");
+    assert!(said.contains("bookmark 1 in the outline") && said.contains("Bookmarks"), "{said}");
     s.apply(id, Edit::RemoveHidden { which: vec![crate::Hidden::Bookmarks] }).unwrap();
     let saved = saved_or_refused(&s, id).expect("nothing holds the word now");
     s.mark_saved(id, saved, None).unwrap();
@@ -412,7 +415,7 @@ fn text_in_a_place_nothing_removes_is_told_and_saved() {
     let (s, id, saved) = redact_then_save(pdf, |_, _| {});
     saved.expect("a page label alone doesn't refuse the save");
     let left = s.get(id).unwrap().redaction_elsewhere().expect("applying tells where the text is");
-    assert_eq!((left.other, left.refuses()), (1, false));
+    assert_eq!(left.other, 1);
 }
 
 /// An edit after undoing an apply drops what the undone apply removed: it can't be redone.

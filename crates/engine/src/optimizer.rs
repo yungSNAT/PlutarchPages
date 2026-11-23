@@ -83,6 +83,8 @@ impl Session {
             return Err(EditError::Signed);
         }
         let editor = doc.editor.as_ref().ok_or_else(|| EditError::ReadOnly(doc.read_only_reason.clone().unwrap_or_default()))?;
+        // Optimizing writes the document as it stands: not while redacted text survives in it.
+        self.refuse_redacted(id, &editor.cos)?;
         Ok(OptimizeJob {
             cos: editor.cos.clone(),
             settings: settings.clone(),
