@@ -159,6 +159,7 @@ incremental = false
 [profile.release]
 lto = "thin"
 codegen-units = 1
+strip = true
 
 # craft-pdf at the revision `craft-pdf` names above, with the object-layer fixes this fork carries
 # (vendor/craft-pdf/PATCHES.md). Cargo matches a patch by URL, name and version, not by
