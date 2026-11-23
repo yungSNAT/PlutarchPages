@@ -50,6 +50,6 @@ sidecar. This provides a file type icon; first-page thumbnails still need a thum
 ## Regenerate
 
 ```sh
-packaging/icons.sh        # needs resvg and python3; iconutil (macOS) for the .icns
+cargo xtask icons         # needs resvg; iconutil (macOS) for the .icns
 cargo xtask assets        # then update the sha256 values in ATTRIBUTION.toml and run with --write
 ```

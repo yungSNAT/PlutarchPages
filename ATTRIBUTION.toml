@@ -2544,7 +2544,7 @@ source = "Contributor-original (see assets/app-icon/README.md)"
 licence = "MIT OR Apache-2.0"
 licence_file = "assets/app-icon/LICENSE.txt"
 kind = "icon"
-usage = "Master artwork; every other app-icon file is rendered from it (packaging/icons.sh)"
+usage = "Master artwork; every other app-icon file is rendered from it (cargo xtask icons)"
 sha256 = "ba79fea56c0e4b76f063c86594d6f447275b507c722fd56583db591515385c06"
 
 [[asset]]
@@ -2599,7 +2599,7 @@ source = "https://github.com/lucide-icons/lucide (npm lucide-static 1.49.0, icon
 licence = "ISC AND (MIT OR Apache-2.0)"
 licence_file = "assets/app-icon/LICENSE-document.txt"
 kind = "icon"
-usage = "Master artwork for the Windows PDF file type icon; rendered by packaging/icons.sh, without fonts or external images"
+usage = "Master artwork for the Windows PDF file type icon; rendered by cargo xtask icons, without fonts or external images"
 sha256 = "dc99b273428705256129319d526f474e107bcdd2325c923d43d9e7c6717a137f"
 
 [[asset]]
