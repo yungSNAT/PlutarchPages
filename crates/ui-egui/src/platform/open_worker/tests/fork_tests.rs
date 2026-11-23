@@ -784,3 +784,49 @@ fn explicit_navigation_commands_suppress_delayed_session_restore_activation() {
         assert_eq!(last_view.current, 3, "{label}: delayed restored tab kept saved page in background");
     }
 }
+
+#[test]
+#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+fn create_blank_and_open_created_suppress_delayed_session_restore_activation() {
+    for use_open_created in [false, true] {
+        let active = tool_open_file(&format!("create-restore-{use_open_created}"), "pdf", &fixture(4));
+        let active_path = crate::persist::last_session::absolute(&active.0.to_string_lossy());
+        let (gate, started, release, finished) = open_worker::prepare_gate();
+
+        let mut harness = Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_eframe(move |creation| {
+            let mut app = PdfCraftApp::new();
+            app.open_prepare_gate = Some(gate);
+            app.reopen_last_session = true;
+            app.last_session = crate::persist::last_session::LastSession {
+                files: vec![crate::persist::last_session::SessionFile { path: active_path.clone(), page: 2 }],
+                active: Some(active_path),
+            };
+            app.attach_context(&creation.egui_ctx);
+            app.reopen_last_files(&[]);
+            assert_eq!(app.pending_opens.len(), 1);
+            assert!(app.pending_opens[0].activate);
+            app
+        });
+
+        harness.step();
+        started.recv_timeout(Duration::from_secs(5)).expect("worker reached prepare barrier");
+        if use_open_created {
+            harness.state_mut().open_created("Generated.pdf", Arc::new(fixture(1)), "Created");
+        } else {
+            harness.state_mut().execute("create.blank");
+        }
+        assert_eq!(harness.state().views.len(), 1);
+        assert_eq!(harness.state().active, Some(0), "newly created document is active");
+        assert!(!harness.state().pending_opens[0].activate, "explicit document creation revoked saved-active activation");
+
+        release.send(()).expect("release prepare barrier");
+        finished.recv_timeout(Duration::from_secs(5)).expect("worker finished preparation");
+        harness.step();
+
+        let app = harness.state();
+        assert!(app.pending_opens.is_empty());
+        assert_eq!(app.views.len(), 2);
+        assert_eq!(app.active, Some(0), "delayed saved-active restore did not steal focus from created document");
+        assert_eq!(app.views[1].current, 2, "restored PDF still applied saved page in background");
+    }
+}

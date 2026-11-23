@@ -141,11 +141,7 @@ impl PdfCraftApp {
         // interface language, rather than in English and again when the frame applies it.
         self.apply_status_captions(i18n::Lang::from_pref(&self.language));
         // Images and text files become new, unsaved PDFs (Create a PDF).
-        let active = self.active;
-        if let Some(r) = self.open_converted(name, &bytes) {
-            if !activate {
-                self.active = active;
-            }
+        if let Some(r) = self.open_converted_with_focus(name, &bytes, activate) {
             return r;
         }
         self.try_open(name, path, std::sync::Arc::new(bytes), None, activate)
@@ -294,12 +290,7 @@ impl PdfCraftApp {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    fn finish_converted_open(&mut self, pending: &PendingOpen, active_before: Option<usize>, before: usize) {
-        if !pending.activate {
-            self.active = active_before;
-        } else if self.views.len() > before {
-            self.session_restore_needs_focus = false;
-        }
+    fn finish_converted_open(&mut self, pending: &PendingOpen, before: usize) {
         if self.views.len() > before
             && let Some((layout, continuous)) = pending.display_override
             && let Some(view) = self.views.last_mut()
@@ -328,51 +319,59 @@ impl PdfCraftApp {
                 self.notify_fmt("Couldn't open {name}: {reason}", &[("name", &pending.name), ("reason", &reason)]);
             }
             open_worker::ResultKind::Conversion(bytes) => {
-                let active_before = self.active;
                 let before = self.views.len();
-                match self.open_converted(&pending.name, &bytes) {
-                    Some(Ok(())) => self.finish_converted_open(&pending, active_before, before),
+                match self.open_converted_with_focus(&pending.name, &bytes, pending.activate) {
+                    Some(Ok(())) => self.finish_converted_open(&pending, before),
                     Some(Err(error)) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
                     None => {}
                 }
             }
             open_worker::ResultKind::Converted(created) => {
-                let active_before = self.active;
                 let before = self.views.len();
-                match self.open_converted_pdf(&pending.name, created) {
-                    Ok(()) => self.finish_converted_open(&pending, active_before, before),
+                match self.open_converted_pdf_with_focus(&pending.name, created, pending.activate) {
+                    Ok(()) => self.finish_converted_open(&pending, before),
                     Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
                 }
             }
             open_worker::ResultKind::Prepared { bytes, result } => match *result {
-                Ok(prepared) => match self.finish_open(&pending.name, pending.path.clone(), bytes.len(), prepared, pending.activate) {
-                    Ok(id) => {
-                        if pending.path.is_some() {
-                            self.watch.known_as(id, pending.stamp);
+                Ok(prepared) => {
+                    // A pure delayed session-restore request never steals focus from a tab or
+                    // Combine view that is already active.
+                    let activate = pending.activate
+                        && !(pending.reopen_page.is_some()
+                            && pending.then.is_none()
+                            && pending.after_open.is_none()
+                            && pending.recovered.is_none()
+                            && (self.active.is_some() || self.combine_showing()));
+                    match self.finish_open(&pending.name, pending.path.clone(), bytes.len(), prepared, activate) {
+                        Ok(id) => {
+                            if pending.path.is_some() {
+                                self.watch.known_as(id, pending.stamp);
+                            }
+                            if let Some(page) = pending.reopen_page
+                                && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
+                            {
+                                view.go_to_page(page);
+                            }
+                            if let Some(destination) = pending.after_open {
+                                self.apply_remote_destination(destination);
+                            }
+                            if let Some((layout, continuous)) = pending.display_override
+                                && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
+                            {
+                                view.set_display(layout, continuous);
+                                self.launch_display_target = Some(id);
+                            }
+                            if let Some(meta) = &pending.recovered {
+                                self.finish_recovery(meta);
+                            }
+                            if let Some(command) = pending.then {
+                                self.execute(command);
+                            }
                         }
-                        if let Some(page) = pending.reopen_page
-                            && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
-                        {
-                            view.go_to_page(page);
-                        }
-                        if let Some(destination) = pending.after_open {
-                            self.apply_remote_destination(destination);
-                        }
-                        if let Some((layout, continuous)) = pending.display_override
-                            && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
-                        {
-                            view.set_display(layout, continuous);
-                            self.launch_display_target = Some(id);
-                        }
-                        if let Some(meta) = &pending.recovered {
-                            self.finish_recovery(meta);
-                        }
-                        if let Some(command) = pending.then {
-                            self.execute(command);
-                        }
+                        Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
                     }
-                    Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error)]),
-                },
+                }
                 Err(error @ (pdfcraft_render::OpenError::NeedsPassword | pdfcraft_render::OpenError::WrongPassword)) => {
                     let password_error =
                         matches!(error, pdfcraft_render::OpenError::WrongPassword).then(|| "Incorrect password. Try again.".to_string());
@@ -491,9 +490,7 @@ impl PdfCraftApp {
         if activate {
             self.active = Some(self.views.len() - 1);
             #[cfg(not(target_arch = "wasm32"))]
-            {
-                self.session_restore_needs_focus = false;
-            }
+            self.suppress_session_restore_activation();
         }
         self.apply_initial_view(self.views.len() - 1, &initial);
         self.apply_viewer_preferences(self.views.len() - 1, &initial, activate);
