@@ -130,15 +130,12 @@ fn ico_bytes(pngs: &[Vec<u8>]) -> anyhow::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Whether `name` is an executable file in a PATH folder (on Windows, with a PATHEXT extension).
+/// Whether `name` is an executable file in a PATH folder. On Windows only `name.exe` counts,
+/// because that is the only file `Command::new(name)` runs.
 fn on_path(name: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else { return false };
-    let exts: Vec<String> = if cfg!(windows) {
-        std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT".into()).split(';').map(str::to_owned).collect()
-    } else {
-        vec![String::new()]
-    };
-    std::env::split_paths(&path).any(|dir| exts.iter().any(|ext| is_executable(&dir.join(format!("{name}{ext}")))))
+    let file = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+    std::env::split_paths(&path).any(|dir| is_executable(&dir.join(&file)))
 }
 
 fn is_executable(path: &Path) -> bool {
