@@ -58,7 +58,7 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// differ ([`tells_forms_apart`]); and wherever the reference's shaping of `text` draws a letter
 /// in glyphs other than those it draws the letter and its marks with alone (a joining form or
 /// part of a ligature), the program's must too, each face judged against its own isolated form;
-/// and where the text has marks, its GPOS must position them (`mark` or `mkmk`). A cmap that maps
+/// and its GPOS must place every glyph that sits on another ([`places_marks`]). A cmap that maps
 /// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
 /// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
@@ -79,15 +79,15 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
         !mark(c) && matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff)
     };
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
-    // Marks are placed by GPOS; without it they would fall back to an approximate position.
-    if text.chars().any(mark) && !positions_marks(&own, b"arab") {
-        return false;
-    }
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
     }
+    let space = own_map.map(' ').map(|g| g.to_u32());
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
+        if !places_marks(&own_shaper, space, run) {
+            return false;
+        }
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
         run.char_indices().filter(|(_, c)| letter(*c)).all(|(at, c)| {
             // Each face against its own isolated form of the letter with its marks, which share
@@ -119,14 +119,45 @@ fn drawn(glyphs: &[u32]) -> bool {
     !glyphs.is_empty() && !glyphs.contains(&0)
 }
 
-/// Each glyph of `text` shaped right to left, with the byte offset its cluster starts at.
-fn rtl_clusters(shaper: &harfrust::Shaper, text: &str) -> Vec<(usize, u32)> {
+/// Whether the shaper's GPOS places every glyph of `run` that sits on another: in each cluster of
+/// several glyphs (the space glyph a joiner gets aside), all but one, the base, must move when
+/// `mark` and `mkmk` are turned off. That holds for the marks the text has and for those the GSUB
+/// makes, such as a letter's dots drawn as glyphs of their own; feature names alone don't count,
+/// so a GPOS that is missing, or whose mark features have no lookups or miss these glyphs, fails.
+/// A program that draws its marks in place without GPOS is refused too, which only costs the
+/// page's font.
+fn places_marks(shaper: &harfrust::Shaper, space: Option<u32>, run: &str) -> bool {
+    let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, ..));
+    let (placed, unplaced) = (rtl_shape(shaper, run, &[]), rtl_shape(shaper, run, &off));
+    let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
+    if placed.glyph_infos().iter().map(|g| g.glyph_id).ne(unplaced.glyph_infos().iter().map(|g| g.glyph_id)) {
+        return false;
+    }
+    // Per cluster: its glyphs, and how many of them stay put without the mark features.
+    let mut clusters = std::collections::BTreeMap::<u32, (usize, usize)>::new();
+    for ((info, with), without) in placed.glyph_infos().iter().zip(placed.glyph_positions()).zip(unplaced.glyph_positions()) {
+        if Some(info.glyph_id) != space {
+            let (glyphs, unmoved) = clusters.entry(info.cluster).or_default();
+            *glyphs += 1;
+            *unmoved += usize::from(at(with) == at(without));
+        }
+    }
+    clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1)
+}
+
+/// `text` shaped right to left with `features`.
+fn rtl_shape(shaper: &harfrust::Shaper, text: &str, features: &[harfrust::Feature]) -> harfrust::GlyphBuffer {
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
     buffer.set_direction(Direction::RightToLeft);
     buffer.guess_segment_properties();
-    shaper.shape(buffer, ShapeOptions::new()).glyph_infos().iter().map(|g| (g.cluster as usize, g.glyph_id)).collect()
+    shaper.shape(buffer, ShapeOptions::new().features(features))
+}
+
+/// Each glyph of `text` shaped right to left, with the byte offset its cluster starts at.
+fn rtl_clusters(shaper: &harfrust::Shaper, text: &str) -> Vec<(usize, u32)> {
+    rtl_shape(shaper, text, &[]).glyph_infos().iter().map(|g| (g.cluster as usize, g.glyph_id)).collect()
 }
 
 /// The glyphs, sorted, of the cluster that holds byte `at`.
