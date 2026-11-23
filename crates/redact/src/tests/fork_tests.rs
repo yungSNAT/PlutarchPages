@@ -586,7 +586,8 @@ fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it
         (parsed.ambiguous_images, image, parsed.ops.iter().filter(|o| o.is("cm")).count(), states)
     };
     let bei = || vec![vec![pdfcraft_cos::Object::Name(b"BEI".to_vec())]];
-    for (first, tail, cms, states) in [(&kept, &b"BX 1 FOOEI EX Q"[..], 1, vec![]), (&kept, b"/BEI gs Q", 1, bei()), (&bare, b"/BEI gs Q", 0, bei())] {
+    for (first, tail, cms, states) in [(&kept, &b"BX 1 FOOEI EX Q"[..], 1, vec![]), (&kept, b"/BEI gs Q", 1, bei()), (&bare, b"/BEI gs Q", 0, bei())]
+    {
         let label = String::from_utf8_lossy(tail);
         let mut doc = pdf(vec![
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
