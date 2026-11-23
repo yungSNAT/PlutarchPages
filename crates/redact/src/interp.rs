@@ -545,9 +545,10 @@ fn process_from(doc: &mut Document, scope: &mut Scope<'_>, streams: &[Vec<u8>], 
 fn reads_back(written: &[Option<Vec<u8>>], streams: &[Vec<u8>], processed: &[(Vec<Op>, bool)]) -> bool {
     let pieces: Vec<&[u8]> = written.iter().zip(streams).map(|(new, old)| new.as_deref().unwrap_or(old)).collect();
     let parsed = Pieces::join(&pieces).parse();
-    let kept = written.iter().zip(processed).flat_map(|(new, (ops, _))| {
-        ops.iter().filter(move |op| new.is_none() || !op.op.windows(2).any(|pair| pair == b"EI"))
-    });
+    let kept = written
+        .iter()
+        .zip(processed)
+        .flat_map(|(new, (ops, _))| ops.iter().filter(move |op| new.is_none() || !op.op.windows(2).any(|pair| pair == b"EI")));
     parsed.ambiguous_images == 0 && parsed.skipped == 0 && parsed.ops.iter().map(|op| &op.op).eq(kept.map(|op| &op.op))
 }
 

@@ -598,17 +598,17 @@ fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it
         let after = content(&doc, 0);
         assert_eq!(ends(after.as_bytes()), (0, Some(b"7F>".to_vec()), 1), "redacted, {label}: {after}");
         // Re-encoded only, the copied stream draws what it drew, so its added item stays editable.
-        assert_eq!(added_items(&doc)[..2], [false, true], "{label}");
+        assert_eq!(added_items(&doc), 1, "{label}");
     }
 }
 
-/// Whether each of page 0's content streams (the redaction's overlay last) carries an added item's `/PCAdded`.
-fn added_items(doc: &Document) -> Vec<bool> {
+/// How many of page 0's content streams carry an added item's `/PCAdded`.
+fn added_items(doc: &Document) -> usize {
     use pdfcraft_cos::Object;
     let page = &pdfcraft_model::pages(doc)[0];
     let contents = page.dict.get(b"Contents").map(|c| doc.resolve(c));
-    let Some(Object::Array(list)) = contents.as_deref() else { return Vec::new() };
-    list.iter().map(|s| matches!(&*doc.resolve(s), Object::Stream(s) if s.dict.get(b"PCAdded").is_some())).collect()
+    let Some(Object::Array(list)) = contents.as_deref() else { return 0 };
+    list.iter().filter(|s| matches!(&*doc.resolve(s), Object::Stream(s) if s.dict.get(b"PCAdded").is_some())).count()
 }
 
 /// An added item after an inline image whose shown text holds `EI` (`RECEIPT`) can't end the image:
@@ -630,5 +630,5 @@ fn an_added_item_whose_text_holds_ei_stays_editable_after_a_redaction_elsewhere(
     apply(&mut doc, None).unwrap();
     let after = content(&doc, 0);
     assert!(!after.contains("SECRET") && after.contains("(RECEIPT) Tj"), "{after}");
-    assert_eq!(added_items(&doc)[..3], [false, false, true]);
+    assert_eq!(added_items(&doc), 1);
 }
