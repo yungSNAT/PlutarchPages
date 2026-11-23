@@ -790,7 +790,7 @@ fn a_signers_name_holding_the_text_refuses() {
 /// An object that can't be read may hold the text (review S6): it refuses, where it was told.
 #[test]
 fn an_object_that_cant_be_read_refuses() {
-    assert!(save_refuses(&doc_with("/Extra 4 0 R", "", &["<< /A (x) ) >> ]"], ""), &["BLUEFIN"]));
+    assert!(save_refuses(&doc_with("/Extra 4 0 R", "", &["<< /Title (Report) /Author ) >>"], ""), &["BLUEFIN"]));
 }
 
 /// An object nothing refers to isn't written by the full save a redaction needs, so it holds
@@ -832,8 +832,11 @@ fn a_base_address_doesnt_make_the_catalog_a_link() {
 /// A portfolio's fields for an attachment are searched with it (review N6).
 #[test]
 fn a_portfolio_field_holding_the_text_refuses() {
-    let names = "/Names << /EmbeddedFiles << /Names [(a.txt) 4 0 R] >> >>";
-    assert!(save_refuses(&doc_with(names, "", &["<< /Type /Filespec /F (a.txt) /CI << /Owner (Bluefin) >> >>"], ""), &["BLUEFIN"]));
+    let names = "/Names << /EmbeddedFiles 5 0 R >>";
+    assert!(save_refuses(
+        &doc_with(names, "", &["<< /Type /Filespec /F (a.txt) /CI << /Owner (Bluefin) >> >>", "<< /Names [(a.txt) 4 0 R] >>"], ""),
+        &["BLUEFIN"]
+    ));
 }
 
 /// What a save's search costs on a large file (review S11): 10,000 pages, each with a link and a
