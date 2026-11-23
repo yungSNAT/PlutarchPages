@@ -265,10 +265,17 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/edit/src/text/fallback.rs`) also holds the craft-fonts Simplified Chinese and Korean
   faces, the Chinese one first for text only it draws (`is_chinese`). A matching bundled CJK face
   completes a subset with outlines of the new characters, not embedded whole (`encodable_font` and
-  `FallbackBuilder::prepare` in `crates/edit/src/text_regions/styled.rs`). Arabic spans that no
-  complete program shapes use the bundled Arabic outlines (`arabic_outlines` in
-  `crates/edit/src/text_regions/styled/scripts.rs`, and `outline_glyph_resources` in
-  `crates/edit/src/added/draw.rs`). Right-to-left styled paragraphs
+  `FallbackBuilder::prepare` in `crates/edit/src/text_regions/styled.rs`). An Arabic span keeps
+  the first program of its face on the page, a subset's too, whose own cmap and GSUB give its
+  letters a joining form wherever the bundled Arabic face does (`joins_arabic`, comparing the 2
+  shapings glyph by glyph), whose GPOS places every mark and dot glyph (`places_marks`) and stacks marks where the
+  bundled face does (`stacks_marks`), and
+  that shapes each row and word with every glyph
+  inked (`arabic_span` in `crates/edit/src/text_regions/styled/scripts.rs`, `draws_every_glyph`
+  in `crates/fonts/src/source_shaping.rs`), shown in that font's own codes where they are glyph
+  ids its ToUnicode names (`arabic_program_run`); other Arabic spans use the bundled Arabic
+  outlines (`outline_glyph_resources` in `crates/edit/src/added/draw.rs`). `shape_with_program`
+  refuses, on every path, a shaping that reaches a glyph with no outline outside white space. Right-to-left styled paragraphs
   are right-aligned and a single row grows to the left (`paragraph_geometry`). `replace_line`
   refuses Arabic letters and keeps a right-to-left line's right edge (`right_edge_gap` in
   `crates/edit/src/text/rewrite.rs`). A line edit that needs Type 3 outlines keeps the line's font for the
