@@ -458,17 +458,26 @@ pub(crate) fn enumerate(doc: &Document) -> (Vec<Field>, usize) {
     let mut page_of = std::collections::HashMap::new();
     let mut annot_index = std::collections::HashMap::new();
     let mut by_parent: std::collections::HashMap<ObjRef, Vec<ObjRef>> = std::collections::HashMap::new();
+    // Every page annotation in page order, and those that may be page-only fields: read once
+    // here, as a large document's annotations may not all stay cached for a second reading.
+    let mut annots = Vec::new();
+    let mut adoptable = std::collections::HashSet::new();
     let pages = page_refs(doc);
     for (i, p) in pages.iter().enumerate() {
         if let Some(a) = doc.get(*p).as_dict().and_then(|d| d.get(b"Annots").cloned()) {
             for (k, e) in doc.resolve(&a).as_array().into_iter().flatten().enumerate() {
-                if let Some(r) = e.as_ref()
-                    && let std::collections::hash_map::Entry::Vacant(slot) = page_of.entry(r)
-                {
+                let Some(r) = e.as_ref() else { continue };
+                annots.push(r);
+                if let std::collections::hash_map::Entry::Vacant(slot) = page_of.entry(r) {
                     slot.insert(i);
                     annot_index.insert(r, k);
-                    if let Some(parent) = widget_parent(doc, r) {
+                    let obj = doc.get(r);
+                    let Some(d) = obj.as_dict() else { continue };
+                    if let Some(parent) = widget_parent(d) {
                         by_parent.entry(parent).or_default().push(r);
+                    }
+                    if d.name(b"Subtype") == Some(b"Widget") && (d.contains(b"FT") || d.contains(b"T") || d.contains(b"Parent")) {
+                        adoptable.insert(r);
                     }
                 }
             }
@@ -516,7 +525,7 @@ pub(crate) fn enumerate(doc: &Document) -> (Vec<Field>, usize) {
         walk(doc, r, &base, &page_of, &mut seen, &mut out, 0);
     }
     let listed = out.len();
-    adopt_page_fields(doc, &pages, &base, &page_of, &mut seen, &mut out);
+    adopt_page_fields(doc, &annots, &adoptable, &base, &page_of, &mut seen, &mut out);
     let adopted = out.len() - listed;
     rank_tabs(doc, &pages, &annot_index, &mut out);
     (out, adopted)
@@ -526,34 +535,23 @@ pub(crate) fn enumerate(doc: &Document) -> (Vec<Field>, usize) {
 /// browsers do: some writers list only some of the fields, or none at all. Each widget is adopted
 /// through its topmost unlisted `/Parent`, so a field split across several widgets stays one
 /// field. Tree-listed fields keep their order first; the rest follow in page-annotation order.
+/// `annots` lists the page annotations in that order, and `adoptable` those that are widgets
+/// with a field type, a name or a parent.
 fn adopt_page_fields(
     doc: &Document,
-    pages: &[ObjRef],
+    annots: &[ObjRef],
+    adoptable: &std::collections::HashSet<ObjRef>,
     base: &Inherited,
     page_of: &std::collections::HashMap<ObjRef, usize>,
     seen: &mut Seen,
     out: &mut Vec<Field>,
 ) {
-    for p in pages {
-        let Some(a) = doc.get(*p).as_dict().and_then(|d| d.get(b"Annots").cloned()) else { continue };
-        let annots = doc.resolve(&a);
-        let Some(annots) = annots.as_array() else { continue };
-        for e in annots {
-            let Some(r) = e.as_ref() else { continue };
-            if seen.fields.contains(&r) || seen.widgets.contains(&r) {
-                continue;
-            }
-            let obj = doc.get(r);
-            let Some(d) = obj.as_dict() else { continue };
-            if d.name(b"Subtype") != Some(b"Widget") {
-                continue;
-            }
-            if !d.contains(b"FT") && !d.contains(b"T") && !d.contains(b"Parent") {
-                continue;
-            }
-            if let Some(root) = unlisted_root(doc, r, &seen.fields) {
-                walk(doc, root, base, page_of, seen, out, 0);
-            }
+    for &r in annots {
+        if seen.fields.contains(&r) || seen.widgets.contains(&r) || !adoptable.contains(&r) {
+            continue;
+        }
+        if let Some(root) = unlisted_root(doc, r, &seen.fields) {
+            walk(doc, root, base, page_of, seen, out, 0);
         }
     }
 }
@@ -594,11 +592,9 @@ struct Seen {
     values: DecodeBudget,
 }
 
-/// The field a page widget `r` names as its `/Parent`, when `r` is a widget and not a field of its
+/// The field a page widget `d` names as its `/Parent`, when it is a widget and not a field of its
 /// own (no `/T`).
-fn widget_parent(doc: &Document, r: ObjRef) -> Option<ObjRef> {
-    let obj = doc.get(r);
-    let d = obj.as_dict()?;
+fn widget_parent(d: &Dict) -> Option<ObjRef> {
     if d.name(b"Subtype") != Some(b"Widget") || d.contains(b"T") {
         return None;
     }
