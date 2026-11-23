@@ -2,9 +2,11 @@
 xtask = "run -p xtask --"
 
 # WebAssembly SIMD (every current browser has it; there's no runtime detection on wasm). The OCR
-# engine's kernels (rten-simd) and other vectorised code only use it when compiled in.
+# engine's kernels (rten-simd) and other vectorised code only use it when compiled in. Keep custom
+# sections (`strip=none`) on wasm32 so `wasm-opt` sees the `target_features` section for `+simd128`
+# whilst `[profile.release]` strips native binaries; `wasm-opt` strips the web output itself.
 [target.wasm32-unknown-unknown]
-rustflags = ["-C", "target-feature=+simd128"]
+rustflags = ["-C", "target-feature=+simd128", "-C", "strip=none"]
 
 # aws-lc (digital signatures and TLS, through aws-lc-rs) detects the CPU when `main` asks it to
 # (`pdfcraft_sign::init_crypto`), not in a static initializer before `main`. On x86 it reads
