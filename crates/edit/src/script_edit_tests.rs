@@ -877,6 +877,29 @@ fn kept_arabic_with_a_mark_stack_the_subset_cuts_short_falls_back_for_the_run() 
     falls_back_for_the_run(face, page(true), STACKED);
 }
 
+/// A page's font that splits a letter into more glyphs than the bundled face can meet the count of
+/// stacked marks with a glyph the bundled face has no counterpart for. Here the bundled face's
+/// stand-in, without `ccmp`, draws sheen whole and stacks fatha on shadda (1 glyph moved by
+/// `mkmk`); the page's font draws sheen as seen and 3 dots, stacks shadda on the dots, and can't
+/// stack anything on shadda, so its fatha would be drawn through the shadda, though it too has 1
+/// glyph moved. It must not keep the text.
+#[test]
+fn a_page_font_that_splits_a_stacked_letter_differently_is_refused() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    const SHEEN: &str = "\u{0634}\u{064e}\u{0651}";
+    let Some(face) = arabic_face() else { return };
+    let (gsub, emptied) = without_lookups(tables(face.bytes)[b"GSUB"], &[b"ccmp"]);
+    assert!(emptied > 0, "the bundled face decomposes letters with ccmp");
+    let whole = with_table(face.bytes, b"GSUB", gsub);
+    let (gpos, cleared) = without_mark_to_mark_onto(tables(face.bytes)[b"GPOS"], usize::from(nominal(face.bytes, '\u{0651}')));
+    assert!(cleared > 0, "the bundled face stacks marks on shadda");
+    let cut = with_table(face.bytes, b"GPOS", gpos);
+    // The split alone is no reason to refuse: with one mark, nothing is stacked by the judge.
+    assert!(joins_arabic(face.bytes, &whole, "\u{0634}\u{064e}"));
+    assert!(joins_arabic(face.bytes, face.bytes, SHEEN));
+    assert!(!joins_arabic(&cut, &whole, SHEEN));
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
