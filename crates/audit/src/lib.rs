@@ -67,6 +67,10 @@ pub enum FindingKind {
     UnappliedMark,
     /// An opaque cover aligns with a numeric text displacement whose width remains readable.
     RetainedAdvance,
+    /// A white (or nearly white) cover painted after text, or a white filled square annotation
+    /// over it, hides it: the text is invisible on the page and still extractable (a "whited out"
+    /// form).
+    HiddenUnderWhite,
 }
 
 impl FindingKind {
@@ -80,6 +84,7 @@ impl FindingKind {
             FindingKind::CoveredText => "covered-text",
             FindingKind::UnappliedMark => "unapplied-mark",
             FindingKind::RetainedAdvance => "retained-advance",
+            FindingKind::HiddenUnderWhite => "hidden-under-white",
         }
     }
 }
@@ -328,25 +333,26 @@ impl Budget {
         self.page_cost = lines.iter().fold(0, |n, Painted { line, .. }| n.saturating_add(line.ink.len().max(line.runs().count()).max(1)));
     }
 
-    /// The text `cover` hides in the `lines` that `hides` ([`covered_words`]), joined with single
+    /// The text `areas` hide in the `lines` that `hides` ([`covered_words`]), joined with single
     /// spaces, or `None` when they show no text but blocks ([`shows_text`]). Without `copying` the
     /// text is empty and never assembled: one long line under many covers would otherwise be
-    /// copied once per cover, outside both bounds.
+    /// copied once per cover, outside both bounds. Every area is compared with every line, so each
+    /// one costs the page.
     fn hidden_text(
         &mut self,
         lines: &[Painted],
         copying: bool,
-        cover: &[f64; 4],
+        areas: &[[f64; 4]],
         hides: impl Fn(&Painted) -> bool,
     ) -> Result<Option<String>, AuditError> {
-        self.spend(self.page_cost)?;
+        self.spend(self.page_cost.saturating_mul(areas.len()))?;
         if !copying {
             let mut hidden = false;
             for Painted { line, .. } in lines.iter().filter(|p| hides(p)) {
                 // Reading the words walks the line's text (padding and all): it costs its bytes.
                 self.spend(line.text.len() / TEXT_BYTES_PER_COMPARISON)?;
                 let mut words = String::new();
-                covered_words(cover, line, &mut words);
+                covered_words(areas, line, &mut words);
                 if shows_text(&words) {
                     hidden = true;
                     break;
@@ -362,7 +368,7 @@ impl Budget {
             if !covered.is_empty() {
                 covered.push(' ');
             }
-            covered_words(cover, line, &mut covered);
+            covered_words(areas, line, &mut covered);
         }
         Ok(shows_text(&covered).then_some(covered))
     }
@@ -439,7 +445,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         budget.start_page(&lines);
         // 1. Filled rectangles and block glyphs over extractable text.
         for r in &rects {
-            if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |p| is_cover(r, p))? {
+            if let Some(covered) = budget.hidden_text(&lines, copying, std::slice::from_ref(&r.rect), |p| is_cover(r, p))? {
                 let covered_text = budget.report_text(covered, copying)?;
                 out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
             }
@@ -481,7 +487,7 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
                 AnnotationCover::Redact(rect) => (FindingKind::UnappliedMark, *rect),
                 AnnotationCover::Square { rect, .. } => (FindingKind::CoveredText, *rect),
             };
-            if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
+            if let Some(covered) = budget.hidden_text(&lines, copying, std::slice::from_ref(&rect), |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
                 AnnotationCover::Square { rect, rgb, opaque } => {
                     p.layer <= a.layer
@@ -700,14 +706,14 @@ fn covers(cover: &[f64; 4], line: &TextLine) -> bool {
     inked || (boxed && (line.ink.is_empty() || word_intersects()))
 }
 
-/// Appends the text of `line` that `cover` lies on to `out`: the runs whose words it overlaps
-/// (#4164), so the words of the line painted beside the cover, which stay visible, are not
+/// Appends the text of `line` that `areas` lie on to `out`: the runs whose words one of them
+/// overlaps (#4164; a highlight's quads are several areas, #2385), so the words of the line painted beside the cover, which stay visible, are not
 /// reported as hidden. Neighbouring runs are joined as the line joins them, so a word split
 /// across runs stays one word; runs with others left out between them are spaced. The whole
 /// line when its runs can't say: a single run, a line whose text was reordered for reading, or
 /// a cover that overlaps the line's box but none of its words.
-fn covered_words(cover: &[f64; 4], line: &TextLine, out: &mut String) {
-    let overlaps = |w: &[f64; 4]| area(&[cover[0].max(w[0]), cover[1].max(w[1]), cover[2].min(w[2]), cover[3].min(w[3])]) > 0.0;
+fn covered_words(areas: &[[f64; 4]], line: &TextLine, out: &mut String) {
+    let overlaps = |w: &[f64; 4]| areas.iter().any(|c| area(&[c[0].max(w[0]), c[1].max(w[1]), c[2].min(w[2]), c[3].min(w[3])]) > 0.0);
     let mut words = String::new();
     let mut last = None;
     for (i, (text, ink, spaced)) in line.runs().enumerate() {
