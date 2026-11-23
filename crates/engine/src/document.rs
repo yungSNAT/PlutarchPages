@@ -139,11 +139,6 @@ impl std::fmt::Display for EditNotice {
 
 /// [`EditNotice::RedactionElsewhere`] in words (English; the interface has its own wording).
 fn elsewhere_text(e: &pdfcraft_redact::Elsewhere, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let count = |n: usize, one: &str, many: &str| match n {
-        0 => None,
-        1 => Some(format!("1 {one}")),
-        n => Some(format!("{n} {many}")),
-    };
     let list = places_text(e, true);
     if e.unsearched {
         write!(f, "the redacted text couldn't be searched for, so {list} may still hold it (Remove hidden information removes them)")
