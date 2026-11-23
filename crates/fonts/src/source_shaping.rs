@@ -134,18 +134,19 @@ fn places_marks(shaper: &harfrust::Shaper, space: Option<u32>, run: &str) -> boo
         .is_some_and(|clusters| clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1))
 }
 
-/// Whether `own` stacks marks with its GPOS (`mkmk`) in every cluster of `run` where `reference`
-/// does. Without mark-to-mark lookups, a mark set on another (fatha on shadda) is attached to the
-/// base's anchor, on top of the first, and still moves, so [`places_marks`] can't tell. A face that
-/// draws such a stack as one glyph where the reference stacks 2 is refused too, which only costs
-/// the page's font.
+/// Whether `own` stacks as many marks with its GPOS (`mkmk`) as `reference` does, in every cluster
+/// of `run`. Without the mark-to-mark data for a pair, the later mark (fatha on shadda, or sukun on
+/// that fatha) is attached to the base's anchor, on top of the first, and still moves, so
+/// [`places_marks`] can't tell. This shows that `mkmk` acts on each stacked mark, not where it puts
+/// it. A face that draws a stack in fewer glyphs than the reference is refused too, which only
+/// costs the page's font.
 fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Shaper, Option<u32>), run: &str) -> bool {
     let stacked = |(shaper, space): (&harfrust::Shaper, Option<u32>)| {
         moved_without(shaper, space, run, &[b"mkmk"])
-            .map(|clusters| clusters.into_iter().filter(|(_, (glyphs, unmoved))| unmoved < glyphs).map(|(c, _)| c).collect::<Vec<_>>())
+            .map(|clusters| clusters.into_iter().map(|(c, (glyphs, unmoved))| (c, glyphs - unmoved)).collect::<std::collections::BTreeMap<_, _>>())
     };
     match (stacked(own), stacked(reference)) {
-        (Some(ours), Some(theirs)) => theirs.iter().all(|c| ours.contains(c)),
+        (Some(ours), Some(theirs)) => theirs.iter().all(|(c, &moved)| ours.get(c).copied().unwrap_or(0) >= moved),
         _ => false,
     }
 }
