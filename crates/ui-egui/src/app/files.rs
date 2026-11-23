@@ -22,35 +22,39 @@ struct FileOpenOptions {
     reopen_page: Option<usize>,
 }
 
-/// Whether CLI option `key` targets an open document, panel or modal and must wait for startup
-/// background opens to finish before running.
+/// Whether CLI option `key` is an independent app-chrome preference that can apply before the
+/// first frame without affecting opening documents, modals, panels or relative option order.
 #[cfg(not(target_arch = "wasm32"))]
-fn is_post_open_option(key: &str) -> bool {
+fn is_immediate_launch_option(key: &str) -> bool {
     matches!(
         key,
-        "page"
-            | "zoom"
-            | "layout"
-            | "continuous"
-            | "page-gaps"
-            | "cover"
-            | "organize"
-            | "thumbnail-zoom"
-            | "grid-zoom"
-            | "rotate"
-            | "layer"
-            | "find"
-            | "fields"
-            | "select"
-            | "notice"
-            | "comment"
-            | "dialog"
-            | "panel"
-            | "home"
-            | "tool"
-            | "tools"
-            | "palette"
-            | "quick"
+        "theme"
+            | "language"
+            | "ui-scale"
+            | "system-title-bar"
+            | "hotbar-size"
+            | "hotbar-full-side"
+            | "hotbar-tools"
+            | "hotbar-side"
+            | "tools-side"
+            | "rail-side"
+            | "show_page_edge_shadows"
+            | "animation_effects"
+            | "scroll_speed"
+            | "invert_middle_drag"
+            | "update_check_at_start"
+            | "recent-files"
+            | "author"
+            | "folder-collapsed"
+            | "comment-tool-pinned"
+            | "hide-empty-highlight-hover"
+            | "text-links"
+            | "secured-notice"
+            | "flatten-fill-sign"
+            | "combine-view"
+            | "combine-zoom"
+            | "date-format"
+            | "date-language"
     )
 }
 
@@ -326,13 +330,13 @@ impl PdfCraftApp {
                         if pending.path.is_some() {
                             self.watch.known_as(id, pending.stamp);
                         }
-                        if let Some(destination) = pending.after_open {
-                            self.apply_remote_destination(destination);
-                        }
                         if let Some(page) = pending.reopen_page
                             && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
                         {
                             view.go_to_page(page);
+                        }
+                        if let Some(destination) = pending.after_open {
+                            self.apply_remote_destination(destination);
                         }
                         if let Some((layout, continuous)) = pending.display_override
                             && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
@@ -741,6 +745,7 @@ impl PdfCraftApp {
             }
             #[cfg(not(target_arch = "wasm32"))]
             {
+                self.submit_deferred_opens();
                 self.settle_launch_layout();
                 self.settle_launch_options();
             }
@@ -794,14 +799,14 @@ impl PdfCraftApp {
                 {
                     self.watch.known_as(id, stamp_for_watch);
                 }
-                if let Some(destination) = after_open {
-                    self.apply_remote_destination(destination);
-                }
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(page) = p.reopen_page
                     && let Some(view) = self.views.last_mut()
                 {
                     view.go_to_page(page);
+                }
+                if let Some(destination) = after_open {
+                    self.apply_remote_destination(destination);
                 }
                 if let Some((layout, continuous)) = p.display_override
                     && let Some(view) = self.views.last_mut()
@@ -953,6 +958,7 @@ impl PdfCraftApp {
             // Asked for another place before it finished opening: it opens at the latest one.
             if after_open.is_some() {
                 pending.after_open = after_open;
+                pending.reopen_page = None;
             }
             return OpenOutcome::Pending;
         }
@@ -960,11 +966,13 @@ impl PdfCraftApp {
         // instead of queuing a second one; a display override, a place to open at or a tool it
         // brings is kept.
         if let Some(prompt) = self.password_prompt.as_mut().filter(|p| p.path.as_deref().is_some_and(|p| same_file(p, path))) {
+            prompt.activate |= activate;
             if display_override.is_some() {
                 prompt.display_override = display_override;
             }
             if after_open.is_some() {
                 prompt.after_open = after_open;
+                prompt.reopen_page = None;
             }
             if then.is_some() {
                 prompt.then = then;
@@ -978,6 +986,7 @@ impl PdfCraftApp {
             }
             if after_open.is_some() {
                 deferred.after_open = after_open;
+                deferred.reopen_page = None;
             }
             if then.is_some() {
                 deferred.then = then;
@@ -1071,14 +1080,15 @@ impl PdfCraftApp {
         }
     }
 
-    /// Apply a command-line view option (`--page`, `--zoom`, `--theme`, …). App preferences run
-    /// at once so opening documents inherit them; document, panel and modal options wait while
-    /// startup files are still opening in the background worker.
+    /// Apply a command-line view option (`--page`, `--zoom`, `--theme`, …). Pure app-chrome
+    /// preferences apply at once so frame 1 renders with them; options that act on documents,
+    /// panels, modes, dialogs or view defaults wait until startup background opens finish so they
+    /// keep exact CLI order and never raise a modal that stalls worker replies.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_launch_option(&mut self, key: &str, value: &str) -> Result<(), String> {
         let opening = !self.pending_opens.is_empty() || !self.deferred_opens.is_empty() || self.password_prompt.is_some();
-        if opening && is_post_open_option(key) {
-            self.launch_options.push((key.to_string(), value.to_string()));
+        if opening && !is_immediate_launch_option(key) {
+            self.launch_options.push(state::LaunchOption::Option { key: key.to_string(), value: value.to_string() });
             return Ok(());
         }
         self.set_option(key, value)
@@ -1089,9 +1099,20 @@ impl PdfCraftApp {
         if !self.pending_opens.is_empty() || !self.deferred_opens.is_empty() || self.password_prompt.is_some() {
             return;
         }
-        for (key, value) in std::mem::take(&mut self.launch_options) {
-            if let Err(error) = self.set_option(&key, &value) {
-                log::warn!("--{key} {value}: {error}");
+        for entry in std::mem::take(&mut self.launch_options) {
+            match entry {
+                state::LaunchOption::Option { key, value } => {
+                    if let Err(error) = self.set_option(&key, &value) {
+                        log::warn!("--{key} {value}: {error}");
+                    }
+                }
+                state::LaunchOption::Layout(layout, continuous) => {
+                    if let Some(id) = self.launch_display_target
+                        && let Some(view) = self.views.iter_mut().find(|view| view.id == id)
+                    {
+                        view.set_display(layout, continuous);
+                    }
+                }
             }
         }
     }
@@ -1100,6 +1121,10 @@ impl PdfCraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn set_launch_layout(&mut self, value: &str) -> Result<(), String> {
         let (layout, continuous) = canvas::parse_display_token(value).ok_or("layout must be single, continuous, two-up or two-page")?;
+        if !self.launch_options.is_empty() {
+            self.launch_options.push(state::LaunchOption::Layout(layout, continuous));
+            return Ok(());
+        }
         self.launch_layout = Some((layout, continuous));
         self.settle_launch_layout();
         Ok(())

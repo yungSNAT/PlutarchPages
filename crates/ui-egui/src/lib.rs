@@ -526,9 +526,9 @@ pub struct PdfCraftApp {
     launch_layout: Option<(canvas::PageLayout, bool)>,
     #[cfg(not(target_arch = "wasm32"))]
     launch_display_target: Option<DocId>,
-    /// Document-scoped CLI view options waiting for startup background opens to finish.
+    /// CLI options waiting for startup background opens to finish, in exact argument order.
     #[cfg(not(target_arch = "wasm32"))]
-    launch_options: Vec<(String, String)>,
+    launch_options: Vec<state::LaunchOption>,
     #[cfg(all(test, not(target_arch = "wasm32")))]
     open_prepare_gate: Option<std::sync::Arc<open_worker::PrepareGate>>,
     /// Folders pinned to Home, and what they held when last listed.

@@ -500,3 +500,11 @@ pub enum OpenOutcome {
     /// The file could not be read or opened; the user was told.
     Failed,
 }
+
+/// A command-line launch option waiting for startup background opens to settle, preserving CLI
+/// argument order between ordinary view options and `--two-paged` deferred `--layout`.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) enum LaunchOption {
+    Option { key: String, value: String },
+    Layout(canvas::PageLayout, bool),
+}
