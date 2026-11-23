@@ -285,6 +285,8 @@ struct PendingOpen {
     recovered: Option<RecoveryMeta>,
     then: Option<&'static str>,
     display_override: Option<(canvas::PageLayout, bool)>,
+    reopen_page: Option<usize>,
+    from_session_restore: bool,
     /// A reply taken from `receiver` and kept back for later (a password prompt waiting for an
     /// earlier file's password retry).
     ready: Option<open_worker::ResultKind>,
@@ -297,6 +299,9 @@ struct DeferredOpen {
     after_open: Option<pdfcraft_render::RemoteDestination>,
     then: Option<&'static str>,
     display_override: Option<(canvas::PageLayout, bool)>,
+    activate: bool,
+    reopen_page: Option<usize>,
+    from_session_restore: bool,
 }
 
 /// Puts `(html, plain_text)` on a clipboard; `false` when it couldn't, and plain-text Copy is
@@ -523,6 +528,13 @@ pub struct PdfCraftApp {
     launch_layout: Option<(canvas::PageLayout, bool)>,
     #[cfg(not(target_arch = "wasm32"))]
     launch_display_target: Option<DocId>,
+    /// CLI options waiting for startup background opens to finish, in exact argument order.
+    #[cfg(not(target_arch = "wasm32"))]
+    launch_options: Vec<state::LaunchOption>,
+    /// Set when an async last-session restore starts without CLI files so a fallback tab takes
+    /// focus if the preferred active file fails or its password prompt is cancelled.
+    #[cfg(not(target_arch = "wasm32"))]
+    session_restore_needs_focus: bool,
     #[cfg(all(test, not(target_arch = "wasm32")))]
     open_prepare_gate: Option<std::sync::Arc<open_worker::PrepareGate>>,
     /// Folders pinned to Home, and what they held when last listed.

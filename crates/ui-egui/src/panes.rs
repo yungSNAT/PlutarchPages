@@ -195,8 +195,7 @@ impl PdfCraftApp {
             return;
         }
         if let Some(i) = self.latest_in(place) {
-            self.active = Some(i);
-            self.combine_tab.focused = false;
+            self.select_tab(i);
         }
     }
 
@@ -307,7 +306,7 @@ impl PdfCraftApp {
                 if let Some(s) = self.panes.split.as_mut() {
                     s.down = down;
                 }
-                self.active = Some(index);
+                self.select_tab(index);
             }
             Place::Main => {
                 let alone = self.tabs_in(Place::Main).len() <= 1;
@@ -331,7 +330,7 @@ impl PdfCraftApp {
         let Some(view) = self.views.get(index) else { return };
         let id = view.id;
         if let Some(there) = self.views.iter().position(|v| v.id == id && v.pane.place == place) {
-            self.active = Some(there);
+            self.select_tab(there);
             return;
         }
         let Some(doc) = self.session.get(id) else { return };
@@ -339,7 +338,7 @@ impl PdfCraftApp {
         twin.pane.place = place;
         twin.pane.placed = true;
         self.views.push(twin);
-        self.active = Some(self.views.len() - 1);
+        self.select_tab(self.views.len() - 1);
     }
 
     /// View ▸ Split (⌘\): split the current document into two panes, or end split view.
@@ -374,7 +373,7 @@ impl PdfCraftApp {
     pub fn move_tab_to(&mut self, index: usize, place: Place) -> Option<usize> {
         let (id, key, from) = self.views.get(index).map(|v| (v.id, v.pane.key, v.pane.place))?;
         if from == place {
-            self.active = Some(index);
+            self.select_tab(index);
             return Some(index);
         }
         if place == Place::Second && self.panes.split.is_none() {
@@ -383,15 +382,18 @@ impl PdfCraftApp {
         if let Some(there) = self.views.iter().position(|v| v.id == id && v.pane.place == place && v.pane.key != key) {
             let keep = self.views.get(there).map(|v| v.pane.key);
             self.drop_view(index);
-            self.active = keep.and_then(|k| self.tab_with_key(k));
+            if let Some(i) = keep.and_then(|k| self.tab_with_key(k)) {
+                self.select_tab(i);
+            } else {
+                self.active = None;
+            }
             return self.active;
         }
         if let Some(v) = self.views.get_mut(index) {
             v.pane.place = place;
             v.pane.placed = true;
         }
-        self.active = Some(index);
-        self.combine_tab.focused = false;
+        self.select_tab(index);
         Some(index)
     }
 

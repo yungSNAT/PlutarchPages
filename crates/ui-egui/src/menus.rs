@@ -551,7 +551,7 @@ impl PdfCraftApp {
             }
             DOCUMENT => {
                 if let Some(i) = index.filter(|&i| i < self.views.len()) {
-                    self.active = Some(i);
+                    self.select_tab(i);
                 }
             }
             "edit.copy" => self.menu_input.push(egui::Event::Copy),

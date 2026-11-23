@@ -916,7 +916,7 @@ impl PdfCraftApp {
                     view.enter_presentation();
                 }
                 self.views.push(view);
-                self.active = Some(self.views.len() - 1);
+                self.select_tab(self.views.len() - 1);
                 self.notify_tr(message);
             }
             Err(e) => self.notify_fmt("Couldn't open the result: {e}", &[("e", &e.to_string())]),

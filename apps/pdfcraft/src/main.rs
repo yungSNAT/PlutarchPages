@@ -648,6 +648,9 @@ fn app_creator<'a>(
                 &[("folder", &w.folder.display().to_string()), ("error", &w.error)],
             );
         }
+        // Attach the context before startup opens so reading and parsing run on the background
+        // worker instead of blocking the UI thread before the first frame.
+        app.attach_context(&cc.egui_ctx);
         let defer_layout = two_paged && !files.is_empty() && !create_images;
         if create_images {
             if let Err(e) = app.begin_image_import_paths(&files) {
@@ -663,7 +666,7 @@ fn app_creator<'a>(
             startup::open_files(&mut app, &files, two_paged);
         }
         for (k, v) in options {
-            let result = if defer_layout && k == "layout" { app.set_launch_layout(&v) } else { app.set_option(&k, &v) };
+            let result = if defer_layout && k == "layout" { app.set_launch_layout(&v) } else { app.set_launch_option(&k, &v) };
             if let Err(e) = result {
                 log::warn!("--{k} {v}: {e}");
             }
