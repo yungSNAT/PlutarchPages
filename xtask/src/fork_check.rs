@@ -192,7 +192,7 @@ fn is_test(tree: &Tree, path: &str) -> bool {
 }
 
 /// Whether each `mod` that declares the source file `path` in its parent file is in a test module,
-/// or the parent is test code itself. A file only `#[path]` declares, or whose parent doesn't lex,
+/// or the parent is test code itself. A file only `#[path]` declares, or whose parent doesn't parse,
 /// isn't, so it is read.
 fn declared_for_tests(tree: &Tree, path: &str) -> bool {
     let Some((dir, file)) = path.rsplit_once('/') else { return false };
@@ -203,20 +203,17 @@ fn declared_for_tests(tree: &Tree, path: &str) -> bool {
     let mut declared = false;
     for parent in parents {
         let Some(text) = tree.get(&parent) else { continue };
-        let Some(lexed) = lex(text) else { return false };
-        let Some(level) = item_level(&lexed.code, true) else { return false };
-        let code = lexed.code.as_str();
-        let declares = |i: usize| {
-            let after = code[i + "mod".len()..].trim_start_matches(is_space);
-            found_at(code, i, "mod") && found_at(code, code.len() - after.len(), name)
-        };
-        let declarations: Vec<usize> = code.match_indices("mod").map(|(i, _)| i).filter(|&i| declares(i)).collect();
+        let (Some(lexed), Some(items)) = (lex(text), items(text)) else { return false };
+        // From the tokens, so a `mod` a macro holds counts too.
+        let declarations: Vec<usize> = (lexed.tokens.windows(2))
+            .filter(|w| matches!(&w[0].1, Token::Ident(m) if m == "mod") && matches!(&w[1].1, Token::Ident(n) if n == name))
+            .map(|w| w[0].0)
+            .collect();
         if declarations.is_empty() {
             continue;
         }
         declared = true;
-        let tests = test_modules(code, &level);
-        if !is_test(tree, &parent) && !declarations.iter().all(|d| tests.iter().any(|t| t.contains(d))) {
+        if !is_test(tree, &parent) && !declarations.iter().all(|d| items.tests.iter().any(|t| t.contains(d))) {
             return false;
         }
     }
@@ -261,86 +258,16 @@ fn artcraft_names(tree: &Tree) -> Vec<String> {
 
 /// Rust source with its comments and test modules blanked, each from its `#[cfg(test)]` to its
 /// closing brace or semicolon, so code before or after it on the same line is still read. Source
-/// that doesn't lex, or whose brackets don't pair up, is read whole and as it is, comments and
-/// test modules too: a false failure rather than a miss.
+/// that doesn't tokenise is read whole and as it is, comments and test modules too, and source
+/// that tokenises but doesn't parse as a file keeps its test modules: a false failure rather
+/// than a miss.
 fn production(source: &str) -> Cow<'_, str> {
-    let blanked = lex(source).and_then(|lexed| {
-        let tests = test_modules(&lexed.code, &item_level(&lexed.code, true)?);
-        let mut text = lexed.text.into_bytes();
-        for t in tests {
-            text[t].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
-        }
-        String::from_utf8(text).ok()
-    });
-    blanked.map_or(Cow::Borrowed(source), Cow::Owned)
-}
-
-/// The bytes of each test module in `code` ([`Lexed::code`]), from its `#[cfg(test)]` to its
-/// closing brace or semicolon. Only at item level (`level`, from [`item_level`]) does the
-/// attribute certainly gate a module: in a macro's tokens it may be rewritten.
-fn test_modules(code: &str, level: &[bool]) -> Vec<Range<usize>> {
-    const ATTRIBUTE: &str = "#[cfg(test)]";
-    code.match_indices(ATTRIBUTE)
-        .filter(|&(i, _)| level[i])
-        .filter_map(|(i, attribute)| Some(i..test_mod_end(code.as_bytes(), i + attribute.len())?))
-        .collect()
-}
-
-/// For each byte of `code` ([`Lexed::code`]), whether it is outside brackets. When
-/// `allow_modules` is set, the braces of a `mod` also contain items. In a function body or a
-/// macro's tokens, a `#[cfg(test)]` or a `const` may not be what it seems.
-/// `None` when the brackets don't pair up.
-fn item_level(code: &str, allow_modules: bool) -> Option<Vec<bool>> {
-    let (mut open, mut others, mut level) = (Vec::new(), 0usize, Vec::with_capacity(code.len()));
-    for (k, b) in code.bytes().enumerate() {
-        match b {
-            b'{' | b'(' | b'[' => {
-                level.push(others == 0);
-                let module = allow_modules && b == b'{' && opens_a_module(code, k);
-                others += usize::from(!module);
-                open.push((b, module));
-            }
-            b'}' | b')' | b']' => {
-                let (opener, module) = open.pop()?;
-                if !matches!((opener, b), (b'{', b'}') | (b'(', b')') | (b'[', b']')) {
-                    return None;
-                }
-                others -= usize::from(!module);
-                level.push(others == 0);
-            }
-            _ => level.push(others == 0),
-        }
+    let Some(lexed) = lex(source) else { return Cow::Borrowed(source) };
+    let mut text = lexed.text.into_bytes();
+    for t in items(source).map(|items| items.tests).unwrap_or_default() {
+        text[t].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
     }
-    open.is_empty().then_some(level)
-}
-
-/// Whether the `{` at byte `k` of `code` opens a module's items: `mod` and its name come before it.
-fn opens_a_module(code: &str, k: usize) -> bool {
-    let before = code[..k].trim_end_matches(|c: char| c.is_ascii_whitespace());
-    let name = before.trim_end_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
-    let keyword = name.trim_end_matches(|c: char| c.is_ascii_whitespace());
-    name.len() < before.len() && keyword.len() < name.len() && keyword.ends_with("mod") && starts_word(code.as_bytes(), keyword.len() - "mod".len())
-}
-
-/// Rust's whitespace, and more besides.
-fn is_space(c: char) -> bool {
-    c.is_whitespace() || matches!(c, '\u{200e}' | '\u{200f}')
-}
-
-/// Whether `word` is at byte `i` of `code` with no ASCII letter, digit or `_` either side: where a
-/// rule looks for something, a character outside ASCII beside it doesn't hide it.
-fn found_at(code: &str, i: usize, word: &str) -> bool {
-    let ident = |c: Option<char>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_');
-    code[i..].starts_with(word) && !ident(code[..i].chars().next_back()) && !ident(code[i + word.len()..].chars().next())
-}
-
-/// Each place `ident` starts a path in `code` ([`Lexed::code`]): its offset, and the offset of
-/// what follows its `::`. Whitespace may come between them, comments too as they are blanks.
-fn path_heads<'a>(code: &'a str, ident: &'a str) -> impl Iterator<Item = (usize, usize)> + 'a {
-    code.match_indices(ident).filter(move |&(i, _)| found_at(code, i, ident)).filter_map(move |(i, _)| {
-        let rest = code[i + ident.len()..].trim_start_matches(is_space).strip_prefix("::")?;
-        Some((i, code.len() - rest.trim_start_matches(is_space).len()))
-    })
+    String::from_utf8(text).map_or(Cow::Borrowed(source), Cow::Owned)
 }
 
 /// The line, from 0, that byte `i` of `text` is on.
@@ -348,208 +275,201 @@ fn line_index(text: &str, i: usize) -> usize {
     text[..i].matches('\n').count()
 }
 
-/// When the item after a `#[cfg(test)]` that ends at byte `j` of `code` ([`Lexed::code`]) is a
-/// module, the byte after its closing brace or semicolon.
-fn test_mod_end(code: &[u8], j: usize) -> Option<usize> {
-    let space = |j: usize| j + code[j..].iter().take_while(|b| b.is_ascii_whitespace()).count();
-    let mut j = space(j);
-    while code[j..].starts_with(b"#[") {
-        j = space(group_end(code, j + 1)?);
-    }
-    if word_at(code, j, "pub") {
-        j = space(j + "pub".len());
-        if code.get(j) == Some(&b'(') {
-            j = space(group_end(code, j)?);
-        }
-    }
-    if !word_at(code, j, "mod") {
-        return None;
-    }
-    j = space(j + "mod".len());
-    let name = code[j..].iter().take_while(|&&b| is_word_byte(b)).count();
-    j = space(j + name);
-    match code.get(j)? {
-        b';' if name > 0 => Some(j + 1),
-        b'{' if name > 0 => group_end(code, j),
-        _ => None,
-    }
+/// A token of [`Lexed::tokens`]: what a path reads.
+#[derive(PartialEq)]
+enum Token {
+    Ident(String),
+    /// A punctuation character, and whether the next one joins it (the first `:` of `::`).
+    Punct(char, bool),
+    /// A literal, or a bracket of a group.
+    Other,
 }
 
-/// The byte after the bracket that closes the `(`, `[` or `{` at `open` in `code`.
-fn group_end(code: &[u8], open: usize) -> Option<usize> {
-    let close = match code[open] {
-        b'(' => b')',
-        b'[' => b']',
-        b'{' => b'}',
-        _ => return None,
-    };
-    let mut depth = 0usize;
-    for (k, &b) in code.iter().enumerate().skip(open) {
-        if b == code[open] {
-            depth += 1;
-        } else if b == close {
-            depth -= 1;
-            if depth == 0 {
-                return Some(k + 1);
-            }
-        }
-    }
-    None
-}
-
-fn is_word_byte(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_' || !b.is_ascii()
-}
-
-/// Whether the identifier or keyword `word`, whole, is at byte `i` of `code`.
-fn word_at(code: &[u8], i: usize, word: &str) -> bool {
-    code[i..].starts_with(word.as_bytes()) && starts_word(code, i) && !code.get(i + word.len()).is_some_and(|&b| is_word_byte(b))
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Lexeme {
-    Code,
-    Comment,
-    Literal,
-}
-
-/// Rust source with its comments blanked (`text`), and with the insides of its literals blanked
-/// too (`code`). Each blanked byte becomes a space and line breaks stay, so a line or byte offset
-/// in either is the same line or offset in the source.
+/// Rust source with its comments blanked (`text`), and with its string and character literals
+/// blanked too (`code`). Each blanked byte becomes a space and line breaks stay, so a line or
+/// byte offset in either is the same line or offset in the source. `tokens` are the source's
+/// tokens, outside comments, with their offsets.
 struct Lexed {
     text: String,
     code: String,
+    tokens: Vec<(usize, Token)>,
 }
 
-/// `None` when a comment or literal doesn't close, or a `'` starts neither a character nor a
-/// lifetime: callers then read the source as it is.
+/// `None` when the source doesn't tokenise (a comment or literal that doesn't close, or brackets
+/// that don't pair up): callers then read it as it is.
 fn lex(source: &str) -> Option<Lexed> {
-    let s = source.as_bytes();
-    let (mut text, mut code) = (Vec::with_capacity(s.len()), Vec::with_capacity(s.len()));
-    let mut i = 0;
-    while i < s.len() {
-        let (lexeme, end) = lexeme_at(source, i)?;
-        for &b in &s[i..end] {
-            let blank = if b == b'\n' { b'\n' } else { b' ' };
-            text.push(if lexeme == Lexeme::Comment { blank } else { b });
-            code.push(if lexeme == Lexeme::Code { b } else { blank });
-        }
-        i = end;
-    }
-    Some(Lexed { text: String::from_utf8(text).ok()?, code: String::from_utf8(code).ok()? })
-}
-
-/// What starts at byte `i`, and the byte after it.
-fn lexeme_at(source: &str, i: usize) -> Option<(Lexeme, usize)> {
-    let s = source.as_bytes();
-    match (s[i], s.get(i + 1)) {
-        (b'/', Some(b'/')) => Some((Lexeme::Comment, s[i..].iter().position(|&b| b == b'\n').map_or(s.len(), |n| i + n))),
-        (b'/', Some(b'*')) => Some((Lexeme::Comment, block_comment_end(s, i + 2)?)),
-        (b'"', _) => Some((Lexeme::Literal, string_end(s, i + 1)?)),
-        (b'\'', _) => quote(source, i),
-        (b'r', _) if starts_word(s, i) || (i > 0 && matches!(s[i - 1], b'b' | b'c') && starts_word(s, i - 1)) => raw_string(s, i),
-        _ => Some((Lexeme::Code, i + 1)),
-    }
-}
-
-/// Whether byte `i` starts an identifier or keyword rather than continuing one.
-fn starts_word(s: &[u8], i: usize) -> bool {
-    i == 0 || !is_word_byte(s[i - 1])
-}
-
-/// The end of a block comment, which nests, whose text starts at `j`.
-fn block_comment_end(s: &[u8], mut j: usize) -> Option<usize> {
-    let mut depth = 1;
-    while depth > 0 {
-        match (*s.get(j)?, s.get(j + 1)) {
-            (b'/', Some(b'*')) => (depth, j) = (depth + 1, j + 2),
-            (b'*', Some(b'/')) => (depth, j) = (depth - 1, j + 2),
-            _ => j += 1,
-        }
-    }
-    Some(j)
-}
-
-/// The end of a string or byte string whose contents start at `j`.
-fn string_end(s: &[u8], mut j: usize) -> Option<usize> {
-    loop {
-        match *s.get(j)? {
-            b'\\' => j += 2,
-            b'"' => return Some(j + 1),
-            _ => j += 1,
-        }
-    }
-}
-
-/// `r"…"` or `r#"…"#` with any number of `#`s; an `r` that starts anything else is code.
-fn raw_string(s: &[u8], i: usize) -> Option<(Lexeme, usize)> {
-    let hashes = s[i + 1..].iter().take_while(|&&b| b == b'#').count();
-    if s.get(i + 1 + hashes) != Some(&b'"') {
-        return Some((Lexeme::Code, i + 1));
-    }
-    let close: Vec<u8> = std::iter::once(b'"').chain(std::iter::repeat_n(b'#', hashes)).collect();
-    let start = i + 2 + hashes;
-    let n = s[start..].windows(close.len()).position(|w| w == close)?;
-    Some((Lexeme::Literal, start + n + close.len()))
-}
-
-/// A character literal (`'x'`, `'\''`, `'\u{7f}'`) or the `'` of a lifetime or label (`'a`).
-fn quote(source: &str, i: usize) -> Option<(Lexeme, usize)> {
-    let s = source.as_bytes();
-    let c = source[i + 1..].chars().next()?;
-    if c == '\\' {
-        let rest = s.get(i + 3..)?;
-        let n = rest.iter().position(|&b| b == b'\'' || b == b'\n')?;
-        return (rest[n] == b'\'').then_some((Lexeme::Literal, i + 4 + n));
-    }
-    let after = i + 1 + c.len_utf8();
-    if s.get(after) == Some(&b'\'') {
-        return Some((Lexeme::Literal, after + 1));
-    }
-    (c.is_alphabetic() || c == '_').then_some((Lexeme::Code, i + 1))
-}
-
-/// Each `const` called `name`: the offset of its name, and the bytes between the braces of its
-/// initialiser (`None` when that isn't in braces).
-fn initialisers(lexed: &Lexed, name: &str) -> Vec<(usize, Option<Range<usize>>)> {
-    let code = lexed.code.as_str();
-    let declared = |i: usize| {
-        let before = code[..i].trim_end_matches(is_space).strip_suffix("const");
-        found_at(code, i, name) && before.is_some_and(|b| found_at(code, b.len(), "const"))
+    let Ok(stream) = source.parse::<proc_macro2::TokenStream>() else {
+        // A failed parse still adds the source to the thread's span map.
+        proc_macro2::extra::invalidate_current_thread_spans();
+        return None;
     };
-    let body = |i: usize| {
-        let rest = &code[i..];
-        let open = i + rest.find(['{', ';']).filter(|&n| rest.as_bytes()[n] == b'{')?;
-        Some(open + 1..group_end(code.as_bytes(), open)? - 1)
+    // 0: a comment or white space; 1: code; 2: a string or character literal.
+    let mut kind = vec![0u8; source.len()];
+    let mut tokens = Vec::new();
+    flatten(source, stream, &mut kind, &mut tokens);
+    proc_macro2::extra::invalidate_current_thread_spans();
+    let blank = |keep: &dyn Fn(u8) -> bool| -> Option<String> {
+        let mut out = source.as_bytes().to_vec();
+        for (i, c) in source.char_indices() {
+            let k = kind[i];
+            let space = k == 0 && (c.is_whitespace() || matches!(c, '\u{200e}' | '\u{200f}'));
+            if !keep(k) && !space {
+                out[i..i + c.len_utf8()].iter_mut().filter(|b| **b != b'\n').for_each(|b| *b = b' ');
+            }
+        }
+        String::from_utf8(out).ok()
     };
-    code.match_indices(name).map(|(i, _)| i).filter(|&i| declared(i)).map(|i| (i, body(i))).collect()
+    Some(Lexed { text: blank(&|k| k != 0)?, code: blank(&|k| k == 1)?, tokens })
 }
 
-/// Whether what comes before the item named at byte `i` of `code`, back to the item before it or
-/// the brace that opens its module, mentions `test`, as `#[cfg(test)]` on the item would.
-fn mentions_test(code: &str, level: &[bool], i: usize) -> bool {
-    let start = (0..i).rev().find(|&k| level[k] && matches!(code.as_bytes()[k], b';' | b'{' | b'}')).map_or(0, |k| k + 1);
-    code[start..i].match_indices("test").any(|(k, _)| found_at(code, start + k, "test"))
-}
-
-/// The value, trimmed and with comments blanked, that a struct literal gives field `name` at its
-/// own level, not in a value nested inside it; `body` is the bytes between its braces.
-fn field<'a>(lexed: &'a Lexed, body: Range<usize>, name: &str) -> Option<&'a str> {
-    let mut fields = Vec::new();
-    let (mut depth, mut start) = (0i32, body.start);
-    for k in body.clone() {
-        match lexed.code.as_bytes()[k] {
-            b'{' | b'(' | b'[' => depth += 1,
-            b'}' | b')' | b']' => depth -= 1,
-            b',' if depth == 0 => fields.push(std::mem::replace(&mut start, k + 1)..k),
-            _ => {}
+/// Marks each byte of `stream` in `kind` and lists its tokens. A doc comment reaches the stream
+/// as an attribute spanning the comment; it is left a comment.
+fn flatten(source: &str, stream: proc_macro2::TokenStream, kind: &mut [u8], tokens: &mut Vec<(usize, Token)>) {
+    use proc_macro2::{Spacing, TokenTree};
+    for tree in stream {
+        match tree {
+            // A doc comment's `[doc = "…"]` spans the comment, so its closing bracket would be the
+            // comment's last character.
+            TokenTree::Group(group) if is_comment(source, &group.span().byte_range()) => {}
+            TokenTree::Group(group) => {
+                mark(source, group.span_open(), 1, Token::Other, kind, tokens);
+                flatten(source, group.stream(), kind, tokens);
+                mark(source, group.span_close(), 1, Token::Other, kind, tokens);
+            }
+            TokenTree::Ident(ident) => mark(source, ident.span(), 1, Token::Ident(ident.to_string()), kind, tokens),
+            TokenTree::Punct(punct) => {
+                let token = Token::Punct(punct.as_char(), punct.spacing() == Spacing::Joint);
+                mark(source, punct.span(), 1, token, kind, tokens);
+            }
+            TokenTree::Literal(literal) => {
+                let number = literal.to_string().starts_with(|c: char| c.is_ascii_digit());
+                mark(source, literal.span(), if number { 1 } else { 2 }, Token::Other, kind, tokens);
+            }
         }
     }
-    fields.push(start..body.end);
-    fields.into_iter().find_map(|f| {
-        let (key, value) = lexed.code[f.clone()].split_once(':')?;
-        (key.trim() == name && !value.starts_with(':')).then(|| lexed.text[f.start + key.len() + 1..f.end].trim())
+}
+
+fn mark(source: &str, span: proc_macro2::Span, k: u8, token: Token, kind: &mut [u8], tokens: &mut Vec<(usize, Token)>) {
+    let range = span.byte_range();
+    if !is_comment(source, &range)
+        && let Some(bytes) = kind.get_mut(range.clone())
+    {
+        bytes.fill(k);
+        tokens.push((range.start, token));
+    }
+}
+
+fn is_comment(source: &str, range: &Range<usize>) -> bool {
+    source.get(range.start..).is_some_and(|s| s.starts_with("//") || s.starts_with("/*"))
+}
+
+/// Each place `ident` starts a path ([`Lexed::tokens`]): its offset, and the token after its `::`.
+fn path_heads<'a>(lexed: &'a Lexed, ident: &'a str) -> impl Iterator<Item = (usize, Option<&'a Token>)> + 'a {
+    let t = &lexed.tokens;
+    (0..t.len()).filter_map(move |k| {
+        let head = matches!(&t[k].1, Token::Ident(i) if i.strip_prefix("r#").unwrap_or(i) == ident)
+            && t.get(k + 1).is_some_and(|(_, p)| *p == Token::Punct(':', true))
+            && t.get(k + 2).is_some_and(|(_, p)| matches!(p, Token::Punct(':', _)));
+        head.then(|| (t[k].0, t.get(k + 3).map(|(_, next)| next)))
     })
+}
+
+/// What a file's items say, from `syn`: its test modules and its `UPDATE_APP` initialisers.
+#[derive(Default)]
+struct Items {
+    /// The bytes of each test module at item level, outside function bodies and macros: from its
+    /// `#[cfg(test)]` to its closing brace or semicolon.
+    tests: Vec<Range<usize>>,
+    /// Whether a `pub const UPDATE_APP` is an item at the crate root with no attribute mentioning
+    /// `test`: the one the updater reads.
+    production_app: bool,
+    /// For each `UPDATE_APP` initialiser outside macros, whether it gives `repo` this fork.
+    update_apps: Vec<bool>,
+}
+
+/// `None` when the source doesn't parse as a Rust file.
+fn items(source: &str) -> Option<Items> {
+    let items = syn::parse_file(source).ok().map(|file| {
+        let mut items = Items::default();
+        test_modules(&file.items, &mut items.tests);
+        // `parse_file` drops a leading byte order mark and shebang line, so its offsets start after them.
+        let bom = if source.starts_with('\u{feff}') { '\u{feff}'.len_utf8() } else { 0 };
+        let prelude = bom + file.shebang.as_ref().map_or(0, String::len);
+        items.tests.iter_mut().for_each(|t| *t = t.start + prelude..t.end + prelude);
+        syn::visit::Visit::visit_file(&mut items, &file);
+        items.production_app = file.items.iter().any(|item| {
+            matches!(item, syn::Item::Const(c) if c.ident == "UPDATE_APP"
+                && matches!(c.vis, syn::Visibility::Public(_))
+                && !c.attrs.iter().any(|a| mentions_test(&a.meta)))
+        });
+        items
+    });
+    proc_macro2::extra::invalidate_current_thread_spans();
+    items
+}
+
+/// Whether an attribute names `test` anywhere, as `#[cfg(test)]` and `#[cfg(any(test))]` do.
+fn mentions_test(meta: &syn::Meta) -> bool {
+    fn in_tokens(tokens: proc_macro2::TokenStream) -> bool {
+        tokens.into_iter().any(|t| match t {
+            proc_macro2::TokenTree::Ident(i) => i == "test",
+            proc_macro2::TokenTree::Group(g) => in_tokens(g.stream()),
+            _ => false,
+        })
+    }
+    meta.path().segments.iter().any(|s| s.ident == "test") || matches!(meta, syn::Meta::List(list) if in_tokens(list.tokens.clone()))
+}
+
+/// The test modules among `items` and the modules they hold.
+fn test_modules(items: &[syn::Item], out: &mut Vec<Range<usize>>) {
+    for item in items {
+        let syn::Item::Mod(m) = item else { continue };
+        let end = match (&m.content, &m.semi) {
+            (Some((brace, _)), _) => brace.span.close().byte_range().end,
+            (None, Some(semi)) => semi.span.byte_range().end,
+            (None, None) => continue,
+        };
+        match m.attrs.iter().find(|a| is_cfg_test(a)) {
+            Some(attribute) => out.push(attribute.pound_token.span.byte_range().start..end),
+            None => test_modules(m.content.as_ref().map_or(&[][..], |(_, items)| items), out),
+        }
+    }
+}
+
+/// `#[cfg(test)]` itself.
+fn is_cfg_test(attribute: &syn::Attribute) -> bool {
+    matches!(attribute.style, syn::AttrStyle::Outer)
+        && matches!(&attribute.meta, syn::Meta::List(list) if list.path.is_ident("cfg") && list.tokens.to_string() == "test")
+}
+
+impl<'ast> syn::visit::Visit<'ast> for Items {
+    fn visit_item_const(&mut self, c: &'ast syn::ItemConst) {
+        if c.ident == "UPDATE_APP" {
+            self.update_apps.push(gives_this_repo(&c.expr));
+        }
+        syn::visit::visit_item_const(self, c);
+    }
+
+    fn visit_impl_item_const(&mut self, c: &'ast syn::ImplItemConst) {
+        if c.ident == "UPDATE_APP" {
+            self.update_apps.push(gives_this_repo(&c.expr));
+        }
+        syn::visit::visit_impl_item_const(self, c);
+    }
+
+    fn visit_trait_item_const(&mut self, c: &'ast syn::TraitItemConst) {
+        if c.ident == "UPDATE_APP" {
+            self.update_apps.push(c.default.as_ref().is_some_and(|(_, expr)| gives_this_repo(expr)));
+        }
+        syn::visit::visit_trait_item_const(self, c);
+    }
+}
+
+/// Whether `expr` is a struct literal whose own `repo` field is this fork's repository.
+fn gives_this_repo(expr: &syn::Expr) -> bool {
+    let syn::Expr::Struct(s) = expr else { return false };
+    let repo = s.fields.iter().find(|f| matches!(&f.member, syn::Member::Named(n) if n == "repo") && f.colon_token.is_some());
+    repo.is_some_and(|f| matches!(&f.expr, syn::Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) if s.token().to_string() == FORK_REPO))
 }
 
 /// A catalogue row's context and English source: a translation of an allowed source is allowed.
@@ -602,26 +522,18 @@ fn update_source(tree: &Tree) -> Vec<String> {
     let Some(text) = tree.get(UPDATE_APP_FILE) else {
         return vec![format!("{UPDATE_APP_FILE} is missing: find where `UPDATE_APP` went and keep its `repo`")];
     };
-    if let Some(lexed) = lex(text)
-        && let Some(level) = item_level(&lexed.code, false)
+    if let Some(items) = items(text)
+        && items.production_app
+        && items.update_apps.iter().all(|&repo| repo)
     {
-        let production = |i: usize| {
-            let code = &lexed.code;
-            let public =
-                code[..i].trim_end_matches(is_space).strip_suffix("const").and_then(|prefix| prefix.trim_end_matches(is_space).strip_suffix("pub"));
-            level[i] && public.is_some_and(|prefix| found_at(code, prefix.len(), "pub")) && !mentions_test(code, &level, i)
-        };
-        let repo = |body: &Option<Range<usize>>| body.clone().is_some_and(|b| field(&lexed, b, "repo") == Some(FORK_REPO));
-        let declared = initialisers(&lexed, "UPDATE_APP");
-        if declared.iter().any(|(i, _)| production(*i)) && declared.iter().all(|(_, body)| repo(body)) {
-            return Vec::new();
-        }
+        return Vec::new();
     }
     vec![format!("{UPDATE_APP_FILE}: `UPDATE_APP` lacks `repo: {FORK_REPO}`, so updates would come from upstream")]
 }
 
 /// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant:
-/// `Color32`, `::` and a capital, whatever whitespace or comments come between.
+/// `Color32`, `::` and a capital, whatever whitespace or comments come between. Source that doesn't
+/// tokenise falls back to boundary-aware matching across whitespace.
 fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
     let mut out = Vec::new();
     for (path, text) in tree.under("crates/ui-egui/src/") {
@@ -630,8 +542,19 @@ fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
         }
         let read = production(text);
         let lines: Vec<&str> = read.lines().collect();
-        let capital = |next: usize| read[next..].strip_prefix("r#").unwrap_or(&read[next..]).starts_with(|c: char| c.is_ascii_uppercase());
-        let mut named: Vec<usize> = path_heads(&read, "Color32").filter(|&(_, next)| capital(next)).map(|(i, _)| line_index(&read, i)).collect();
+        let capital = |next: Option<&Token>| matches!(next, Some(Token::Ident(i)) if i.strip_prefix("r#").unwrap_or(i).starts_with(|c: char| c.is_ascii_uppercase()));
+        let mut named: Vec<usize> = match lex(&read) {
+            Some(lexed) => path_heads(&lexed, "Color32").filter(|&(_, next)| capital(next)).map(|(i, _)| line_index(&read, i)).collect(),
+            // Source that doesn't tokenise falls back to boundary-aware whole-source path matching.
+            None => read
+                .match_indices("Color32")
+                .filter(|&(i, _)| read[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != '_'))
+                .filter_map(|(i, _)| {
+                    let rest = read[i + "Color32".len()..].trim_start().strip_prefix("::")?.trim_start();
+                    rest.strip_prefix("r#").unwrap_or(rest).starts_with(|c: char| c.is_ascii_uppercase()).then(|| line_index(&read, i))
+                })
+                .collect(),
+        };
         named.dedup();
         out.extend(named.into_iter().map(|n| (path, n + 1, lines[n].trim().to_string())));
     }
@@ -796,7 +719,7 @@ fn weak_hash_markers(tree: &Tree) -> Vec<String> {
             continue;
         };
         let lines: Vec<(&str, &str)> = text.lines().zip(lexed.text.lines()).collect();
-        let heads = ["Md5", "Ripemd160"].into_iter().flat_map(|hash| path_heads(&lexed.code, hash));
+        let heads = ["Md5", "Ripemd160"].into_iter().flat_map(|hash| path_heads(&lexed, hash));
         let mut hashes: Vec<usize> = heads.map(|(i, _)| line_index(&lexed.code, i)).collect();
         hashes.sort_unstable();
         hashes.dedup();
@@ -1192,7 +1115,7 @@ mod tests {
     #[test]
     fn weak_hash_lines_keep_nosonar() {
         let crypt = "use md5::{Digest as _, Md5};\nlet mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5\n";
-        let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n";
+        let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n}\n";
         passes(weak_hash_markers, &[(WEAK_HASH_FILES[0], crypt), (WEAK_HASH_FILES[1], keys)]);
         let merged = crypt.replace(" // NOSONAR: ISO 32000 mandates MD5", "");
         fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], merged.as_str()), (WEAK_HASH_FILES[1], keys)], "crypt.rs:2");
@@ -1384,6 +1307,11 @@ mod tests {
         fails(update_source, &[(UPDATE_APP_FILE, in_string)], "lacks `repo");
         let nested = "pub const UPDATE_APP: App = App {\n    name: pick(App {\n        repo: \"yungSNAT/PlutarchPages\",\n    }),\n    ..suite::PDFCRAFT\n};\n";
         fails(update_source, &[(UPDATE_APP_FILE, nested)], "lacks `repo");
+        let in_trait = "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\ntrait Apps {\n    const UPDATE_APP: App = App { ..suite::PDFCRAFT };\n}\n";
+        fails(update_source, &[(UPDATE_APP_FILE, in_trait)], "lacks `repo");
+        let trait_no_default =
+            "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\ntrait Apps {\n    const UPDATE_APP: App;\n}\n";
+        fails(update_source, &[(UPDATE_APP_FILE, trait_no_default)], "lacks `repo");
     }
 
     #[test]
@@ -1466,12 +1394,14 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     fn a_hash_path_is_read_across_whitespace_and_comments() {
         let crypt = "use md5::{Digest as _, Md5};\nlet mut h = Md5::new(); // NOSONAR: ISO 32000 mandates MD5\n";
         let keys = "DigestAlg::Ripemd160 => {\n    let mut h = ripemd::Ripemd160::new(); // NOSONAR: existing signatures\n";
-        let crypt = format!("{crypt}digest = Md5/* c */::digest(&digest).to_vec();\nlet h = Md5 ::new();\nlet h = md5::Md5\n    ::new();\n");
-        let keys = format!("{keys}let h = ripemd::Ripemd160/* c */\u{200e}::new();\n");
+        let crypt = format!(
+            "{crypt}digest = Md5/* c */::digest(&digest).to_vec();\nlet h = Md5 ::new();\nlet h = md5::Md5\n    ::new();\nlet h = r#Md5::new();\n"
+        );
+        let keys = format!("{keys}let h = ripemd::Ripemd160/* c */\u{200e}::new();\n}}\n");
         fails_all(
             weak_hash_markers,
             &[(WEAK_HASH_FILES[0], crypt.as_str()), (WEAK_HASH_FILES[1], keys.as_str())],
-            &["crypt.rs:3", "crypt.rs:4", "crypt.rs:5", "keys.rs:3"],
+            &["crypt.rs:3", "crypt.rs:4", "crypt.rs:5", "crypt.rs:7", "keys.rs:3"],
         );
     }
 
@@ -1490,6 +1420,48 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     }
 
     #[test]
+    fn a_doc_comment_is_not_read_as_code() {
+        let canvas = "/// Paints the page (and its border)\nfn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32::WHITE);\n}\n";
+        assert_eq!(colour_line_numbers(canvas), [3]);
+        let blanked = lex(canvas).map(|lexed| lexed.text);
+        assert!(blanked.as_deref().and_then(lex).is_some(), "the comment's closing bracket was kept: {blanked:?}");
+    }
+
+    fn colour_line_numbers(canvas: &str) -> Vec<usize> {
+        colour_lines(&tree(&[("crates/ui-egui/src/canvas.rs", canvas)])).into_iter().map(|(_, n, _)| n).collect()
+    }
+
+    #[test]
+    fn a_raw_colour_name_is_a_colour_path() {
+        assert_eq!(colour_line_numbers("fn page() {\n    painter.rect_filled(r, 0.0, r#Color32::GREEN);\n}\n"), [2]);
+    }
+
+    #[test]
+    fn source_that_does_not_tokenise_matches_colour_paths_across_lines_and_boundaries() {
+        let canvas = "fn page(fill: Color32) {
+    painter.rect_filled(r, 0.0, Color32 :: WHITE);
+    painter.rect_filled(r, 0.0, MyColor32::WHITE);
+    painter.rect_filled(r, 0.0, Color32
+        ::BLACK);
+    painter.rect_filled(r, 0.0, r#Color32::GREEN);
+    let s = \"unclosed;
+";
+        assert_eq!(colour_line_numbers(canvas), [2, 4, 6]);
+    }
+
+    #[test]
+    fn a_byte_order_mark_and_shebang_do_not_move_test_modules() {
+        let home = "crates/ui-egui/src/home.rs";
+        let module = "#[cfg(test)]\nmod tests {\n    const MARK: &str = \"artcraft-mark.svg\";\n}\n";
+        for prelude in ["\u{feff}", "#!/usr/bin/env run-cargo-script --with a long first line\n", "\u{feff}#!/usr/bin/env run-cargo-script\n"] {
+            passes(artcraft_names, &[(home, format!("{prelude}{module}").as_str())]);
+            let after = format!("{prelude}{module}fn f() {{ widgets::artcraft_mark(ui, 28.0); }}\n");
+            let line = if prelude.ends_with('\n') { "home.rs:6" } else { "home.rs:5" };
+            fails(artcraft_names, &[(home, after.as_str())], line);
+        }
+    }
+
+    #[test]
     fn a_test_file_is_test_code_only_when_declared_for_tests() {
         let lib = "crates/engine/src/lib.rs";
         let file = ("crates/engine/src/tests.rs", "const URL: &str = \"https://github.com/storytold/pdfcraft\";\n");
@@ -1503,6 +1475,7 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
             ("a tests.rs declared outside a test module", vec![(lib, "mod tests;\n"), file]),
             ("a tests.rs declared twice", vec![(lib, "#[cfg(test)]\nmod tests;\n#[cfg(not(test))]\nmod tests;\n"), file]),
             ("a tests.rs declared in a macro", vec![(lib, "m! {\n    #[cfg(test)]\n    mod tests;\n}\n"), file]),
+            ("a tests.rs declared for tests and in a macro", vec![(lib, "#[cfg(test)]\nmod tests;\nm! {\n    mod tests;\n}\n"), file]),
             ("a file under a production tests.rs", vec![(lib, "pub mod tests;\n"), (file.0, "mod more;\n"), nested]),
         ]
         .into_iter()
