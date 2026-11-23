@@ -1,5 +1,5 @@
 diff --git a/src/cos/content/tests.rs b/src/cos/content/tests.rs
-index 6a44d51..77b7d65 100644
+index 6a44d51..ea4d2b9 100644
 --- a/src/cos/content/tests.rs
 +++ b/src/cos/content/tests.rs
 @@ -57,6 +57,22 @@ fn a_long_unreadable_number_is_read_once() {
@@ -25,7 +25,7 @@ index 6a44d51..77b7d65 100644
  #[test]
  fn operators_keep_operands_and_spans() {
      let src = b"q 1 0 0 1 72 720 cm BT /F1 12 Tf (Hello \\(world\\)) Tj [(A) -120 (B)] TJ ET Q";
-@@ -252,8 +268,109 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
+@@ -252,7 +268,128 @@ fn flate_inline_image_is_not_cut_at_an_ei_inside_its_compressed_bytes() {
          let names: Vec<&[u8]> = parsed.ops.iter().map(|o| o.op.as_slice()).collect();
          assert_eq!(names, [&b"q"[..], b"cm", b"BI", b"Q", b"BT", b"Tf", b"Td", b"Tj", b"ET"], "{label}");
          assert_eq!(parsed.skipped, 0, "{label}");
@@ -127,17 +127,36 @@ index 6a44d51..77b7d65 100644
 +            first.ops.iter().map(|o| (&o.op, &o.operands)).collect::<Vec<_>>(),
 +            "{label}"
 +        );
-     }
++    }
 +    // A byte written as an escape that ends in `E`, then an `I`: the `I` is respelt too.
 +    let op = Op::new("gs", vec![Object::Name(vec![0x0E, b'I'])]);
 +    let written = serialize_ops(std::slice::from_ref(&op));
 +    assert_eq!(written, b"/#0E#49 gs\n");
 +    assert_eq!(parse(&written).ops[0].operands, op.operands);
++}
++
++/// From the scheduled `round_trip` fuzz job (23 November 2026). No PDF operator but `EI` holds an
++/// `EI`, and outside an image that one draws nothing either, but a source can hold such a keyword
++/// (`EEI`). Written after an inline image, its `EI` is one the renderer can take as the image's
++/// end, when fewer than 21 operators and no text shown come between: the image then swallows the
++/// operators before it, and its data, holding `EI`, is written ASCIIHex the next round.
++#[test]
++fn an_operator_keyword_holding_ei_is_not_written() {
++    let image = Op { inline: Some((Dict::new(), b"\0E".to_vec())), ..Op::new("BI", Vec::new()) };
++    let kept = |ops: Vec<Op>| ops.into_iter().map(|o| (o.op, o.operands, o.inline)).collect::<Vec<_>>();
++    let expected = kept(vec![image.clone(), Op::new("ID", Vec::new()), Op::new("w", vec![Object::Int(2)])]);
++    for keyword in ["EEI", "EI", "AEIB"] {
++        let ops = [image.clone(), Op::new("ID", Vec::new()), Op::new(keyword, vec![Object::Int(1)]), Op::new("w", vec![Object::Int(2)])];
++        let written = serialize_ops(&ops);
++        let read = parse(&written);
++        assert_eq!(read.ambiguous_images, 0, "{keyword}");
++        assert_eq!(kept(read.ops), expected, "{keyword}");
++        assert_eq!(renderer_operators(&written), [&b"BI"[..], b"ID", b"w"], "{keyword}");
+     }
  }
  
- fn inline_pdf(content: &[u8], object_streams: bool) -> Vec<u8> {
 diff --git a/src/cos/content.rs b/src/cos/content.rs
-index a308797..0228289 100644
+index a308797..0500123 100644
 --- a/src/cos/content.rs
 +++ b/src/cos/content.rs
 @@ -107,6 +107,12 @@ fn is_delim(b: u8) -> bool {
@@ -236,7 +255,7 @@ index a308797..0228289 100644
  }
  
  /// The length declared by `/L` (or `/Length`, ISO 32000-2 §8.9.7), used when `EI` follows the
-@@ -553,14 +571,28 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
+@@ -553,28 +571,143 @@ fn end_of_image(data: &[u8], begin: usize, eod: &[u8]) -> Option<(usize, usize)>
  }
  
  /// Write one operator (with a trailing newline).
@@ -246,7 +265,9 @@ index a308797..0228289 100644
 +/// `EI` and the one written after the data by looking at what follows each, and what this writer
 +/// puts after the image (spacing, the terminator, normalised operators) can change that choice,
 +/// so the data read back would end elsewhere. For the same reason no operand is written with an
-+/// `EI` in it (see [`write_operand`]).
++/// `EI` in it (see [`write_operand`]), and an operator whose keyword holds one is not written at
++/// all: no PDF operator but `EI` does, a renderer ignores an unknown one with its operands, and
++/// `EI` outside an image ends nothing.
  pub fn write_op(op: &Op, out: &mut Vec<u8>) {
      if let Some((dict, img)) = &op.inline {
 +        let hex;
@@ -267,9 +288,12 @@ index a308797..0228289 100644
          }
          out.extend_from_slice(b" ID ");
          out.extend_from_slice(img);
-@@ -568,13 +600,109 @@ pub fn write_op(op: &Op, out: &mut Vec<u8>) {
+         out.extend_from_slice(b"\nEI\n");
          return;
      }
++    if op.op.windows(2).any(|pair| pair == b"EI") {
++        return;
++    }
      for o in &op.operands {
 -        serialize(o, out);
 +        write_operand(o, out);
