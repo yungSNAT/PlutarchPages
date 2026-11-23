@@ -42,6 +42,14 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/cos/tests/it/encryption.rs`. The cos
   part of upstream's `9203e4a6b` (#5548) came in ahead of the next merge; its hayro-syntax patch 30
   and renderer tests didn't.
+- **Saving after Apply Redactions** refuses, writing nothing, while the file to be written still
+  holds the removed text where Remove hidden information clears it (bookmarks, attachments and
+  their data, comments, `/Info` and XMP, links, actions and scripts, form fields), or keeps an
+  earlier revision. Upstream only counts some of these places. The engine holds each apply's removed
+  text with its undo step until a save (`Editor::held`); `Session::check_save` reads the file back
+  and calls `pdfcraft_redact::survivors` (`crates/redact/src/elsewhere.rs`). Tests in
+  `crates/engine/src/tests/fork_tests.rs`. `crates/redact/src/tests/elsewhere.rs` is upstream's:
+  its 2 expected counts gained the new fields.
 
 ## Only here
 
