@@ -314,6 +314,15 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
   `crates/xfdf/src/lib.rs` has its own quoted-tab check. The same commit's Indexed colour space
   part is upstream's `4aad36cf1`, already merged.
 
+## Taken ahead of the next merge
+
+These upstream commits are cherry-picked unchanged. The next merge brings the same lines, so it
+should not conflict on them: delete the entry then.
+
+- Email redaction keeps the part of an address before an apostrophe (`5aae9dba`).
+- Redaction removes an XObject or font whose `/Subtype` is an indirect reference (`6da8fa27`, #6750).
+- Redaction refuses an annotation whose bounds can't be read (`b50a17f7`, #7180).
+
 ## Merging upstream
 
 No schedule sets when to merge. Upstream merges have landed 1 to 9 days apart since 30 October
