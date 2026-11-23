@@ -458,10 +458,8 @@ impl<'ast> syn::visit::Visit<'ast> for Items {
     }
 
     fn visit_trait_item_const(&mut self, c: &'ast syn::TraitItemConst) {
-        if c.ident == "UPDATE_APP"
-            && let Some((_, expr)) = &c.default
-        {
-            self.update_apps.push(gives_this_repo(expr));
+        if c.ident == "UPDATE_APP" {
+            self.update_apps.push(c.default.as_ref().is_some_and(|(_, expr)| gives_this_repo(expr)));
         }
         syn::visit::visit_trait_item_const(self, c);
     }
@@ -534,8 +532,8 @@ fn update_source(tree: &Tree) -> Vec<String> {
 }
 
 /// Lines in interface code, outside `theme.rs` and tests, that use a named `Color32` constant:
-/// `Color32`, `::` and a capital, whatever whitespace or comments come between. Every line naming
-/// `Color32` counts in a file that doesn't tokenise.
+/// `Color32`, `::` and a capital, whatever whitespace or comments come between. Source that doesn't
+/// tokenise falls back to boundary-aware matching across whitespace.
 fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
     let mut out = Vec::new();
     for (path, text) in tree.under("crates/ui-egui/src/") {
@@ -547,16 +545,15 @@ fn colour_lines(tree: &Tree) -> Vec<(&str, usize, String)> {
         let capital = |next: Option<&Token>| matches!(next, Some(Token::Ident(i)) if i.strip_prefix("r#").unwrap_or(i).starts_with(|c: char| c.is_ascii_uppercase()));
         let mut named: Vec<usize> = match lex(&read) {
             Some(lexed) => path_heads(&lexed, "Color32").filter(|&(_, next)| capital(next)).map(|(i, _)| line_index(&read, i)).collect(),
-            // Source that doesn't tokenise is read a line at a time.
-            None => {
-                let named = |l: &str| {
-                    l.match_indices("Color32").any(|(i, _)| {
-                        let rest = l[i + "Color32".len()..].trim_start().strip_prefix("::").map(str::trim_start);
-                        rest.is_some_and(|r| r.strip_prefix("r#").unwrap_or(r).starts_with(|c: char| c.is_ascii_uppercase()))
-                    })
-                };
-                lines.iter().enumerate().filter(|(_, l)| named(l)).map(|(n, _)| n).collect()
-            }
+            // Source that doesn't tokenise falls back to boundary-aware whole-source path matching.
+            None => read
+                .match_indices("Color32")
+                .filter(|&(i, _)| read[..i].chars().next_back().is_none_or(|c| !c.is_alphanumeric() && c != '_'))
+                .filter_map(|(i, _)| {
+                    let rest = read[i + "Color32".len()..].trim_start().strip_prefix("::")?.trim_start();
+                    rest.strip_prefix("r#").unwrap_or(rest).starts_with(|c: char| c.is_ascii_uppercase()).then(|| line_index(&read, i))
+                })
+                .collect(),
         };
         named.dedup();
         out.extend(named.into_iter().map(|n| (path, n + 1, lines[n].trim().to_string())));
@@ -1312,6 +1309,9 @@ mod tests {
         fails(update_source, &[(UPDATE_APP_FILE, nested)], "lacks `repo");
         let in_trait = "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\ntrait Apps {\n    const UPDATE_APP: App = App { ..suite::PDFCRAFT };\n}\n";
         fails(update_source, &[(UPDATE_APP_FILE, in_trait)], "lacks `repo");
+        let trait_no_default =
+            "pub const UPDATE_APP: App = App {\n    repo: \"yungSNAT/PlutarchPages\",\n};\ntrait Apps {\n    const UPDATE_APP: App;\n}\n";
+        fails(update_source, &[(UPDATE_APP_FILE, trait_no_default)], "lacks `repo");
     }
 
     #[test]
@@ -1437,9 +1437,16 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
     }
 
     #[test]
-    fn source_that_does_not_tokenise_is_read_a_line_at_a_time() {
-        let canvas = "fn page(fill: Color32) {\n    painter.rect_filled(r, 0.0, Color32 :: WHITE);\n    let s = \"unclosed;\n";
-        assert_eq!(colour_line_numbers(canvas), [2]);
+    fn source_that_does_not_tokenise_matches_colour_paths_across_lines_and_boundaries() {
+        let canvas = "fn page(fill: Color32) {
+    painter.rect_filled(r, 0.0, Color32 :: WHITE);
+    painter.rect_filled(r, 0.0, MyColor32::WHITE);
+    painter.rect_filled(r, 0.0, Color32
+        ::BLACK);
+    painter.rect_filled(r, 0.0, r#Color32::GREEN);
+    let s = \"unclosed;
+";
+        assert_eq!(colour_line_numbers(canvas), [2, 4, 6]);
     }
 
     #[test]
