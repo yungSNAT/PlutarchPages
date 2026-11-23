@@ -802,7 +802,7 @@ fn kept_arabic_marks_in_a_subset_whose_mark_features_have_no_lookups_fall_back_f
 #[test]
 fn kept_arabic_stacked_marks_in_a_subset_without_mark_to_mark_lookups_fall_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
-    assert!(KEPT.contains("\u{0651}\u{064e}"), "the kept text stacks fatha on shadda");
+    assert!(KEPT.contains("\u{064e}\u{0651}"), "the kept text has fatha and shadda on one letter, which the shaper stacks");
     emptied_lookups_fall_back_for_the_run(face, &[b"mkmk"]);
 }
 
