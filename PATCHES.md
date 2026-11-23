@@ -152,6 +152,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `packaging/linux/flatpak/ai.storyteller.pdfcraft*.yml`, move its changes across and delete it. The
   other packages still use `ai.storyteller.pdfcraft` and the `pdfcraft` package name, which v0.15.0
   shipped, so they can't be installed alongside upstream's either.
+- `packaging/linux/flatpak-oci.sh` is deleted: nothing here called or documented it, and the
+  releases publish no OCI image (`flatpak-bundle.sh --oci` still builds the layout). Delete it
+  when a merge brings it back.
 - `packaging/linux/nfpm.yaml` takes its glibc floors from `package.sh`, because riscv64 builds on Ubuntu
   24.04 and needs 2.39. Upstream hard-codes 2.35, which understates it there.
 - Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
