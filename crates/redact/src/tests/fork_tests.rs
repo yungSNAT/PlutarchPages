@@ -574,31 +574,37 @@ fn drawn_names_keeps_each_name_once_and_stops_keeping_at_the_budget() {
 #[test]
 fn a_copied_stream_holding_ei_does_not_move_the_end_of_an_inline_image_before_it() {
     // 20 operators after the image, and the copied stream's first, let the renderer take its real
-    // `EI` in the source; the 18 that fill the redacted rectangles go.
-    let first = [&b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI 1 0 0 1 5 5 cm 0 0 0 rg"[..], &b" 0 210 10 10 re f".repeat(9)].concat();
+    // `EI` in the source; the ones that fill the redacted rectangles go. Without the `cm` and `rg`,
+    // the image would swallow only the `/B` of `/BEI`, leaving `gs` without its operand.
+    let image = b"q BI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7F> EI";
+    let kept = [&image[..], b" 1 0 0 1 5 5 cm 0 0 0 rg", &b" 0 210 10 10 re f".repeat(9)].concat();
+    let bare = [&image[..], &b" 0 210 10 10 re f".repeat(10)].concat();
     let ends = |content: &[u8]| {
         let parsed = pdfcraft_content::parse(content);
         let image = parsed.ops.iter().find_map(|o| o.inline.as_ref().map(|(_, data)| data.clone()));
-        (parsed.ambiguous_images, image, parsed.ops.iter().filter(|o| o.is("cm")).count())
+        let states: Vec<_> = parsed.ops.iter().filter(|o| o.is("gs")).map(|o| o.operands.clone()).collect();
+        (parsed.ambiguous_images, image, parsed.ops.iter().filter(|o| o.is("cm")).count(), states)
     };
-    for tail in [&b"BX 1 FOOEI EX Q"[..], b"/BEI gs Q"] {
+    let bei = || vec![vec![pdfcraft_cos::Object::Name(b"BEI".to_vec())]];
+    for (first, tail, cms, states) in [(&kept, &b"BX 1 FOOEI EX Q"[..], 1, vec![]), (&kept, b"/BEI gs Q", 1, bei()), (&bare, b"/BEI gs Q", 0, bei())] {
         let label = String::from_utf8_lossy(tail);
         let mut doc = pdf(vec![
             b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
             b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> >> >>".to_vec(),
-            stream("", &first),
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents [4 0 R 5 0 R] /Resources << /Font << /F1 6 0 R >> /ExtGState << /BEI << /ca 0.5 >> >> >> >>".to_vec(),
+            stream("", first),
             stream("/PCAdded << /Kind /Shape >>", tail),
             FONT.replace("95 0 R", "7 0 R").into_bytes(),
             widths(),
         ]);
-        assert_eq!(ends(content(&doc, 0).as_bytes()), (0, Some(b"7F>".to_vec()), 1), "the source, {label}");
+        let expected = (0, Some(b"7F>".to_vec()), cms, states);
+        assert_eq!(ends(content(&doc, 0).as_bytes()), expected, "the source, {label}, {cms} cm");
         mark(&mut doc, 0, &[[0.0, 200.0, 300.0, 300.0]], "");
         apply(&mut doc, None).unwrap();
         let after = content(&doc, 0);
-        assert_eq!(ends(after.as_bytes()), (0, Some(b"7F>".to_vec()), 1), "redacted, {label}: {after}");
+        assert_eq!(ends(after.as_bytes()), expected, "redacted, {label}, {cms} cm: {after}");
         // Re-encoded only, the copied stream draws what it drew, so its added item stays editable.
-        assert_eq!(added_items(&doc), 1, "{label}");
+        assert_eq!(added_items(&doc), 1, "{label}, {cms} cm");
     }
 }
 
