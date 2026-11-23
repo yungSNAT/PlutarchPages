@@ -26,6 +26,7 @@ building this copy after a revision bump.
 | The weak-hash lines carry `NOSONAR` (#58) | `src/crypt.rs` | `cargo xtask fork-check` |
 | Failed operands are read again a bounded number of times (#128, `f74779bb`) | `src/cos/content.rs` | `cos::content::tests::unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times` |
 | A written inline image ends where it was read, as the renderer reads it (#134, `9ab4f813`) | `src/cos/content.rs` | the `cos::content::tests` inline-image cases |
+| An operator keyword holding `EI` is not written, so it can't end an inline image written before it (#198) | `src/cos/content.rs` | `cos::content::tests::an_operator_keyword_holding_ei_is_not_written` |
 | `Document::scan_objects_where` judges an encrypted file's objects as stored and decrypts only those it keeps, so the signature list's search for document timestamps no longer decrypts the whole file (#160) | `src/cos/document/objects.rs`, `src/cos/document/tests.rs` | `cos::document::tests::a_refused_object_is_not_loaded_through_its_own_length`; `crates/cos/tests/it/encryption.rs`; `crates/sign` `discovery_does_not_decrypt_what_it_refuses` |
 
 Upstream security commits the fork took early (#67) are in the base already. RC4 stays craft-pdf's
