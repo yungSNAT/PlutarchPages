@@ -771,6 +771,7 @@ fn launch_layout_waits_for_cli_opens_and_preserves_restored_tabs() {
                         then: None,
                         display_override: Some((PageLayout::TwoUp, false)),
                         reopen_page: None,
+                        from_session_restore: false,
                         ready: None,
                     });
                     replies.push((
@@ -830,6 +831,7 @@ fn launch_layout_failed_or_cancelled_opens_do_not_target_existing_documents() {
             then: None,
             display_override: Some((PageLayout::TwoUp, false)),
             reopen_page: None,
+            from_session_restore: false,
             ready: None,
         });
         app.set_launch_layout("single").unwrap();
@@ -930,6 +932,7 @@ fn a_repeated_waiting_open_keeps_the_tool_it_brings() {
         display_override: None,
         activate: true,
         reopen_page: None,
+        from_session_restore: false,
     });
     assert_eq!(app.open_path_then(&path, Some("export.text")), crate::OpenOutcome::Pending);
     assert_eq!(app.deferred_opens.len(), 1);

@@ -380,6 +380,8 @@ pub struct PasswordPrompt {
     /// A restored last-session page, applied after this PDF is unlocked.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) reopen_page: Option<usize>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) from_session_restore: bool,
 }
 
 impl Drop for PasswordPrompt {

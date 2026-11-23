@@ -20,6 +20,7 @@ struct FileOpenOptions {
     display_override: Option<(canvas::PageLayout, bool)>,
     activate: bool,
     reopen_page: Option<usize>,
+    from_session_restore: bool,
 }
 
 /// Whether CLI option `key` is an independent app-chrome preference that can apply before the
@@ -196,6 +197,7 @@ impl PdfCraftApp {
             then: request.then,
             display_override: None,
             reopen_page: None,
+            from_session_restore: false,
             ready: None,
         });
         Ok(token)
@@ -223,6 +225,7 @@ impl PdfCraftApp {
                     display_override: next.display_override,
                     activate: next.activate,
                     reopen_page: next.reopen_page,
+                    from_session_restore: next.from_session_restore,
                 },
             );
         }
@@ -337,12 +340,7 @@ impl PdfCraftApp {
                 Ok(prepared) => {
                     // A pure delayed session-restore request never steals focus from a tab or
                     // Combine view that is already active.
-                    let activate = pending.activate
-                        && !(pending.reopen_page.is_some()
-                            && pending.then.is_none()
-                            && pending.after_open.is_none()
-                            && pending.recovered.is_none()
-                            && (self.active.is_some() || self.combine_showing()));
+                    let activate = pending.activate && !(pending.from_session_restore && (self.active.is_some() || self.combine_showing()));
                     match self.finish_open(&pending.name, pending.path.clone(), bytes.len(), prepared, activate) {
                         Ok(id) => {
                             if pending.path.is_some() {
@@ -388,6 +386,7 @@ impl PdfCraftApp {
                         after_open: pending.after_open,
                         display_override: pending.display_override,
                         reopen_page: pending.reopen_page,
+                        from_session_restore: pending.from_session_restore,
                     });
                 }
                 Err(error) => self.notify_fmt("Couldn't open {name}: {e}", &[("name", &pending.name), ("e", &error.to_string())]),
@@ -430,6 +429,8 @@ impl PdfCraftApp {
                     display_override: None,
                     #[cfg(not(target_arch = "wasm32"))]
                     reopen_page: None,
+                    #[cfg(not(target_arch = "wasm32"))]
+                    from_session_restore: false,
                 });
                 return Ok(());
             }
@@ -791,6 +792,7 @@ impl PdfCraftApp {
             {
                 pending.display_override = p.display_override;
                 pending.reopen_page = p.reopen_page;
+                pending.from_session_restore = p.from_session_restore;
                 // Replies behind it that ask for a password wait for its outcome
                 // (`poll_pending_opens`).
                 self.password_retry = Some(*token);
@@ -857,6 +859,7 @@ impl PdfCraftApp {
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         prompt.reopen_page = p.reopen_page;
+                        prompt.from_session_restore = p.from_session_restore;
                     }
                 }
             }
@@ -932,7 +935,7 @@ impl PdfCraftApp {
     /// Reopen one file from the previous session on the background worker when live, at `page`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn open_session_file(&mut self, path: &str, page: usize, activate: bool) -> OpenOutcome {
-        self.open_file_request(path, FileOpenOptions { activate, reopen_page: Some(page), ..Default::default() })
+        self.open_file_request(path, FileOpenOptions { activate, reopen_page: Some(page), from_session_restore: true, ..Default::default() })
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -942,9 +945,19 @@ impl PdfCraftApp {
         match pdfcraft_engine::open_parameters::split(path, |p| std::path::Path::new(p).is_file()) {
             Some((file, destination)) => self.open_file_request(
                 &file,
-                FileOpenOptions { after_open: Some(destination), then, display_override, activate: true, reopen_page: None },
+                FileOpenOptions {
+                    after_open: Some(destination),
+                    then,
+                    display_override,
+                    activate: true,
+                    reopen_page: None,
+                    from_session_restore: false,
+                },
             ),
-            None => self.open_file_request(path, FileOpenOptions { after_open: None, then, display_override, activate: true, reopen_page: None }),
+            None => self.open_file_request(
+                path,
+                FileOpenOptions { after_open: None, then, display_override, activate: true, reopen_page: None, from_session_restore: false },
+            ),
         }
     }
 
@@ -952,7 +965,7 @@ impl PdfCraftApp {
     /// worker's queue keeps its destination with it, as its path is the file alone (#3425).
     #[cfg(not(target_arch = "wasm32"))]
     fn open_file_request(&mut self, path: &str, options: FileOpenOptions) -> OpenOutcome {
-        let FileOpenOptions { after_open, then, display_override, activate, reopen_page } = options;
+        let FileOpenOptions { after_open, then, display_override, activate, reopen_page, from_session_restore } = options;
         // One file, one tab (#2166): a file that is open already comes to the front instead,
         // and the tool it was opened for runs on it. One still being opened is left to that.
         if let Some(i) = self.tab_showing(path) {
@@ -974,6 +987,7 @@ impl PdfCraftApp {
         }
         if let Some(pending) = self.pending_opens.iter_mut().find(|p| p.path.as_deref().is_some_and(|p| same_file(p, path))) {
             pending.activate |= activate;
+            pending.from_session_restore &= from_session_restore;
             if display_override.is_some() {
                 pending.display_override = display_override;
             }
@@ -992,6 +1006,7 @@ impl PdfCraftApp {
         // brings is kept.
         if let Some(prompt) = self.password_prompt.as_mut().filter(|p| p.path.as_deref().is_some_and(|p| same_file(p, path))) {
             prompt.activate |= activate;
+            prompt.from_session_restore &= from_session_restore;
             if display_override.is_some() {
                 prompt.display_override = display_override;
             }
@@ -1006,6 +1021,7 @@ impl PdfCraftApp {
         }
         if let Some(deferred) = self.deferred_opens.iter_mut().find(|d| same_file(&d.path, path)) {
             deferred.activate |= activate;
+            deferred.from_session_restore &= from_session_restore;
             if display_override.is_some() {
                 deferred.display_override = display_override;
             }
@@ -1076,7 +1092,15 @@ impl PdfCraftApp {
             // The worker queue is bounded. A long file list (a launch behind a password prompt,
             // or many files at once) waits here, in order, and is submitted as opens finish.
             if self.pending_opens.len() >= self.open_slots() || !self.deferred_opens.is_empty() {
-                self.deferred_opens.push_back(DeferredOpen { path: path.to_string(), after_open, then, display_override, activate, reopen_page });
+                self.deferred_opens.push_back(DeferredOpen {
+                    path: path.to_string(),
+                    after_open,
+                    then,
+                    display_override,
+                    activate,
+                    reopen_page,
+                    from_session_restore,
+                });
                 return OpenOutcome::Pending;
             }
             match self.schedule_open(OpenRequest {
@@ -1094,6 +1118,7 @@ impl PdfCraftApp {
                     if let Some(pending) = self.pending_opens.iter_mut().find(|pending| pending.token == token) {
                         pending.display_override = display_override;
                         pending.reopen_page = reopen_page;
+                        pending.from_session_restore = from_session_restore;
                     }
                     OpenOutcome::Pending
                 }

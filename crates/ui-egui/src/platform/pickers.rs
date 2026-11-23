@@ -378,6 +378,7 @@ mod tests {
             then: None,
             display_override: None,
             reopen_page: None,
+            from_session_restore: false,
             ready: None,
         });
         let got = Arc::new(Mutex::new(Vec::new()));

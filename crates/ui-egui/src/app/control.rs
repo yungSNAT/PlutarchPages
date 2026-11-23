@@ -9,20 +9,17 @@ impl PdfCraftApp {
     pub(crate) fn suppress_session_restore_activation(&mut self) {
         self.session_restore_needs_focus = false;
         for pending in &mut self.pending_opens {
-            if pending.reopen_page.is_some() && pending.then.is_none() && pending.after_open.is_none() && pending.recovered.is_none() {
+            if pending.from_session_restore {
                 pending.activate = false;
             }
         }
         for deferred in &mut self.deferred_opens {
-            if deferred.reopen_page.is_some() && deferred.then.is_none() && deferred.after_open.is_none() {
+            if deferred.from_session_restore {
                 deferred.activate = false;
             }
         }
         if let Some(prompt) = self.password_prompt.as_mut()
-            && prompt.reopen_page.is_some()
-            && prompt.then.is_none()
-            && prompt.after_open.is_none()
-            && prompt.recovered.is_none()
+            && prompt.from_session_restore
         {
             prompt.activate = false;
         }

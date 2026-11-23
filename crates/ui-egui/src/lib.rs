@@ -286,6 +286,7 @@ struct PendingOpen {
     then: Option<&'static str>,
     display_override: Option<(canvas::PageLayout, bool)>,
     reopen_page: Option<usize>,
+    from_session_restore: bool,
     /// A reply taken from `receiver` and kept back for later (a password prompt waiting for an
     /// earlier file's password retry).
     ready: Option<open_worker::ResultKind>,
@@ -300,6 +301,7 @@ struct DeferredOpen {
     display_override: Option<(canvas::PageLayout, bool)>,
     activate: bool,
     reopen_page: Option<usize>,
+    from_session_restore: bool,
 }
 
 /// Puts `(html, plain_text)` on a clipboard; `false` when it couldn't, and plain-text Copy is
