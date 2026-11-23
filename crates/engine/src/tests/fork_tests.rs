@@ -280,3 +280,126 @@ fn document_text_lines_are_the_lines_paired_with_the_blocks() {
     assert!(!lines.is_empty());
     assert_eq!(lines, doc.text_lines_and_blocks(0).0);
 }
+
+/// A page showing "Codename BLUEFIN report", with `catalog` and `page` entries added and `extra`
+/// objects numbered from 6.
+fn leaky_page(catalog: &str, page: &str, extra: &[&str]) -> Vec<u8> {
+    let body = "BT /F1 10 Tf 20 150 Td (Codename BLUEFIN report) Tj ET";
+    let mut objs = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog} >>"),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 612 300] >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R {page} >>"),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{body}\nendstream", body.len()),
+    ];
+    objs.extend(extra.iter().map(ToString::to_string));
+    pdf_of(&objs)
+}
+
+/// Open `pdf`, run `before`, redact BLUEFIN where the page shows it, then try to save: the
+/// bytes a save would write, or why it refused.
+fn redact_then_save(pdf: Vec<u8>, before: impl FnOnce(&mut Session, DocId)) -> (Session, DocId, Result<Arc<Vec<u8>>, EditError>) {
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("leaky.pdf", None, Arc::new(pdf), None).unwrap();
+    before(&mut s, id);
+    mark_shown_text(&mut s, id, "BLUEFIN");
+    s.apply(id, Edit::ApplyRedactions { pages: None }).unwrap();
+    let saved = saved_or_refused(&s, id);
+    (s, id, saved)
+}
+
+fn saved_or_refused(s: &Session, id: DocId) -> Result<Arc<Vec<u8>>, EditError> {
+    s.save_bytes(id).and_then(|b| s.check_save(id, &b).map(|()| b))
+}
+
+/// The refusal of a save whose file still holds the redacted word in `catalog`, `page` or
+/// `extra` (see [`leaky_page`]); it must name `place`.
+fn refusal(catalog: &str, page: &str, extra: &[&str], place: &str) -> String {
+    let (_, _, saved) = redact_then_save(leaky_page(catalog, page, extra), |_, _| {});
+    let said = saved.expect_err("the save went ahead with the redacted word in the file").to_string();
+    assert!(said.contains(place), "{said}");
+    said
+}
+
+#[test]
+fn a_save_refuses_while_a_link_address_holds_redacted_text() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+    let said = refusal("", "/Annots [6 0 R]", &[link], "1 link, action or script");
+    assert!(said.contains("Links, actions and scripts"), "{said}");
+}
+
+#[test]
+fn a_save_refuses_while_a_document_script_holds_redacted_text() {
+    let names = "/Names << /JavaScript << /Names [(start) 6 0 R] >> >>";
+    refusal(names, "", &["<< /S /JavaScript /JS (app.alert\('Bluefin'\)) >>"], "link, action or script");
+}
+
+#[test]
+fn a_save_refuses_while_a_script_stream_holds_redacted_text() {
+    let js = "app.alert('BLUEFIN');";
+    let stream = format!("<< /Length {} >>\nstream\n{js}\nendstream", js.len());
+    refusal("/OpenAction 6 0 R", "", &["<< /S /JavaScript /JS 7 0 R >>", &stream], "link, action or script");
+}
+
+#[test]
+fn a_save_refuses_while_a_named_destination_holds_redacted_text() {
+    refusal("/Names << /Dests << /Names [(Bluefin plans) [3 0 R /Fit]] >> >>", "", &[], "link, action or script");
+}
+
+#[test]
+fn a_save_refuses_while_a_form_field_value_holds_redacted_text() {
+    let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "1 form field");
+    assert!(said.contains("Form fields"), "{said}");
+}
+
+#[test]
+fn a_save_refuses_while_an_attached_file_holds_redacted_text() {
+    let data = "draft: Codename BLUEFIN report";
+    let file = format!("<< /Type /EmbeddedFile /Length {} >>\nstream\n{data}\nendstream", data.len());
+    let names = "/Names << /EmbeddedFiles << /Names [(notes.txt) 6 0 R] >> >>";
+    refusal(names, "", &["<< /Type /Filespec /F (notes.txt) /EF << /F 7 0 R >> >>", &file], "1 attachment");
+}
+
+#[test]
+fn a_save_refuses_while_a_bookmark_holds_redacted_text_and_goes_ahead_once_it_is_removed() {
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "", &[]), |s, id| {
+        let title = "Bluefin plans".into();
+        s.apply(id, Edit::AddBookmark { parent: vec![], index: 0, title, page: 0, left: None, top: None }).unwrap();
+    });
+    let said = saved.expect_err("the bookmark title still holds the word").to_string();
+    assert!(said.contains("1 bookmark title") && said.contains("Bookmarks"), "{said}");
+    s.apply(id, Edit::RemoveHidden { which: vec![crate::Hidden::Bookmarks] }).unwrap();
+    let saved = saved_or_refused(&s, id).expect("nothing holds the word now");
+    s.mark_saved(id, saved, None).unwrap();
+}
+
+#[test]
+fn an_undone_redaction_holds_nothing_back() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+    let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[link]), |_, _| {});
+    assert!(saved.is_err());
+    s.undo(id).unwrap();
+    saved_or_refused(&s, id).expect("the redaction was undone, so the link is the user's to keep");
+    s.redo(id).unwrap();
+    assert!(saved_or_refused(&s, id).is_err(), "redoing it holds the text again");
+}
+
+#[test]
+fn a_document_without_applied_redactions_saves_whatever_its_links_say() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [300 10 400 30] /A << /S /URI /URI (https://example.com/bluefin) >> >>";
+    let mut s = Session::new().with_clock(|| 1_700_000_000);
+    let id = s.open("plain.pdf", None, Arc::new(leaky_page("", "/Annots [6 0 R]", &[link])), None).unwrap();
+    mark_shown_text(&mut s, id, "BLUEFIN");
+    saved_or_refused(&s, id).expect("a mark that isn't applied holds nothing back");
+}
+
+/// A page label no Remove hidden information category removes is told, not refused: a refusal
+/// would leave no way to save.
+#[test]
+fn text_in_a_place_nothing_removes_is_told_and_saved() {
+    let pdf = leaky_page("/PageLabels << /Nums [0 << /S /D /P (Bluefin-) >>] >>", "", &[]);
+    let (s, id, saved) = redact_then_save(pdf, |_, _| {});
+    saved.expect("a page label alone doesn't refuse the save");
+    let left = s.get(id).unwrap().redaction_elsewhere().expect("applying tells where the text is");
+    assert_eq!((left.other, left.refuses()), (1, false));
+}
