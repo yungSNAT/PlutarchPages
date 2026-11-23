@@ -737,10 +737,55 @@ fn the_space_glyph_never_stands_for_a_letter() {
 fn kept_arabic_marks_in_a_subset_without_mark_positioning_fall_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
     assert!(KEPT.chars().any(|c| matches!(u32::from(c), 0x064b..=0x065f)), "the kept text has marks");
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| subset_without_gpos(face, keep));
+    falls_back_for_the_run(face, page, KEPT);
+}
+
+/// The face's subset of the glyphs in `keep`, with its cmap, GSUB and GDEF but no GPOS.
+fn subset_without_gpos(face: &pdfcraft_fonts::CraftFont, keep: &BTreeSet<usize>) -> Vec<u8> {
+    let out: Vec<([u8; 4], Vec<u8>)> =
+        tables(&subset(face.bytes, keep, true)).into_iter().filter(|(t, _)| t != b"GPOS").map(|(t, d)| (t, d.to_vec())).collect();
+    assemble(&out)
+}
+
+/// Unmarked text whose letters the face draws as a base and dots of their own (yeh), in a subset
+/// that dropped its GPOS: no character is a mark, but the dots the GSUB makes would sit where they
+/// fall. The whole run is drawn in the bundled face.
+#[test]
+fn unmarked_arabic_drawn_with_dot_glyphs_in_a_subset_without_mark_positioning_falls_back_for_the_run() {
+    const UNMARKED: &str = "عليكم";
+    let Some(face) = arabic_face() else { return };
+    assert!(!UNMARKED.chars().any(|c| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670)), "no character is a mark");
+    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, UNMARKED).unwrap();
+    assert!(shaped.glyphs.iter().any(|g| g.text.is_empty()), "the face draws a letter as a base and its dots");
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| subset_without_gpos(face, keep));
+    falls_back_for_the_run(face, page, UNMARKED);
+}
+
+/// `gpos` with the lookup lists of its `mark` and `mkmk` features emptied, and how many it emptied:
+/// the features are still selected but place nothing.
+fn without_mark_lookups(gpos: &[u8]) -> (Vec<u8>, usize) {
+    let (mut out, list, mut emptied) = (gpos.to_vec(), be16(gpos, 6), 0);
+    for record in (0..be16(gpos, list)).map(|i| list + 2 + 6 * i) {
+        if matches!(&gpos[record..record + 4], b"mark" | b"mkmk") {
+            let count = list + be16(gpos, record + 4) + 2;
+            emptied += usize::from(be16(gpos, count) > 0);
+            out[count..count + 2].copy_from_slice(&[0, 0]);
+        }
+    }
+    (out, emptied)
+}
+
+/// A subset whose GPOS keeps its `mark` and `mkmk` features, but with no lookups: their names
+/// alone place no mark. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_marks_in_a_subset_whose_mark_features_have_no_lookups_fall_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
     let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
-        let out: Vec<([u8; 4], Vec<u8>)> =
-            tables(&subset(face.bytes, keep, true)).into_iter().filter(|(t, _)| t != b"GPOS").map(|(t, d)| (t, d.to_vec())).collect();
-        assemble(&out)
+        let program = subset(face.bytes, keep, true);
+        let (gpos, emptied) = without_mark_lookups(tables(&program)[b"GPOS"]);
+        assert!(emptied >= 2, "the subset's GPOS has mark and mkmk lookups");
+        with_table(&program, b"GPOS", gpos)
     });
     falls_back_for_the_run(face, page, KEPT);
 }
