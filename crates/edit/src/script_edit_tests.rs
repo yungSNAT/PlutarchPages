@@ -981,13 +981,15 @@ fn a_mark_outside_an_arabic_letters_run_is_refused() {
     let Some(face) = arabic_face() else { return };
     assert!(joins_arabic(face.bytes, face.bytes, KEPT));
     assert!(joins_arabic(face.bytes, face.bytes, "عليكم 1 a"));
-    // A Quranic pause mark written after a space opens a run too: refused, though written straight
-    // after the word it is kept.
-    for text in ["عليكم 1\u{0301}", "عليكم a\u{0301}", "ع\u{0301}ليكم", "1\u{064e} عليكم", "\u{064e}عليكم", "لَا رَيْبَ \u{06db} فِيهِ"]
+    // A Quranic mark written after a space opens a run too: refused, though a GPOS-placed mark
+    // written straight after the word is kept (the bundled face leaves U+06DB itself unmoved by
+    // GPOS, so even straight after a word it falls back).
+    for text in
+        ["عليكم 1\u{0301}", "عليكم a\u{0301}", "ع\u{0301}ليكم", "1\u{064e} عليكم", "\u{064e}عليكم", "لَا رَيْبَ \u{06db} فِيهِ", "لَا رَيْبَ \u{06e2} فِيهِ"]
     {
         assert!(!joins_arabic(face.bytes, face.bytes, text), "{text:?}");
     }
-    assert!(joins_arabic(face.bytes, face.bytes, "لَا رَيْبَ\u{06db} فِيهِ"));
+    assert!(joins_arabic(face.bytes, face.bytes, "لَا رَيْبَ\u{06e2} فِيهِ"));
 }
 
 /// Each stacked mark shapes its word again, so their work over the whole text is bounded: 8 words
