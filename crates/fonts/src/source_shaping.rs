@@ -61,24 +61,77 @@ fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
         .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
         .collect();
     (!marks.is_empty()).then(|| {
-        marks
+        let mut indices: Vec<u16> = marks
             .iter()
             .filter_map(|r| r.feature(features.offset_data()).ok())
             .flat_map(|f| f.lookup_list_indices().iter().map(|i| i.get()).collect::<Vec<_>>())
-            .collect()
+            .collect();
+        indices.sort_unstable();
+        indices.dedup();
+        indices
     })
 }
 
-/// Whether one of `lookups` (mark-to-base or mark-to-mark) attaches `mark` to `onto`: both are
-/// covered, and `onto` has an anchor for `mark`'s class.
-fn attaches(gpos: &skrifa::raw::tables::gpos::Gpos, lookups: &[u16], mark: u32, onto: u32) -> bool {
+struct MarkFilter<'a> {
+    classes: Option<skrifa::raw::tables::gdef::ClassDef<'a>>,
+    mark_classes: Option<skrifa::raw::tables::gdef::ClassDef<'a>>,
+    mark_sets: Option<skrifa::raw::tables::gdef::MarkGlyphSets<'a>>,
+}
+
+impl<'a> MarkFilter<'a> {
+    fn new(face: &FontRef<'a>) -> Self {
+        let gdef = face.gdef().ok();
+        Self {
+            classes: gdef.as_ref().and_then(|g| g.glyph_class_def().transpose().ok().flatten()),
+            mark_classes: gdef.as_ref().and_then(|g| g.mark_attach_class_def().transpose().ok().flatten()),
+            mark_sets: gdef.as_ref().and_then(|g| g.mark_glyph_sets_def().transpose().ok().flatten()),
+        }
+    }
+
+    fn is_gdef_mark(&self, gid: GlyphId, fallback_mark: bool) -> bool {
+        self.classes.as_ref().map_or(fallback_mark, |c| c.get(gid) == 3)
+    }
+
+    fn allows_mark_properties(&self, flag: skrifa::raw::tables::layout::LookupFlag, filtering_set: Option<u16>, gid: GlyphId) -> bool {
+        use skrifa::raw::tables::layout::LookupFlag;
+        if flag.contains(LookupFlag::USE_MARK_FILTERING_SET) {
+            return filtering_set
+                .and_then(|set| self.mark_sets.as_ref()?.coverages().get(usize::from(set)).ok())
+                .is_some_and(|cov| cov.get(gid).is_some());
+        }
+        if let Some(class) = flag.mark_attachment_class() {
+            return self.mark_classes.as_ref().is_some_and(|c| c.get(gid) == class);
+        }
+        true
+    }
+
+    fn allows_current(&self, flag: skrifa::raw::tables::layout::LookupFlag, filtering_set: Option<u16>, gid: GlyphId) -> bool {
+        use skrifa::raw::tables::layout::LookupFlag;
+        if flag.contains(LookupFlag::IGNORE_MARKS) {
+            return false;
+        }
+        let class = self.classes.as_ref().map(|c| c.get(gid));
+        if matches!(class, Some(1)) && flag.contains(LookupFlag::IGNORE_BASE_GLYPHS) {
+            return false;
+        }
+        if matches!(class, Some(2)) && flag.contains(LookupFlag::IGNORE_LIGATURES) {
+            return false;
+        }
+        if class.is_none_or(|c| c == 3) {
+            return self.allows_mark_properties(flag, filtering_set, gid);
+        }
+        true
+    }
+}
+
+/// Whether `lookup` (mark-to-base or mark-to-mark) covers `mark` and `onto` with a non-null anchor
+/// for `mark`'s class.
+fn lookup_attaches(lookup: &skrifa::raw::tables::gpos::PositionLookup<'_>, mark: GlyphId, onto: GlyphId) -> bool {
     use skrifa::raw::tables::gpos::PositionSubtables;
     let anchored = |offsets: &[skrifa::raw::types::BigEndian<skrifa::raw::types::Nullable<skrifa::raw::types::Offset16>>], class: u16| {
         offsets.get(usize::from(class)).is_some_and(|o| !o.get().is_null())
     };
-    let Ok(list) = gpos.lookup_list() else { return false };
-    let (mark, onto) = (GlyphId::new(mark), GlyphId::new(onto));
-    lookups.iter().filter_map(|&i| list.lookups().get(usize::from(i)).ok()).any(|lookup| match lookup.subtables() {
+    match lookup.subtables() {
         Ok(PositionSubtables::MarkToBase(subtables)) => subtables.iter().flatten().any(|t| {
             let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark_coverage(), t.base_coverage(), t.mark_array(), t.base_array()) else {
                 return false;
@@ -96,7 +149,7 @@ fn attaches(gpos: &skrifa::raw::tables::gpos::Gpos, lookups: &[u16], mark: u32, 
             anchors.mark2_records().get(usize::from(b)).is_ok_and(|r| anchored(r.mark2_anchor_offsets(), class))
         }),
         _ => false,
-    })
+    }
 }
 
 /// Whether `program`, as a page embeds it (not with a cmap the editor rebuilt from ToUnicode),
@@ -182,35 +235,107 @@ fn places_marks(shaper: &harfrust::Shaper, space: Option<u32>, run: &str) -> boo
         .is_some_and(|clusters| clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1))
 }
 
-/// Whether the GPOS places the marks of `run`, one bidi run shaped in its direction by `face`
-/// with `lookups` (its `mark` and `mkmk` lookups for Thai): each cluster must have as many placed
-/// glyphs as combining marks, Sara Am counting for its Nikhahit. A glyph is placed if it moves when
-/// `mark` and `mkmk` are turned off, or if one of `lookups` attaches it to a glyph before it in the
-/// cluster ([`attaches`]): a face may draw a mark where it sits over most bases, so its anchors
-/// move it only over some. Feature names alone don't count: a GPOS whose lookups are empty or
-/// miss these glyphs would leave each mark at its glyph origin. A cluster whose GSUB merges 2
-/// marks into one glyph is refused too, which only costs the page's font.
-fn places_thai_marks(face: &FontRef, lookups: &[u16], shaper: &harfrust::Shaper, (run, direction): (&str, Direction)) -> bool {
+#[derive(Default)]
+struct ThaiCluster {
+    len: usize,
+    placed: usize,
+    last_base: Option<u32>,
+    last_mark: Vec<Option<u32>>,
+}
+
+fn any_selected_attaches(
+    selected: &[(u16, bool, skrifa::raw::tables::gpos::PositionLookup<'_>)],
+    filter: &MarkFilter<'_>,
+    entry: &ThaiCluster,
+    mark: GlyphId,
+    cache: &mut std::collections::HashMap<(u16, u32, u32), bool>,
+) -> bool {
+    selected.iter().enumerate().any(|(slot, (idx, is_mkmk, lookup))| {
+        if !filter.allows_current(lookup.lookup_flag(), lookup.mark_filtering_set(), mark) {
+            return false;
+        }
+        let onto = if *is_mkmk { entry.last_mark.get(slot).copied().flatten() } else { entry.last_base };
+        let Some(onto) = onto else { return false };
+        *cache.entry((*idx, mark.to_u32(), onto)).or_insert_with(|| lookup_attaches(lookup, mark, GlyphId::new(onto)))
+    })
+}
+
+fn update_last_marks(
+    selected: &[(u16, bool, skrifa::raw::tables::gpos::PositionLookup<'_>)],
+    filter: &MarkFilter<'_>,
+    entry: &mut ThaiCluster,
+    mark: GlyphId,
+) {
+    for (slot, (_, is_mkmk, lookup)) in selected.iter().enumerate() {
+        if *is_mkmk && filter.allows_mark_properties(lookup.lookup_flag(), lookup.mark_filtering_set(), mark) {
+            if entry.last_mark.is_empty() {
+                entry.last_mark.resize(selected.len(), None);
+            }
+            if let Some(cell) = entry.last_mark.get_mut(slot) {
+                *cell = Some(mark.to_u32());
+            }
+        }
+    }
+}
+
+/// Whether the GPOS places the marks of `run`, one bidi run shaped in its direction and script by
+/// `face` with `lookups` (its `mark` and `mkmk` lookups for Thai): each cluster must have as many
+/// placed glyphs as combining marks, Sara Am counting for its Nikhahit. A glyph is placed if it
+/// moves when `mark` and `mkmk` are turned off, or if one of `lookups` attaches it to the base
+/// (mark-to-base) or the last unskipped mark before it in the cluster (mark-to-mark), honouring
+/// lookup flags (`IgnoreMarks`, `MarkAttachmentType`, `UseMarkFilteringSet`). Feature names alone
+/// don't count: a GPOS whose lookups are empty, skipped or miss these glyphs would leave each mark
+/// at its glyph origin. A cluster whose GSUB merges 2 marks into one glyph is refused too, which
+/// only costs the page's font.
+fn places_thai_marks(
+    face: &FontRef,
+    lookups: &[u16],
+    shaper: &harfrust::Shaper,
+    (run, direction, script): (&str, Direction, Option<harfrust::Script>),
+) -> bool {
+    use skrifa::raw::tables::gpos::PositionSubtables;
     let Ok(gpos) = face.gpos() else { return false };
+    let Ok(list) = gpos.lookup_list() else { return false };
+    let filter = MarkFilter::new(face);
+    let selected: Vec<_> = lookups
+        .iter()
+        .filter_map(|&i| {
+            let lookup = list.lookups().get(usize::from(i)).ok()?;
+            match lookup.subtables() {
+                Ok(PositionSubtables::MarkToBase(_)) => Some((i, false, lookup)),
+                Ok(PositionSubtables::MarkToMark(_)) => Some((i, true, lookup)),
+                _ => None,
+            }
+        })
+        .collect();
     let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, ..));
-    let (with, without) = (shape_in(shaper, run, direction, &[]), shape_in(shaper, run, direction, &off));
+    let (with, without) = (shape_in(shaper, run, direction, script, &[]), shape_in(shaper, run, direction, script, &off));
     if with.glyph_infos().iter().map(|g| g.glyph_id).ne(without.glyph_infos().iter().map(|g| g.glyph_id)) {
         return false;
     }
     let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
-    let mut clusters = std::collections::BTreeMap::<usize, (Vec<u32>, usize)>::new();
+    let mut cache = std::collections::HashMap::new();
+    let mut clusters = std::collections::BTreeMap::<usize, ThaiCluster>::new();
     for ((info, on), off) in with.glyph_infos().iter().zip(with.glyph_positions()).zip(without.glyph_positions()) {
-        let (glyphs, placed) = clusters.entry(info.cluster as usize).or_default();
-        if !glyphs.is_empty() && (at(on) != at(off) || glyphs.iter().any(|&onto| attaches(&gpos, lookups, info.glyph_id, onto))) {
-            *placed += 1;
+        let entry = clusters.entry(info.cluster as usize).or_default();
+        let gid = GlyphId::new(info.glyph_id);
+        if entry.len > 0 && (at(on) != at(off) || any_selected_attaches(&selected, &filter, entry, gid, &mut cache)) {
+            entry.placed += 1;
         }
-        glyphs.push(info.glyph_id);
+        let is_mark = filter.is_gdef_mark(gid, entry.len > 0 && on.x_advance == 0);
+        entry.len += 1;
+        if !is_mark {
+            entry.last_base = Some(info.glyph_id);
+            entry.last_mark.fill(None);
+        } else {
+            update_last_marks(&selected, &filter, entry, gid);
+        }
     }
     let marks = |text: &str| text.chars().filter(|&c| c == '\u{0e33}' || unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM).count();
     let starts: Vec<usize> = clusters.keys().copied().collect();
-    clusters.values().zip(&starts).enumerate().all(|(i, ((_, placed), &start))| {
+    clusters.values().zip(&starts).enumerate().all(|(i, (cluster, &start))| {
         let end = starts.get(i + 1).copied().unwrap_or(run.len());
-        run.get(start..end).is_some_and(|text| *placed >= marks(text))
+        run.get(start..end).is_some_and(|text| cluster.placed >= marks(text))
     })
 }
 
@@ -263,16 +388,25 @@ fn moved_without(
 
 /// `text` shaped right to left with `features`.
 fn rtl_shape(shaper: &harfrust::Shaper, text: &str, features: &[harfrust::Feature]) -> harfrust::GlyphBuffer {
-    shape_in(shaper, text, Direction::RightToLeft, features)
+    shape_in(shaper, text, Direction::RightToLeft, None, features)
 }
 
-/// `text` shaped in `direction` with `features`.
-fn shape_in(shaper: &harfrust::Shaper, text: &str, direction: Direction, features: &[harfrust::Feature]) -> harfrust::GlyphBuffer {
+/// `text` shaped in `direction` (and optional OpenType `script`) with `features`.
+fn shape_in(
+    shaper: &harfrust::Shaper,
+    text: &str,
+    direction: Direction,
+    script: Option<harfrust::Script>,
+    features: &[harfrust::Feature],
+) -> harfrust::GlyphBuffer {
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
     buffer.set_direction(direction);
     buffer.guess_segment_properties();
+    if let Some(script) = script {
+        buffer.set_script(script);
+    }
     shaper.shape(buffer, ShapeOptions::new().features(features))
 }
 
@@ -327,13 +461,14 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     for run in runs {
         let Some(input) = text.get(run.clone()) else { continue };
         let direction = if levels.get(run.start).is_some_and(Level::is_rtl) { Direction::RightToLeft } else { Direction::LeftToRight };
+        let script = (!legacy_thai && thai_marks(input)).then_some(harfrust::script::THAI);
         if let Some(lookups) = &thai_lookups
-            && thai_marks(input)
-            && !places_thai_marks(&face, lookups, &shaper, (input, direction))
+            && script.is_some()
+            && !places_thai_marks(&face, lookups, &shaper, (input, direction, script))
         {
             return Err(no_thai_positioning());
         }
-        let output = shape_in(&shaper, input, direction, &[]);
+        let output = shape_in(&shaper, input, direction, script, &[]);
         let mut starts: Vec<_> = output.glyph_infos().iter().map(|g| g.cluster as usize).collect();
         starts.sort_unstable();
         starts.dedup();
