@@ -274,6 +274,8 @@ fn hash_words(words: &[&str]) -> u64 {
 /// ("Jane Citizen, Sydney" gives "Jane Citizen"), each mark followed by a space. Not the label
 /// ("Date"), nor a one-word value or part ("Sex: Male", "Yes, I consent"): too many lines hold
 /// them. A one-word value with a digit or '@' ("TFN: 123456789", an email address) is kept.
+/// Parts come from a run as collected, not from its right-to-left reversal, so a labelled
+/// right-to-left line drawn in visual order gives none.
 fn labelled_parts(run: &str) -> Vec<String> {
     let mut parts = Vec::new();
     let value = label_value(run);
