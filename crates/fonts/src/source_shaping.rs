@@ -102,7 +102,13 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let space = |face: &FontRef| face.charmap().map(' ').map(|g| g.to_u32());
     let (own_space, reference_space) = (space(&own), space(&reference));
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
-    text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
+    let runs = || text.split(|c: char| !joins(c)).filter(|run| !run.is_empty());
+    // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
+    // the text, is bounded; past it the text is refused, which only costs the page's font.
+    if runs().map(|run| stacked_marks(run).len().saturating_mul(run.len())).fold(0usize, usize::saturating_add) > 1 << 20 {
+        return false;
+    }
+    runs().all(|run| {
         if !places_marks(&own_shaper, own_space, run)
             || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
             || !follows_like(&own_shaper, &reference_shaper, run)
@@ -178,17 +184,28 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
 /// mark too. [`stacks_marks`] shows that `mkmk` moves each stacked mark, not what it puts it on:
 /// a lookup whose flags skip the middle of 3 marks puts the third on the first, through the
 /// second. A mark follows another if its glyphs move when the other alone loses `mark` and
-/// `mkmk`, which moves it; every pair that follows in the reference must follow in `own`. Only a
-/// mark beside another can have one follow it. Each such mark shapes the run again, so a
-/// run (a word) over 4 KiB is refused, which only costs the page's font.
+/// `mkmk`, which moves it; every pair that follows in the reference must follow in `own`. A pair
+/// only `own` has (a mark put on one the reference doesn't stack it on) is accepted, as
+/// [`stacks_marks`] accepts more stacked marks: a subset keeps its face's attachments. Only a
+/// mark beside another can have one follow it ([`stacked_marks`]); a run with none is not shaped
+/// again.
 fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
-    if run.len() > 4096 {
-        return false;
+    if stacked_marks(run).is_empty() {
+        return true;
     }
     match (followers(own, run), followers(reference, run)) {
         (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
         _ => false,
     }
+}
+
+/// The combining marks of `run` (byte offset and character) beside another one. The shaper
+/// reorders a letter's marks, so each of them may carry another.
+fn stacked_marks(run: &str) -> Vec<(usize, char)> {
+    let is_mark = |c: char| unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM;
+    let chars: Vec<(usize, char)> = run.char_indices().collect();
+    let beside = |i: usize| [i.wrapping_sub(1), i + 1].iter().any(|&j| chars.get(j).is_some_and(|&(_, c)| is_mark(c)));
+    chars.iter().enumerate().filter(|&(i, &(_, c))| is_mark(c) && beside(i)).map(|(_, &p)| p).collect()
 }
 
 /// The pairs (a mark's byte offset in `run`, that of a character whose glyphs move when the mark
@@ -218,11 +235,10 @@ fn followers(shaper: &harfrust::Shaper, run: &str) -> Option<std::collections::B
     };
     let unchanged = placed(&[]);
     let mut pairs = std::collections::BTreeSet::new();
-    let is_mark = |c: char| unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM;
-    let chars: Vec<(usize, char)> = run.char_indices().collect();
-    // The shaper reorders a letter's marks, so each mark beside another is tried.
-    let stacked = |i: usize| [i.wrapping_sub(1), i + 1].iter().any(|&j| chars.get(j).is_some_and(|&(_, c)| is_mark(c)));
-    for (at, mark) in chars.iter().enumerate().filter(|&(i, &(_, c))| is_mark(c) && stacked(i)).map(|(_, &p)| p) {
+    for (at, mark) in stacked_marks(run) {
+        // HarfRust stores the range's end less one and tests `cluster < end`, so this covers the
+        // mark's first byte alone; that is its cluster, as every combining mark takes 2 bytes or
+        // more. An inclusive range would cover nothing.
         let alone = at..at + mark.len_utf8();
         let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
         let moved = placed(&off);
