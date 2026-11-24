@@ -157,6 +157,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   when a merge brings it back.
 - `packaging/linux/nfpm.yaml` takes its glibc floors from `package.sh`, because riscv64 builds on Ubuntu
   24.04 and needs 2.39. Upstream hard-codes 2.35, which understates it there.
+- `cargo xtask icons` (`xtask/src/icons.rs`) replaces upstream's `packaging/icons.sh` and writes
+  the same files. If a merge changes or brings back the script, port the change to `icons.rs` and
+  delete it. The icon licence notes and ATTRIBUTION rows name the command.
 - Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
   stops it when that account can no longer run workflows. `fuzz.yml` runs at 03:18 UTC, a minute
   after upstream's, so that this repository's account is its actor. Taking upstream's line in a
@@ -303,6 +306,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   launch. If that run fails before the app starts, upstream's run (Direct3D 12 and OpenGL) and then
   eframe's OpenGL follow, and the `dx12-alone-failed` file in the settings folder skips the first
   run on later launches with the same display GPUs. Keep these runs at the next merge.
+- `pdfcraft-cli completions <bash|zsh|fish|powershell>` prints zero-dependency shell completion
+  scripts matching the CLI subcommands and options (`apps/pdfcraft-cli/src/completions.rs`, wired
+  into `apps/pdfcraft-cli/src/main.rs` and `apps/pdfcraft-cli/src/batch.rs`; tests in
+  `apps/pdfcraft-cli/tests/it/completions.rs`). Keep this when upstream changes `pdfcraft-cli`.
 
 ## Fixed differently upstream
 
