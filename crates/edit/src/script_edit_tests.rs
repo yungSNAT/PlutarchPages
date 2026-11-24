@@ -981,9 +981,26 @@ fn a_mark_outside_an_arabic_letters_run_is_refused() {
     let Some(face) = arabic_face() else { return };
     assert!(joins_arabic(face.bytes, face.bytes, KEPT));
     assert!(joins_arabic(face.bytes, face.bytes, "عليكم 1 a"));
-    for text in ["عليكم 1\u{0301}", "عليكم a\u{0301}", "ع\u{0301}ليكم", "1\u{064e} عليكم", "\u{064e}عليكم"] {
+    // A Quranic pause mark written after a space opens a run too: refused, though written straight
+    // after the word it is kept.
+    for text in ["عليكم 1\u{0301}", "عليكم a\u{0301}", "ع\u{0301}ليكم", "1\u{064e} عليكم", "\u{064e}عليكم", "لَا رَيْبَ \u{06db} فِيهِ"]
+    {
         assert!(!joins_arabic(face.bytes, face.bytes, text), "{text:?}");
     }
+    assert!(joins_arabic(face.bytes, face.bytes, "لَا رَيْبَ\u{06db} فِيهِ"));
+}
+
+/// Each stacked mark shapes its word again, so their work over the whole text is bounded: 8 words
+/// of beh and 2,047 fathas each are refused at once, not judged for a minute.
+#[test]
+fn many_stacked_marks_are_refused_within_a_bound() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let word = format!("ب{}", "\u{064e}".repeat(2047));
+    let text = vec![word; 8].join(" ");
+    let started = std::time::Instant::now();
+    assert!(!joins_arabic(face.bytes, face.bytes, &text));
+    assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
 }
 
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
