@@ -1258,4 +1258,109 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
         assert!(started.elapsed() < std::time::Duration::from_secs(3), "skipped mkmk: {:?}", started.elapsed());
     }
+
+    fn minimal_transitive_liga_gsub(first: u16, second: u16, mid: u16, final_gid: u16, use_alternate: bool) -> Vec<u8> {
+        let mut gsub = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        for w in [1u16, 0, 10, 30, 46, 1] {
+            push(&mut gsub, w);
+        }
+        gsub.extend_from_slice(b"thai");
+        for w in [8u16, 4, 0, 0, 0xFFFF, 1, 0, 1] {
+            push(&mut gsub, w);
+        }
+        gsub.extend_from_slice(b"liga");
+        for w in [8u16, 0, 2, 0, 1, 2, 6, 38] {
+            push(&mut gsub, w);
+        }
+        // Lookup 0: LigatureSubst (IgnoreMarks 0x0008, 32 bytes): first + second -> mid
+        for w in [4u16, 0x0008, 1, 8, 1, 8, 1, 14, 1, 1, first, 1, 4, mid, 2, second] {
+            push(&mut gsub, w);
+        }
+        // Lookup 1: SingleSubstFormat2 or AlternateSubstFormat1: mid -> final_gid
+        if use_alternate {
+            for w in [3u16, 0, 1, 8, 1, 8, 1, 14, 1, 1, mid, 1, final_gid] {
+                push(&mut gsub, w);
+            }
+        } else {
+            for w in [1u16, 0, 1, 8, 2, 8, 1, final_gid, 1, 1, mid] {
+                push(&mut gsub, w);
+            }
+        }
+        gsub
+    }
+
+    fn aliased_liga_gsub(lookups: u16, sets: u16, ligs: u16, base: u16, lig: u16) -> Vec<u8> {
+        let mut gsub = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        for w in [1u16, 0, 10, 12, 14, 0, 0, lookups] {
+            push(&mut gsub, w);
+        }
+        let l0_off = 2 + 2 * lookups;
+        for _ in 0..lookups {
+            push(&mut gsub, l0_off);
+        }
+        let cov_off = 6 + 2 * sets;
+        let set_off = cov_off + 6;
+        for w in [4u16, 0, 1, 8, 1, cov_off, sets] {
+            push(&mut gsub, w);
+        }
+        for _ in 0..sets {
+            push(&mut gsub, set_off);
+        }
+        for w in [1u16, 1, base, ligs] {
+            push(&mut gsub, w);
+        }
+        let lig_off = 2 + 2 * ligs;
+        for _ in 0..ligs {
+            push(&mut gsub, lig_off);
+        }
+        push(&mut gsub, lig);
+        push(&mut gsub, 1);
+        gsub
+    }
+
+    /// Valid RTL bidi Thai runs reverse clusters visually whilst preserving forward glyph order
+    /// inside each cluster (`[base, mark1, mark2]`).
+    #[test]
+    fn thai_rtl_runs_keep_intra_cluster_mark_order() {
+        let Some(face) = crate::document_thai_font() else { return };
+        for text in ["\u{202e}ก\u{0e34}\u{202c}", "\u{202e}ก\u{0e34}\u{e48}\u{202c}", "\u{202e}ก\u{0e34} ข\u{0e34}\u{202c}", "\u{202e}นี่ ดี ปู่\u{202c}"]
+        {
+            assert!(shape(face.bytes, text).is_ok(), "RTL Thai run failed: {text:?}");
+        }
+    }
+
+    /// A GSUB ligature rewritten by a subsequent `SingleSubst` or `AlternateSubst` still keeps its
+    /// HarfRust `lig_id`/`lig_comp`, so cross-component `mkmk` remains unpositioned and must fail.
+    #[test]
+    fn thai_ligated_bases_rewritten_by_single_or_alternate_subst_are_refused() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let no_ee = shape(face.bytes, "นี่").unwrap();
+        let [base_no, vowel] = [0, 1].map(|i| u16::try_from(no_ee.glyphs[i].id.to_u32()).unwrap());
+        let ka_ek = shape(face.bytes, "ก\u{0e48}").unwrap();
+        let [ka, wide_tone] = [0, 1].map(|i| u16::try_from(ka_ek.glyphs[i].id.to_u32()).unwrap());
+        let mid_gid = u16::try_from(shape(face.bytes, "ร").unwrap().glyphs[0].id.to_u32()).unwrap();
+        let base_gpos = with_table(face.bytes, b"GPOS", minimal_thai_gpos(base_no, vowel, wide_tone, 10, 0x0000, 1));
+        for use_alternate in [false, true] {
+            let bytes = with_table(&base_gpos, b"GSUB", minimal_transitive_liga_gsub(base_no, ka, mid_gid, base_no, use_alternate));
+            let legacy = shape_legacy_thai(&bytes, "น\u{0e35}ก\u{0e48}").unwrap();
+            assert_eq!(legacy.glyphs.len(), 3, "use_alternate={use_alternate}");
+            assert_eq!(legacy.glyphs[0].id.to_u32(), u32::from(base_no), "Lookup 1 rewrite failed: use_alternate={use_alternate}");
+            let error = shape(&bytes, "น\u{0e35}ก\u{0e48}").unwrap_err();
+            assert!(error.contains("mark positioning"), "use_alternate={use_alternate}: {error}");
+        }
+    }
+
+    /// Aliased GSUB ligature offsets must fail closed within budget rather than spending seconds.
+    #[test]
+    fn pathological_aliased_gsub_ligatures_fail_promptly() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let ka = u16::try_from(shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32()).unwrap();
+        let bytes = with_table(face.bytes, b"GSUB", aliased_liga_gsub(40, 1_000, 1_000, ka, ka));
+        let started = std::time::Instant::now();
+        let error = shape(&bytes, "กิ").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+    }
 }
