@@ -939,6 +939,99 @@ fn an_xobject_of_unknown_subtype_with_a_bbox_of_the_wrong_length_counts() {
     }
 }
 
+/// `/Subtype 8 0 R` naming `/Image` is still an image, and the renderer draws it. Redaction read
+/// only a direct name, so it kept the `Do` and the samples under the box (#6750). The direct
+/// `/Subtype /Image` is the control.
+#[test]
+fn an_image_whose_subtype_is_a_reference_is_redacted() {
+    const MARKER: &[u8; 16] = b"F9-SECRET-PIXELS";
+    for subtype in ["/Image", "8 0 R"] {
+        let img = stream(&format!("/Type /XObject /Subtype {subtype} /Width 16 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8"), MARKER);
+        let mut doc = one_page(b"q 10 0 0 10 10 10 cm /Im1 Do Q", "/XObject << /Im1 7 0 R >>", vec![img, b"/Image".to_vec()]);
+        mark(&mut doc, 0, &[[5.0, 5.0, 25.0, 25.0]], "");
+        let r = apply(&mut doc, None).unwrap();
+        assert_eq!(r.images_removed, 1, "{subtype}: {r:?}");
+        let c = content(&doc, 0);
+        assert!(!c.contains("/Im1 Do"), "{subtype}: {c}");
+        let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(MARKER.len()).any(|w| w == MARKER), "{subtype}: the image samples stay in the saved file");
+    }
+}
+
+/// An XObject the redactor cannot classify (no `/Subtype`, or one it does not know) may still draw
+/// something under a mark. Apply removes it there and verification counts it; one elsewhere stays.
+#[test]
+fn an_xobject_of_unknown_subtype_under_a_mark_goes() {
+    for subtype in ["", "/Subtype /PS", "/Subtype 42"] {
+        let x = stream(&format!("/Type /XObject {subtype} /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8"), [0]);
+        let src = b"q 10 0 0 10 10 10 cm /X1 Do Q q 10 0 0 10 200 200 cm /X1 Do Q";
+        let mut doc = one_page(src, "/XObject << /X1 7 0 R >>", vec![x]);
+        let rects = [[5.0, 5.0, 25.0, 25.0]];
+        assert_eq!(under(&mut doc, 0, &rects), 1, "{subtype:?}: verification counts it");
+        mark(&mut doc, 0, &rects, "");
+        let r = apply(&mut doc, None).unwrap();
+        assert_eq!(r.forms_removed, 1, "{subtype:?}: {r:?}");
+        let c = content(&doc, 0);
+        assert_eq!(c.matches("/X1 Do").count(), 1, "{subtype:?}: only the placement outside the mark stays: {c}");
+        assert!(c.contains("200 200 cm"), "{subtype:?}: {c}");
+    }
+}
+
+/// An unclassifiable XObject's `/Matrix` and `/BBox` are read with their entries by reference, as
+/// the proof reads a form's. Read only directly, a box moved onto the mark was taken for the
+/// identity or for no box, and the placement was kept and not counted. Present but malformed, its
+/// place can't be told, so it counts. The direct entries are the control.
+#[test]
+fn an_xobject_of_unknown_subtype_is_placed_by_referenced_geometry() {
+    for geometry in [
+        "/Matrix [1 0 0 1 100 100] /BBox [0 0 10 10]",
+        "/Matrix [1 0 0 1 8 0 R 9 0 R] /BBox [0 0 10 10]",
+        "/BBox [100 100 10 0 R 10 0 R]",
+        "/Matrix [1 0 0 1 100] /BBox [0 0 10 10]",
+        "/BBox [0 0 10]",
+    ] {
+        let x = stream(&format!("/Type /XObject /Subtype /PS {geometry}"), [0]);
+        let mut doc = one_page(b"/X1 Do", "/XObject << /X1 7 0 R >>", vec![x, b"100".to_vec(), b"100".to_vec(), b"110".to_vec()]);
+        let rects = [[105.0, 105.0, 110.0, 110.0]];
+        assert_eq!(under(&mut doc, 0, &rects), 1, "{geometry}: verification counts it");
+        mark(&mut doc, 0, &rects, "");
+        let r = apply(&mut doc, None).unwrap();
+        assert_eq!(r.forms_removed, 1, "{geometry}: {r:?}");
+        let c = content(&doc, 0);
+        assert!(!c.contains("/X1 Do"), "{geometry}: {c}");
+    }
+}
+
+/// A `/BBox` of null is no entry (ISO 32000-2 §7.3.9), directly or by reference. It was read as a
+/// malformed box, so an unclassifiable XObject placed outside every mark was removed and counted.
+/// No `/BBox` at all is the control.
+#[test]
+fn an_xobject_of_unknown_subtype_with_a_null_bbox_is_placed_as_without_one() {
+    for bbox in ["", "/BBox null", "/BBox 8 0 R"] {
+        let x = stream(&format!("/Type /XObject /Subtype /PS {bbox}"), [0]);
+        let src = b"q 10 0 0 10 200 200 cm /X1 Do Q";
+        let mut doc = one_page(src, "/XObject << /X1 7 0 R >>", vec![x, b"null".to_vec()]);
+        let rects = [[5.0, 5.0, 25.0, 25.0]];
+        assert_eq!(under(&mut doc, 0, &rects), 0, "{bbox:?}: verification leaves it out");
+        mark(&mut doc, 0, &rects, "");
+        let r = apply(&mut doc, None).unwrap();
+        assert_eq!(r.forms_removed, 0, "{bbox:?}: {r:?}");
+        let c = content(&doc, 0);
+        assert!(c.contains("/X1 Do"), "{bbox:?}: the placement outside the mark stays: {c}");
+    }
+}
+
+/// A `/BBox` is read only when it has four entries; any other length is malformed whatever its
+/// entries, so the placement's place can't be told and it counts as under a mark.
+#[test]
+fn an_xobject_of_unknown_subtype_with_a_bbox_of_the_wrong_length_counts() {
+    for bbox in ["/BBox []", "/BBox [0 0 10 10 10]", "/BBox [0 0 10 10 8 0 R]"] {
+        let x = stream(&format!("/Type /XObject /Subtype /PS {bbox}"), [0]);
+        let mut doc = one_page(b"q 10 0 0 10 200 200 cm /X1 Do Q", "/XObject << /X1 7 0 R >>", vec![x, b"10".to_vec()]);
+        assert_eq!(under(&mut doc, 0, &[[5.0, 5.0, 25.0, 25.0]]), 1, "{bbox:?}: verification counts it");
+    }
+}
+
 #[test]
 fn vectors_are_removed_or_clipped_and_inline_images_go() {
     let src = b"0 g 10 10 20 20 re f 0 0 300 300 re f q 10 0 0 10 50 50 cm BI /W 1 /H 1 /CS /G /BPC 8 ID \x80 EI Q 1 0 0 RG 150 150 m 160 160 l S";

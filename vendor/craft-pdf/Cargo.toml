@@ -1,4 +1,4 @@
-# Vendored from storytold/craft-libs `crates/pdf` at 8e03cd016d42032b867fef6bad86bc69bf2c1920 with
+# Vendored from storytold/craft-libs `crates/pdf` at 9eb02be84f21898e247daeb2af5827c9fe85a3a0 with
 # PdfCraft's object-layer patches; see vendor/craft-pdf/PATCHES.md. Workspace-inherited fields,
 # lints and dependencies are expanded from the craft-libs workspace at that commit, and sibling
 # path dependencies point at the same commit by git.
@@ -40,6 +40,10 @@ cos = ["crypt", "filters", "dep:chrono", "dep:js-sys", "dep:wasm-bindgen"]
 # tokenizer ends them.
 content = ["cos", "dep:hayro-syntax"]
 crypt = ["dep:aes", "dep:md-5", "dep:sha2", "dep:stringprep", "dep:zeroize", "dep:thiserror"]
+# `testing`: a builder of small synthetic PDF files, for the tests of crates that read them.
+test-support = ["cos"]
+# Standard-14 font metrics and ISO 32000-2 Annex D single-byte encodings.
+fonts = []
 
 [dependencies]
 hayro-syntax = { version = "=0.7.2", default-features = false, features = ["std"], optional = true }
@@ -47,14 +51,14 @@ hayro-interpret = { version = "=0.7.0", default-features = false, features = ["e
 hayro = { version = "=0.7.1", default-features = false, optional = true }
 bytemuck = { version = "1", optional = true }
 krilla = { version = "=0.8.2", default-features = false, features = ["raster-images"], optional = true }
-craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "8e03cd016d42032b867fef6bad86bc69bf2c1920", optional = true }
+craft-svg = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", optional = true }
 krilla-svg = { version = "=0.8.1", optional = true }
 usvg = { version = "=0.47.0", features = ["text"], optional = true }
 thiserror = { version = "2", optional = true }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"], optional = true }
 roxmltree = { version = "0.21", optional = true }
 # The filter chain (`filters`). flate2 with zlib-rs, the backend the chain's Flate prices were measured on.
-craft-stream-codecs = { git = "https://github.com/storytold/craft-libs", rev = "8e03cd016d42032b867fef6bad86bc69bf2c1920", optional = true }
+craft-stream-codecs = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0", optional = true }
 # The standard security handler (`crypt`): pure Rust, MIT OR Apache-2.0, builds for wasm.
 aes = { version = "0.9", optional = true }
 md-5 = { version = "0.11", optional = true }
@@ -84,6 +88,10 @@ proptest = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
+
+[[test]]
+name = "testing_pdf"
+required-features = ["test-support"]
 
 [[example]]
 name = "cos_info"

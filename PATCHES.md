@@ -4,8 +4,8 @@ PlutarchPages is upstream [PdfCraft](https://github.com/storytold/pdfcraft) plus
 [Fork changes](README.md#fork-changes) describes them for users; this file is for whoever merges
 upstream next.
 
-Last upstream merge: `271e479c` (17 November 2026), upstream's `main` then. Upstream's `main`
-after it is the next merge.
+Last upstream merge: `b192e36f` (23 November 2026), the last commit before upstream's UI port onto
+its craft framework (#8160). Upstream's `main` after it is the next merge.
 
 Upstream drift is checked every Monday at 04:43 UTC, and on demand through the
 **Upstream drift** workflow. It records the exact revisions, ahead/behind counts (every commit, and
@@ -59,13 +59,20 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   editor's) read the font an ExtGState's `/Font` sets (the `gs` arm of `interpret` in
   `crates/edit/src/text/interp.rs`), and the editor refuses to edit text in one. Words of
   block characters drawn over text are covers, placed by `TextLine::run_paint_orders` (each run's
-  operator, kept in `TextLine::modes`), and translucent covers count as opaque.
+  operator, kept in `TextLine::modes`), and translucent covers count as opaque. Upstream's #2408
+  covers (thick strokes, black Highlight annotations, `hidden-under-white`) are merged with the
+  fork's rules kept: an opaque cover hides text whatever its colour (upstream's `0.9 g` shading
+  test reads `covered-text` here), a stroke is read only under a CTM that keeps the axes, and a
+  stroke read as a band keeps the backdrop, so a translucent one is judged as a translucent fill.
 - Text extraction and search flag possible differences between a page's text and what it shows.
   `near_background` covers near-white solid fills over an otherwise white backdrop, with bounded
   checks for overlapping glyphs. Paths, images and complex paint leave the backdrop unknown.
   `actual_text_differs` compares an ASCII replacement with the glyph text it replaces.
   `font_mapping_differs` compares a standard Type 1 font's ASCII outline encoding with its
   extraction mapping, using the fork's `OutlineGlyph::standard_encoding_char` accessor in hayro.
+  Upstream builds hayro from craft-libs, so `vendor/hayro-interpret` is craft-libs' own copy at
+  the shared revision with that accessor added (`vendor/README.md`), and `cargo xtask pdf-deps`
+  accepts it and the vendored craft-pdf as local copies (`VENDORED` in `xtask/src/pdf_deps.rs`).
   `source_order_differs` marks reversed content order within a simple horizontal ASCII line.
   These are review signals. Accessible replacements and different writing orders can be intentional.
 - The PDF-XChange-style converters, speech, bookmark, optimiser, colour and Excel features.
@@ -262,10 +269,15 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Convert to gray (`doc_convert_gray`, `crates/optimize/src/colors.rs`) predates upstream's Convert
   colours (`doc_convert_colours`), which also converts to gray. Both are kept; retiring the fork's
   tool changes the automation interface, so it needs its own review.
+- Signing a field that locks others (FieldMDP: `/Lock`, read-only and `/SV` reasons) is the
+  fork's, in `crates/sign/src/pdf/field_lock.rs`. Validating a lock is upstream's #6757
+  (`locks.rs`); the fork's own validation and its `locked form fields` kind were retired at the
+  `b192e36f` merge.
 - XFA's XML tree (`crates/xfa/src/xml.rs`, upstream's since it left roxmltree) keeps one copy of
   each element name and namespace (`intern`). With a copy for each element, merging a prototype
   with 20,000 children took 3.4 times the CPU time and failed
-  `prototype_children_that_write_nothing_still_count_against_a_budget` under coverage.
+  `prototype_children_that_write_nothing_still_count_against_a_budget` under coverage. Upstream
+  moved to craft-xfa's tree, which does not intern; the `b192e36f` merge keeps this one.
 - A 16-bit PNG becomes 8-bit samples in one buffer asked for fallibly (`png_image` in
   `crates/create/src/lib.rs`), so too little memory is an error, not an abort. Upstream copies the
   samples twice with allocations that can't fail: about 3 GiB more for a 2 MB file of 16384 × 16384
@@ -318,21 +330,17 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
 
 - Variation selectors stay with their character when text is edited (`fa90fd89`, #51). Upstream's
   `98b47619` (#4899, in v0.21.1) fixes the same in `crates/edit/src/text/fallback.rs`; both
-  `is_variation_selector`s are still here, and `linebreak::between` keeps the fork's check.
-- OCR loads the ONNX models, and an existing `.rten` pair, since ocrs withdrew the `.rten` files
-  (`797d1356`, #17). Upstream's `crates/ocr/src/ocrs.rs` does the same.
+  `is_variation_selector`s are still here, and `linebreak::between` keeps the fork's check. Not
+  retired at the `b192e36f` merge: whether upstream's fix covers line breaking and bidi is unproven.
 - Import Data reads a CSV whose header holds a quoted tab as CSV (`472a0d99`, #23). Upstream's
   `crates/xfdf/src/lib.rs` has its own quoted-tab check. The same commit's Indexed colour space
-  part is upstream's `4aad36cf1`, already merged.
+  part is upstream's `4aad36cf1`, already merged. Not retired at the `b192e36f` merge, which kept
+  both checks: retiring the fork's needs its test run against upstream's alone.
 
 ## Taken ahead of the next merge
 
 These upstream commits are cherry-picked unchanged. The next merge brings the same lines, so it
-should not conflict on them: delete the entry then.
-
-- Email redaction keeps the part of an address before an apostrophe (`5aae9dba`).
-- Redaction removes an XObject or font whose `/Subtype` is an indirect reference (`6da8fa27`, #6750).
-- Redaction refuses an annotation whose bounds can't be read (`b50a17f7`, #7180).
+should not conflict on them: delete the entry then. None since the `b192e36f` merge.
 
 ## Merging upstream
 

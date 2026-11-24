@@ -36,7 +36,7 @@ fn image(grey: u8) -> Vec<u8> {
 /// Every unsafe file is flagged: covered text, or an unapplied mark for U07. No safe one is.
 #[test]
 fn the_head_to_head_files() {
-    use FindingKind::{CoveredText, UnappliedMark};
+    use FindingKind::{CoveredText, HiddenUnderWhite, UnappliedMark};
     let blocks = [
         // A Type 3 font whose `A` is a filled square, read as U+2588 FULL BLOCK.
         b"<< /Type /Font /Subtype /Type3 /FontBBox [0 -200 1000 800] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 8 0 R >> \
@@ -64,7 +64,7 @@ fn the_head_to_head_files() {
     let files = [
         ("U01 black box", file(&format!("{TEXT} {PUBLIC} 0 g {BOX}"), "", "", "", &[]), Some(CoveredText)),
         ("U02 black box over red text", file(&format!("1 0 0 rg {TEXT} 0 g {PUBLIC} {BOX}"), "", "", "", &[]), Some(CoveredText)),
-        ("U03 whiteout", file(&format!("{TEXT} {PUBLIC} 1 g {BOX}"), "", "", "", &[]), Some(CoveredText)),
+        ("U03 whiteout", file(&format!("{TEXT} {PUBLIC} 1 g {BOX}"), "", "", "", &[]), Some(HiddenUnderWhite)),
         ("U04 black image", file(&format!("{TEXT} {PUBLIC} q {OVER} /Im Do Q"), "/XObject << /Im 6 0 R >>", "", "", &[image(0)]), Some(CoveredText)),
         ("U05 inline image", file(&format!("{TEXT} {PUBLIC} q {OVER} BI /W 1 /H 1 /CS /G /BPC 8 ID \0 EI Q"), "", "", "", &[]), Some(CoveredText)),
         ("U06 Square", file(&format!("{TEXT} {PUBLIC}"), "", "", "/Annots [6 0 R]", &square), Some(CoveredText)),

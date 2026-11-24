@@ -18,7 +18,9 @@
 //! doesn't read, a page or appearance that fills a shape other than a box or paints a stroke or an
 //! image with a mask of its own, or text not filled opaque), and for a blended or masked cover or
 //! one in a transparency group drawn translucent, blended or masked, the cover is compared with the text's colour alone.
-//! Page backgrounds, painted before the text, and highlight marks are therefore not flagged.
+//! Page backgrounds, painted before the text, and highlight marks are therefore not flagged. Text
+//! hidden under a white (or nearly white) cover, the way forms are "whited out", is reported as
+//! its own kind, [`FindingKind::HiddenUnderWhite`], so callers can tell it from a dark cover.
 //!
 //! Detection limits (documented, not hidden): `re` rectangles and single closed `m`/`l`
 //! subpaths whose four corners form an axis-aligned rectangle in user space (#1510) are
@@ -26,13 +28,15 @@
 //! that holds its clip and within its `/BBox`, an image without a mask of its own, over the box the
 //! CTM places it in, a word of block characters (`█`, `■` and the like) drawn filled, and a
 //! straight solid stroke along one horizontal or vertical line, over the band its width paints
-//! between its ends, under a CTM that keeps the axes; other filled paths, strokes and glyphs are
+//! between its ends and past them under a round or square cap, under a CTM that keeps the axes;
+//! other filled paths, strokes and glyphs are
 //! not. An image doesn't hide invisible text (rendering mode 3 or 7):
 //! an OCR tool draws a scan over the text it read from it. A cover in a color the audit doesn't
 //! read (a pattern's, a spot color's, an image's) counts as dark as the text, and a block is judged
 //! by its colour against the text's. Filled `/Square` annotations count as covers too, by their
 //! interior colour where the audit has no appearance for them or it fills a shape other than a box,
-//! but annotation rectangles are compared in unrotated user space, so pages with `/Rotate` may
+//! and so do `/Highlight` annotations, by their colour (`/C`) multiplied onto what lies under each
+//! of their `/QuadPoints` (or their `/Rect` without them), at their `/CA`; but annotation rectangles are compared in unrotated user space, so pages with `/Rotate` may
 //! misalign. Covers and text inside form
 //! XObjects, nested ones included, are checked like the page's own, in the order they are painted,
 //! and so are those of the appearances a viewer paints for the page's annotations, after the page
@@ -67,6 +71,10 @@ pub enum FindingKind {
     UnappliedMark,
     /// An opaque cover aligns with a numeric text displacement whose width remains readable.
     RetainedAdvance,
+    /// A white (or nearly white) cover painted after text, or a white filled square annotation
+    /// over it, hides it: the text is invisible on the page and still extractable (a "whited out"
+    /// form).
+    HiddenUnderWhite,
 }
 
 impl FindingKind {
@@ -80,6 +88,7 @@ impl FindingKind {
             FindingKind::CoveredText => "covered-text",
             FindingKind::UnappliedMark => "unapplied-mark",
             FindingKind::RetainedAdvance => "retained-advance",
+            FindingKind::HiddenUnderWhite => "hidden-under-white",
         }
     }
 }
@@ -155,6 +164,9 @@ const COVER_FRACTION: f64 = 0.4;
 const WORD_FRACTION: f64 = 0.5;
 /// WCAG contrast ratio below which the text is unreadable against the cover.
 const COVER_CONTRAST: f64 = 3.0;
+/// Relative luminance from which a cover counts as white (white is 1.0; `0.9 g`, the kind of
+/// shading a table has, is 0.79): text hidden under it is reported as [`FindingKind::HiddenUnderWhite`].
+const WHITE_LUMINANCE: f64 = 0.9;
 /// Bytes of a hidden line's text read (copied or trimmed) that cost one comparison: a byte scan
 /// is far cheaper than a box comparison, but a long padded line under many covers adds up.
 const TEXT_BYTES_PER_COMPARISON: usize = 16;
@@ -328,25 +340,26 @@ impl Budget {
         self.page_cost = lines.iter().fold(0, |n, Painted { line, .. }| n.saturating_add(line.ink.len().max(line.runs().count()).max(1)));
     }
 
-    /// The text `cover` hides in the `lines` that `hides` ([`covered_words`]), joined with single
+    /// The text `areas` hide in the `lines` that `hides` ([`covered_words`]), joined with single
     /// spaces, or `None` when they show no text but blocks ([`shows_text`]). Without `copying` the
     /// text is empty and never assembled: one long line under many covers would otherwise be
-    /// copied once per cover, outside both bounds.
+    /// copied once per cover, outside both bounds. Every area is compared with every line, so each
+    /// one costs the page.
     fn hidden_text(
         &mut self,
         lines: &[Painted],
         copying: bool,
-        cover: &[f64; 4],
+        areas: &[[f64; 4]],
         hides: impl Fn(&Painted) -> bool,
     ) -> Result<Option<String>, AuditError> {
-        self.spend(self.page_cost)?;
+        self.spend(self.page_cost.saturating_mul(areas.len()))?;
         if !copying {
             let mut hidden = false;
             for Painted { line, .. } in lines.iter().filter(|p| hides(p)) {
                 // Reading the words walks the line's text (padding and all): it costs its bytes.
                 self.spend(line.text.len() / TEXT_BYTES_PER_COMPARISON)?;
                 let mut words = String::new();
-                covered_words(cover, line, &mut words);
+                covered_words(areas, line, &mut words);
                 if shows_text(&words) {
                     hidden = true;
                     break;
@@ -362,7 +375,7 @@ impl Budget {
             if !covered.is_empty() {
                 covered.push(' ');
             }
-            covered_words(cover, line, &mut covered);
+            covered_words(areas, line, &mut covered);
         }
         Ok(shows_text(&covered).then_some(covered))
     }
@@ -439,9 +452,9 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         budget.start_page(&lines);
         // 1. Filled rectangles and block glyphs over extractable text.
         for r in &rects {
-            if let Some(covered) = budget.hidden_text(&lines, copying, &r.rect, |p| is_cover(r, p))? {
+            if let Some(covered) = budget.hidden_text(&lines, copying, std::slice::from_ref(&r.rect), |p| is_cover(r, p))? {
                 let covered_text = budget.report_text(covered, copying)?;
-                out.push(AuditFinding { page: n, kind: FindingKind::CoveredText, rect: r.rect, covered_text });
+                out.push(AuditFinding { page: n, kind: cover_kind(r.rgb), rect: r.rect, covered_text });
             }
             if !gaps.is_empty() {
                 budget.spend(gaps.len())?;
@@ -458,8 +471,10 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         // appearance, or one that fills a shape the audit reads no box from (pdf.js, PDFium,
         // Poppler and MuPDF paint an appearance where there is one, and make one from `/IC` only
         // where there is none). Then it covers the lines no rectangle its appearance paints hides:
-        // that rectangle reports those (above), so a box is one finding. A Redact mark lies over
-        // everything but the text of its own appearance, which is not text it marks.
+        // that rectangle reports those (above), so a box is one finding. A Highlight is checked the
+        // same way by its colour (`/C`), over its `/QuadPoints`, multiplied onto what lies under it
+        // as a viewer paints one. A Redact mark lies over everything but the text of its own
+        // appearance, which is not text it marks.
         let mut painted_by: HashMap<usize, Vec<&cover::FilledRect>> = HashMap::new();
         for r in &rects {
             if let Some(&layer) = r.pos.first().filter(|&&layer| layer > 0) {
@@ -468,25 +483,30 @@ fn audit_pages(doc: &Document, limits: Limits, report_advances: bool) -> Result<
         }
         for a in &annotations {
             let Some(annot) = &a.cover else { continue };
-            if matches!(annot, AnnotationCover::Square { .. }) && a.appearance.is_some() && !shaped.contains(&a.layer) {
+            let drawn = !matches!(annot, AnnotationCover::Redact(_));
+            if drawn && a.appearance.is_some() && !shaped.contains(&a.layer) {
                 continue;
             }
-            let own = match annot {
-                AnnotationCover::Square { .. } => painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice),
-                AnnotationCover::Redact(_) => &[],
-            };
+            let own = if drawn { painted_by.get(&a.layer).map_or(&[][..], Vec::as_slice) } else { &[] };
             // Each line is also compared with each of those rectangles.
             budget.spend(budget.page_cost.saturating_mul(own.len()))?;
-            let (kind, rect) = match annot {
-                AnnotationCover::Redact(rect) => (FindingKind::UnappliedMark, *rect),
-                AnnotationCover::Square { rect, .. } => (FindingKind::CoveredText, *rect),
+            let (kind, rect, areas) = match annot {
+                AnnotationCover::Redact(rect) => (FindingKind::UnappliedMark, *rect, std::slice::from_ref(rect)),
+                AnnotationCover::Square { rect, rgb, .. } => (cover_kind(Some(*rgb)), *rect, std::slice::from_ref(rect)),
+                AnnotationCover::Highlight { rect, areas, .. } => (FindingKind::CoveredText, *rect, areas.as_slice()),
             };
-            if let Some(covered) = budget.hidden_text(&lines, copying, &rect, |p| match annot {
+            if let Some(covered) = budget.hidden_text(&lines, copying, areas, |p| match annot {
                 AnnotationCover::Redact(rect) => p.layer != a.layer && covers(rect, &p.line),
                 AnnotationCover::Square { rect, rgb, opaque } => {
                     p.layer <= a.layer
                         && covers(rect, &p.line)
                         && (*opaque || contrast(p.line.color, *rgb) < COVER_CONTRAST)
+                        && !own.iter().any(|r| is_cover(r, p))
+                }
+                AnnotationCover::Highlight { areas, rgb, alpha, .. } => {
+                    p.layer <= a.layer
+                        && areas.iter().any(|area| covers(area, &p.line))
+                        && multiplied_unreadable(*rgb, *alpha, p)
                         && !own.iter().any(|r| is_cover(r, p))
                 }
             })? {
@@ -548,6 +568,28 @@ impl Painted {
 /// `rgb` painted at `alpha` over `under`, in the Normal blend mode.
 fn mix(rgb: [f64; 3], alpha: f64, under: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| alpha * rgb[i] + (1.0 - alpha) * under[i])
+}
+
+/// `rgb` multiplied onto `under` at `alpha` (the Multiply blend mode).
+fn multiply(rgb: [f64; 3], alpha: f64, under: [f64; 3]) -> [f64; 3] {
+    mix(std::array::from_fn(|i| rgb[i] * under[i]), alpha, under)
+}
+
+/// Whether a highlight in `rgb` at `alpha`, multiplied onto the page, leaves `p` unreadable: the
+/// line against what lies around it, both seen through the highlight, where the audit reads them;
+/// otherwise the line's colour against the highlight's.
+fn multiplied_unreadable(rgb: [f64; 3], alpha: f64, p: &Painted) -> bool {
+    let shown = match p.seen.get() {
+        Some((text, around)) => contrast(multiply(rgb, alpha, text), multiply(rgb, alpha, around)),
+        None => contrast(p.line.color, rgb),
+    };
+    shown < COVER_CONTRAST
+}
+
+/// What hiding text under a cover in `rgb` is: white or nearly so, the text is whited out;
+/// otherwise, or in a colour the audit doesn't read, covered.
+fn cover_kind(rgb: Option<[f64; 3]>) -> FindingKind {
+    if rgb.is_some_and(|rgb| luminance(rgb) >= WHITE_LUMINANCE) { FindingKind::HiddenUnderWhite } else { FindingKind::CoveredText }
 }
 
 fn text_len(lines: &[Painted]) -> usize {
@@ -700,14 +742,14 @@ fn covers(cover: &[f64; 4], line: &TextLine) -> bool {
     inked || (boxed && (line.ink.is_empty() || word_intersects()))
 }
 
-/// Appends the text of `line` that `cover` lies on to `out`: the runs whose words it overlaps
-/// (#4164), so the words of the line painted beside the cover, which stay visible, are not
+/// Appends the text of `line` that `areas` lie on to `out`: the runs whose words one of them
+/// overlaps (#4164; a highlight's quads are several areas, #2385), so the words of the line painted beside the cover, which stay visible, are not
 /// reported as hidden. Neighbouring runs are joined as the line joins them, so a word split
 /// across runs stays one word; runs with others left out between them are spaced. The whole
 /// line when its runs can't say: a single run, a line whose text was reordered for reading, or
 /// a cover that overlaps the line's box but none of its words.
-fn covered_words(cover: &[f64; 4], line: &TextLine, out: &mut String) {
-    let overlaps = |w: &[f64; 4]| area(&[cover[0].max(w[0]), cover[1].max(w[1]), cover[2].min(w[2]), cover[3].min(w[3])]) > 0.0;
+fn covered_words(areas: &[[f64; 4]], line: &TextLine, out: &mut String) {
+    let overlaps = |w: &[f64; 4]| areas.iter().any(|c| area(&[c[0].max(w[0]), c[1].max(w[1]), c[2].min(w[2]), c[3].min(w[3])]) > 0.0);
     let mut words = String::new();
     let mut last = None;
     for (i, (text, ink, spaced)) in line.runs().enumerate() {
@@ -757,6 +799,14 @@ enum AnnotationCover {
         rgb: [f64; 3],
         opaque: bool,
     },
+    /// Its colour (`/C`), the alpha a viewer multiplies it onto the page with (`/CA`), and the
+    /// areas it paints: the box of each of its `/QuadPoints`, or its `/Rect` without them.
+    Highlight {
+        rect: [f64; 4],
+        areas: Vec<[f64; 4]>,
+        rgb: [f64; 3],
+        alpha: f64,
+    },
 }
 
 /// An annotation the audit reads: its layer in paint order, the cover its dictionary describes and
@@ -802,6 +852,16 @@ fn annots(doc: &Document, page: &Dict, n: usize) -> Result<Vec<Annotation>, Audi
                 // (`/CA 0`) paints nothing.
                 let opaque = ca.is_none_or(|a| a >= 1.0);
                 annotation_color(doc, dict, b"IC").filter(|_| ca.is_none_or(|a| a > 0.0)).map(|rgb| AnnotationCover::Square { rect, rgb, opaque })
+            }
+            Some(b"Highlight") if shown => {
+                // Without a colour a viewer draws none; at `/CA 0` it paints nothing.
+                let alpha = ca.map_or(1.0, |a| a.clamp(0.0, 1.0));
+                annotation_color(doc, dict, b"C").filter(|_| alpha > 0.0).map(|rgb| AnnotationCover::Highlight {
+                    rect,
+                    areas: quad_boxes(doc, dict).unwrap_or_else(|| vec![rect]),
+                    rgb,
+                    alpha,
+                })
             }
             _ => None,
         };
@@ -863,6 +923,22 @@ fn subtype(doc: &Document, dict: &Dict) -> Result<Option<Vec<u8>>, AuditError> {
         other => other.and_then(pdfcraft_cos::Object::as_name).map(<[u8]>::to_vec),
     };
     Ok(name)
+}
+
+/// The box of each quadrilateral in an annotation's `/QuadPoints` (8 numbers each), or `None` when
+/// it has none, or they aren't a whole number of quadrilaterals of finite numbers. The length is
+/// checked before any number is read.
+fn quad_boxes(doc: &Document, dict: &Dict) -> Option<Vec<[f64; 4]>> {
+    let quads = dict.get(b"QuadPoints").map(|q| doc.resolve(q))?;
+    let numbers = quads.as_array().filter(|q| !q.is_empty() && q.len() % 8 == 0)?;
+    let numbers: Vec<f64> = numbers.iter().map(|o| doc.resolve(o).as_f64().filter(|v| v.is_finite())).collect::<Option<_>>()?;
+    numbers
+        .chunks_exact(8)
+        .map(|q| {
+            let [x0, y0, x1, y1, x2, y2, x3, y3] = <[f64; 8]>::try_from(q).ok()?;
+            Some([x0.min(x1).min(x2).min(x3), y0.min(y1).min(y2).min(y3), x0.max(x1).max(x2).max(x3), y0.max(y1).max(y2).max(y3)])
+        })
+        .collect()
 }
 
 fn annotation_color(doc: &Document, dict: &Dict, key: &[u8]) -> Option<[f64; 3]> {

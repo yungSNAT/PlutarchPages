@@ -10,8 +10,8 @@ The report checks for:
 
 - **faux redaction**: a filled rectangle, a thick straight stroke (a pen line across the text),
   an image, or a word of block characters (`█`, `■` and the like), painted *after* text it
-  overlaps, while the text is still extractable underneath; filled Square annotations count as
-  covers too. A cover painted fully opaque in the Normal blend
+  overlaps, while the text is still extractable underneath; filled Square and Highlight
+  annotations count as covers too. A cover painted fully opaque in the Normal blend
   mode hides the text whatever its colour: it replaces what lies under it, so a black box over red
   text or a white box over black text both hide it. A translucent cover (`/ca` above 0 and below 1,
   or a Square's interior colour at `/CA` below 1), a blended one (`/BM` other than Normal, as a
@@ -23,7 +23,11 @@ The report checks for:
   legible, and on mid grey is not. Where the audit can't read what lies under the text, and for a
   blended or masked cover, a Square annotation or a word of blocks, the cover is judged by its
   colour against the text's;
-- **unapplied mark**: a Redact annotation that was marked but never applied;
+- **hidden under white**: the same, where the cover is white or nearly so (relative luminance 0.9
+  or more), the way a form is "whited out": reported apart from dark covers, and
+  `pdfcraft-cli audit` fails on it as on covered text;
+- **unapplied mark**: a Redact annotation that was marked but never applied, Hidden or NoView
+  included;
 - **retained advance**: a large forward `TJ` adjustment entirely under a later
   cover. An adjustment can preserve the removed text's exact width even after the
   text has gone. Ordinary text positioning can produce the same signal;
@@ -61,7 +65,9 @@ whatever the annotation's `/CA` and `/BM`, so those don't change it. A Square is
 box its appearance paints. Its interior colour (`/IC`) counts where the audit has no appearance
 for it, or the appearance fills a shape it reads no box from (a cloudy border), for text no box
 lies over: pdf.js, PDFium, Poppler and MuPDF paint the appearance where there is one, so `/IC`
-behind a border-only appearance hides nothing. A Redact mark's own appearance is not text it
+behind a border-only appearance hides nothing. A Highlight is checked the same way, by its
+colour (`/C`) multiplied onto what lies under each of its `/QuadPoints` (its `/Rect` without
+them) at its `/CA`: a black one hides the text, a yellow one leaves it readable. A Redact mark's own appearance is not text it
 leaves under it.
 
 The audit doesn't place text a tiling pattern's cell or a Type 3 font's glyph procedure shows,
@@ -80,7 +86,8 @@ Limits, by design and documented rather than hidden:
   words of block characters drawn filled (render mode 0, 2, 4 or 6), over the box of each word. A
   stroke counts when it is one subpath along one horizontal or vertical line, solid (no dash
   pattern), under a CTM that keeps the axes, stroked alone (`S`, `s`) or over a fill (`B`, `B*`,
-  `b`, `b*`): it covers the band its line width paints between its ends, its caps not counted.
+  `b`, `b*`): it covers the band its line width paints between its ends, and half its width
+  past each end under a round or projecting square cap (`J`, `/LC`; a round cap by its box).
   Each of these counts only under a clip that is a box on the page (a path of one `re` or one
   four-cornered subpath, or a form's or appearance's `/BBox`, whose corners land on a box, and
   no glyph shown in a render mode that clips, 4 to 7, other than a space in a simple font or a

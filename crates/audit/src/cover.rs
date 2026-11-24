@@ -9,7 +9,7 @@
 //! CTM places it on, within that box. A straight stroke counts too: one subpath whose points,
 //! control points included, lie on one horizontal or vertical line on the page, stroked solid (no
 //! dashes) under a CTM that keeps the axes, covers the band its line width paints between its
-//! ends, its caps not counted, painted in the stroking color and alpha, whether stroked alone
+//! ends and past them under a round or square cap, painted in the stroking color and alpha, whether stroked alone
 //! (`S`, `s`) or over a fill (`B`, `B*`, `b`, `b*`). Each counts only where what it paints lands
 //! on a box on the page, as a rectangle, a `/BBox` or an image's square sheared by the CTM does
 //! not, and only under a clip that is a box on the page: a triangle or a sheared box may clip it
@@ -131,6 +131,9 @@ struct Gs {
     stroke_alpha: f64,
     /// The line width (`w`, `/LW`), in user space.
     line_width: f64,
+    /// The line cap (`J`, `/LC`) is round or projecting square: a stroke paints half its width past
+    /// each end.
+    capped: bool,
     /// A dash pattern (`d`, `/D`) other than a solid line is in force.
     dashed: bool,
     /// A blend mode other than Normal (`/BM`) is in force: what lies under a fill can show through.
@@ -200,6 +203,7 @@ impl Gs {
             stroke_space: 1,
             stroke_alpha: 1.0,
             line_width: 1.0,
+            capped: false,
             dashed: false,
             blended: false,
             masked: false,
@@ -295,9 +299,10 @@ impl Line {
         }
     }
 
-    /// The band a stroke of this path paints in `gs` without counting its caps: between its ends,
-    /// as wide as the line, when its points all lie on one horizontal or vertical line and the CTM
-    /// keeps the axes, so the band is a box on the page. A curve whose control points lie on that
+    /// The band a stroke of this path paints in `gs`: between its ends, and past them by half the
+    /// line width under a round or projecting square cap (a round cap counted by its box), as wide
+    /// as the line, when its points all lie on one horizontal or vertical line and the CTM keeps
+    /// the axes, so the band is a box on the page. A curve whose control points lie on that
     /// line too stays on it, and passes every point between its ends. `None` for a dashed line, a
     /// line of width 0 (the thinnest a device draws), or any other path.
     fn band(&self, gs: &Gs) -> Option<[f64; 4]> {
@@ -312,12 +317,14 @@ impl Line {
         // The pen is a circle of the line's width in user space; the CTM stretches it by the
         // length of the image of a unit step across the line.
         let half = gs.line_width / 2.0;
+        // The pen's extent along the line, as across it.
+        let cap = if gs.capped { half } else { 0.0 };
         if all[3] - all[1] <= EPS && ends[2] - ends[0] > EPS {
-            let h = half * b.hypot(d);
-            Some([ends[0], ends[1] - h, ends[2], ends[1] + h])
+            let (h, l) = (half * b.hypot(d), cap * a.hypot(c));
+            Some([ends[0] - l, ends[1] - h, ends[2] + l, ends[1] + h])
         } else if all[2] - all[0] <= EPS && ends[3] - ends[1] > EPS {
-            let w = half * a.hypot(c);
-            Some([ends[0] - w, ends[1], ends[0] + w, ends[3]])
+            let (w, l) = (half * a.hypot(c), cap * b.hypot(d));
+            Some([ends[0] - w, ends[1] - l, ends[0] + w, ends[3] + l])
         } else {
             None
         }
@@ -413,7 +420,7 @@ struct Walker<'a> {
     /// under a clip that is no box: the audit reads no cover from it.
     shaped: HashSet<usize>,
     /// Something was painted on the page whose colours the audit doesn't read as what lies under
-    /// text: a stroke, or an image with a mask of its own.
+    /// text: a stroke not read as a band, or an image with a mask of its own.
     unread: bool,
 }
 
@@ -504,7 +511,7 @@ impl<'a> Walker<'a> {
                         line = Line::Other;
                     }
                 }
-                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"d" | b"gs" => {
+                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"J" | b"d" | b"gs" => {
                     self.set_state(op, gs, res, calls, i)?;
                 }
                 b"re" => {
@@ -673,6 +680,11 @@ impl<'a> Walker<'a> {
                     gs.line_width = w;
                 }
             }
+            b"J" => {
+                if let Some([cap]) = op.nums::<1>().filter(|[cap]| [0.0, 1.0, 2.0].contains(cap)) {
+                    gs.capped = cap != 0.0;
+                }
+            }
             b"d" => {
                 if let Some(dashes) = op.operands.first().and_then(Object::as_array) {
                     gs.dashed = !dashes.is_empty();
@@ -685,6 +697,7 @@ impl<'a> Walker<'a> {
                     gs.alpha = set.alpha.unwrap_or(gs.alpha);
                     gs.stroke_alpha = set.stroke_alpha.unwrap_or(gs.stroke_alpha);
                     gs.line_width = set.line_width.unwrap_or(gs.line_width);
+                    gs.capped = set.capped.unwrap_or(gs.capped);
                     gs.dashed = set.dashed.unwrap_or(gs.dashed);
                     gs.blended = set.blended.unwrap_or(gs.blended);
                     gs.masked = set.masked.unwrap_or(gs.masked);
@@ -737,10 +750,12 @@ impl<'a> Walker<'a> {
     /// Record the cover the stroke at index `at` paints along `line`: the band [`Line::band`] gives,
     /// within the clip, as a fill in the stroking colour and alpha would paint it. Under a clip that
     /// is not a box ([`Gs::clip_exact`]) the band may be clipped away from what it seems to cover, so
-    /// none is read.
+    /// none is read. A band read is recorded as a fill would be, so it leaves the lines' backdrop
+    /// read; any other stroke paints where the audit doesn't read, and unreads it.
     fn stroke(&mut self, line: Line, gs: &Gs, calls: &[usize], at: usize) {
-        self.unread |= self.inside.is_none();
-        let Some(band) = line.band(gs).filter(|_| gs.clip_exact) else { return };
+        let band = line.band(gs).filter(|_| gs.clip_exact);
+        self.unread |= self.inside.is_none() && band.is_none();
+        let Some(band) = band else { return };
         let area = meet(gs.clip, band);
         if gs.stroke_alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
             let pen = Gs { alpha: gs.stroke_alpha, ..gs.clone() };
@@ -1052,6 +1067,8 @@ struct StateSets {
     stroke_alpha: Option<f64>,
     /// The line width (`/LW`).
     line_width: Option<f64>,
+    /// Whether its line cap (`/LC`) is round or projecting square.
+    capped: Option<bool>,
     /// Whether its dash pattern (`/D`) has dashes.
     dashed: Option<bool>,
     /// Whether its blend mode lets what lies under show through ([`shows_through`]).
@@ -1074,6 +1091,7 @@ fn ext_state(doc: &Document, resources: &Dict, name: &[u8]) -> StateSets {
         alpha: alpha(b"ca"),
         stroke_alpha: alpha(b"CA"),
         line_width: get(b"LW").and_then(|o| o.as_f64()).filter(|w| w.is_finite() && *w >= 0.0),
+        capped: get(b"LC").and_then(|o| o.as_f64()).filter(|c| [0.0, 1.0, 2.0].contains(c)).map(|c| c != 0.0),
         dashed: dashes.as_deref().and_then(Object::as_array).map(|a| !a.is_empty()),
         blended: get(b"BM").map(|bm| shows_through(doc, &bm)),
         masked: get(b"SMask").map(|m| m.as_dict().is_some()),
