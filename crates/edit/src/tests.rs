@@ -15167,18 +15167,30 @@ fn a_font_of_the_face_unread_on_its_own_once_the_allowance_is_spent_still_refuse
 
 /// A THSarabunPSK-named subset that has OpenType Thai mark positioning is a modern face: it is
 /// shaped with its own layout like any source font, not by the legacy shaper (which would ask
-/// for Windows PUA alternates such a face doesn't need).
+/// for Windows PUA alternates such a face doesn't need). The face is the bundled Thai one, whose
+/// GPOS anchors place Thai marks; Inter's mark lookups don't cover Thai glyphs.
 #[test]
 fn a_thai_subset_with_mark_positioning_is_shaped_with_its_own_layout() {
-    let mut program = include_bytes!("../../../assets/fonts/Inter-Regular.ttf").to_vec();
+    let Some(face) = pdfcraft_fonts::document_thai_font() else { return };
+    let mut program = face.bytes.to_vec();
     let count = u16::from_be_bytes(program[4..6].try_into().unwrap()) as usize;
     let records: Vec<_> = program[12..12 + count * 16].as_chunks::<16>().0.iter().filter(|r| &r[..4] != b"cmap").map(|r| r.to_vec()).collect();
     program[4..6].copy_from_slice(&(records.len() as u16).to_be_bytes());
     for (index, record) in records.iter().enumerate() {
         program[12 + index * 16..28 + index * 16].copy_from_slice(record);
     }
-    let mut doc = text_page("BT /F1 16 Tf 50 650 Td <00d6> Tj ET");
-    let font = legacy_thai_font(&mut doc, "ABCDEF+THSarabunPSK", &program, LEGACY_THAI_UNICODE);
+    // The ToUnicode names ก, the glyph the page shows, and each glyph the face's shaping of the
+    // typed text chooses.
+    let ko = crate::script_edit_tests::nominal(face.bytes, 'ก');
+    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, "ปู่").unwrap();
+    let named: Vec<(u32, char)> = std::iter::once((u32::from(ko), 'ก')).chain(shaped.glyphs.iter().map(|g| g.id.to_u32()).zip("ปู่".chars())).collect();
+    let unicode = format!(
+        "{} beginbfchar {} endbfchar",
+        named.len(),
+        named.iter().map(|(id, c)| format!("<{id:04x}> <{:04x}>", u32::from(*c))).collect::<Vec<_>>().join(" ")
+    );
+    let mut doc = text_page(&format!("BT /F1 16 Tf 50 650 Td <{ko:04x}> Tj ET"));
+    let font = legacy_thai_font(&mut doc, "ABCDEF+THSarabunPSK", &program, unicode.as_bytes());
     doc.set(pdfcraft_cos::ObjRef::new(5, 0), Object::Dict(font));
     let style = BlockStyle { width: Some(400.0), ..Default::default() };
     let edited = text::rewrite_block(&mut doc, 0, 0, Some("ปู่"), &style).expect("its own layout positions the marks");
