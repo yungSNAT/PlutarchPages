@@ -451,15 +451,24 @@ fn default_ignorable(c: char) -> bool {
 mod tests {
     use super::*;
 
+    /// Where `tag` starts in an sfnt.
+    fn table(bytes: &[u8], tag: &[u8; 4]) -> usize {
+        let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+        let record = (0..count).map(|i| 12 + i * 16).find(|&r| &bytes[r..r + 4] == tag).unwrap();
+        u32::from_be_bytes(bytes[record + 8..record + 12].try_into().unwrap()) as usize
+    }
+
     /// Where the GPOS table starts in an sfnt.
     fn gpos(bytes: &[u8]) -> usize {
-        let count = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
-        let record = (0..count).map(|i| 12 + i * 16).find(|&r| &bytes[r..r + 4] == b"GPOS").unwrap();
-        u32::from_be_bytes(bytes[record + 8..record + 12].try_into().unwrap()) as usize
+        table(bytes, b"GPOS")
     }
 
     fn u16_at(bytes: &[u8], at: usize) -> usize {
         u16::from_be_bytes([bytes[at], bytes[at + 1]]) as usize
+    }
+
+    fn u32_at(bytes: &[u8], at: usize) -> usize {
+        u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize
     }
 
     /// Where the GPOS ScriptList starts.
@@ -602,5 +611,169 @@ mod tests {
         let shaped = shape(&bytes, "กิ่ น้ำ").unwrap();
         assert!(shaped.advance > 0.0);
         assert!(shaped.glyphs.iter().all(|g| g.position.iter().all(|p| p.is_finite())));
+    }
+
+    fn coverage_index(bytes: &[u8], cov: usize, glyph: u16) -> Option<usize> {
+        let count = u16_at(bytes, cov + 2);
+        match u16_at(bytes, cov) {
+            1 => (0..count).find(|&i| u16_at(bytes, cov + 4 + 2 * i) == usize::from(glyph)),
+            2 => (0..count)
+                .map(|i| cov + 4 + 6 * i)
+                .find(|&r| (u16_at(bytes, r)..=u16_at(bytes, r + 2)).contains(&usize::from(glyph)))
+                .map(|r| u16_at(bytes, r + 4) + usize::from(glyph) - u16_at(bytes, r)),
+            _ => None,
+        }
+    }
+
+    fn write_coverage_one(bytes: &mut [u8], cov: usize, glyph: u16) {
+        let room = match u16_at(bytes, cov) {
+            1 => 4 + 2 * u16_at(bytes, cov + 2),
+            2 => 4 + 6 * u16_at(bytes, cov + 2),
+            format => panic!("coverage format {format}"),
+        };
+        assert!(room >= 6);
+        for (i, word) in [1u16, 1, glyph].into_iter().enumerate() {
+            bytes[cov + 2 * i..cov + 2 * i + 2].copy_from_slice(&word.to_be_bytes());
+        }
+    }
+
+    fn thai_mark_lookup_indices(bytes: &[u8]) -> Vec<usize> {
+        let table = gpos(bytes);
+        let features = table + u16_at(bytes, table + 6);
+        let thai = script(bytes, b"thai");
+        let lang = thai + u16_at(bytes, thai);
+        let mut indices = Vec::new();
+        for i in 0..u16_at(bytes, lang + 4) {
+            let feature_idx = u16_at(bytes, lang + 6 + 2 * i);
+            let record = features + 2 + feature_idx * 6;
+            if matches!(&bytes[record..record + 4], b"mark" | b"mkmk") {
+                let feature = features + u16_at(bytes, record + 4);
+                for j in 0..u16_at(bytes, feature + 2) {
+                    indices.push(u16_at(bytes, feature + 4 + 2 * j));
+                }
+            }
+        }
+        indices
+    }
+
+    /// Lookups flagged `IgnoreMarks` skip every mark, so they attach nothing even when anchors
+    /// cover the glyph.
+    #[test]
+    fn thai_mark_lookups_flagged_ignore_marks_are_refused() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let mut bytes = face.bytes.to_vec();
+        let table = gpos(&bytes);
+        let lookups = table + u16_at(&bytes, table + 8);
+        for idx in thai_mark_lookup_indices(&bytes) {
+            let lookup = lookups + u16_at(&bytes, lookups + 2 + 2 * idx);
+            let flag = (u16_at(&bytes, lookup + 2) as u16) | 0x0008;
+            bytes[lookup + 2..lookup + 4].copy_from_slice(&flag.to_be_bytes());
+        }
+        assert!(has_thai_layout(&bytes));
+        for text in ["กิ่", "น้ำ", "ปู่", "นี่"] {
+            let error = shape(&bytes, text).unwrap_err();
+            assert!(error.contains("mark positioning"), "{text}: {error}");
+        }
+    }
+
+    /// Lookups whose `MarkAttachmentType` or `UseMarkFilteringSet` skips the mark (or the earlier
+    /// mark in mark-to-mark) do not position it.
+    #[test]
+    fn thai_mark_lookups_whose_mark_filtering_skips_the_mark_are_refused() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "นี่").unwrap();
+        let [_, vowel, tone] = [0, 1, 2].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+
+        // 1. MarkAttachmentType = 1 (clearing UseMarkFilteringSet): GDEF has no MarkAttachClassDef,
+        // so every mark has class 0 and is skipped.
+        let mut wrong_class = face.bytes.to_vec();
+        let gpos_off = gpos(&wrong_class);
+        let lookups = gpos_off + u16_at(&wrong_class, gpos_off + 8);
+        for idx in thai_mark_lookup_indices(&wrong_class) {
+            let lookup = lookups + u16_at(&wrong_class, lookups + 2 + 2 * idx);
+            let flag = ((u16_at(&wrong_class, lookup + 2) as u16) & !0x0010) | 0x0100;
+            wrong_class[lookup + 2..lookup + 4].copy_from_slice(&flag.to_be_bytes());
+        }
+        for text in ["กิ่", "น้ำ", "ปู่", "นี่"] {
+            let error = shape(&wrong_class, text).unwrap_err();
+            assert!(error.contains("mark positioning"), "{text}: {error}");
+        }
+
+        // 2. Restrict the MarkToBase lookup so it covers only sara ii (`vowel`), leaving `tone`
+        // (mai ek) to the UseMarkFilteringSet MarkToMark lookup alone.
+        let mut base_vowel_only = face.bytes.to_vec();
+        let gpos_off = gpos(&base_vowel_only);
+        let lookups = gpos_off + u16_at(&base_vowel_only, gpos_off + 8);
+        let mut mkmk_lookup = None;
+        for idx in thai_mark_lookup_indices(&base_vowel_only) {
+            let lookup = lookups + u16_at(&base_vowel_only, lookups + 2 + 2 * idx);
+            let kind = u16_at(&base_vowel_only, lookup);
+            let flag = u16_at(&base_vowel_only, lookup + 2);
+            let mut sub = lookup + u16_at(&base_vowel_only, lookup + 6);
+            let actual_kind = if kind == 9 {
+                let k = u16_at(&base_vowel_only, sub + 2);
+                sub += u32_at(&base_vowel_only, sub + 4);
+                k
+            } else {
+                kind
+            };
+            if actual_kind == 4 {
+                let cov = sub + u16_at(&base_vowel_only, sub + 2);
+                if let Some(old_idx) = coverage_index(&base_vowel_only, cov, vowel) {
+                    let mark_array = sub + u16_at(&base_vowel_only, sub + 8);
+                    let rec = base_vowel_only[mark_array + 2 + 4 * old_idx..mark_array + 6 + 4 * old_idx].to_vec();
+                    base_vowel_only[mark_array..mark_array + 2].copy_from_slice(&1u16.to_be_bytes());
+                    base_vowel_only[mark_array + 2..mark_array + 6].copy_from_slice(&rec);
+                    write_coverage_one(&mut base_vowel_only, cov, vowel);
+                }
+            } else if actual_kind == 6
+                && (flag & 0x0010) != 0
+                && coverage_index(&base_vowel_only, sub + u16_at(&base_vowel_only, sub + 2), tone).is_some()
+            {
+                mkmk_lookup = Some(lookup);
+            }
+        }
+        let mkmk = mkmk_lookup.expect("Noto Sans Thai has a filtered mkmk lookup for above marks");
+        assert!(shape(&base_vowel_only, "นี่").is_ok(), "filtered mkmk still attaches mai ek onto sara ii");
+
+        // Pointing that mkmk lookup to set 4 (below marks) skips both marks.
+        let mut skip_mark1 = base_vowel_only.clone();
+        let count = u16_at(&skip_mark1, mkmk + 4);
+        let old_set = u16_at(&skip_mark1, mkmk + 6 + 2 * count);
+        let other_set = if old_set == 4 { 5u16 } else { 4u16 };
+        skip_mark1[mkmk + 6 + 2 * count..mkmk + 8 + 2 * count].copy_from_slice(&other_set.to_be_bytes());
+        let error = shape(&skip_mark1, "นี่").unwrap_err();
+        assert!(error.contains("mark positioning"), "skip mark1: {error}");
+
+        // Keeping `tone` in the filtering set while removing `vowel` skips the earlier mark.
+        let mut skip_mark2 = base_vowel_only;
+        let gdef_off = table(&skip_mark2, b"GDEF");
+        let sets = gdef_off + u16_at(&skip_mark2, gdef_off + 12);
+        let cov = sets + u32_at(&skip_mark2, sets + 4 + 4 * old_set);
+        write_coverage_one(&mut skip_mark2, cov, tone);
+        let error = shape(&skip_mark2, "นี่").unwrap_err();
+        assert!(error.contains("mark positioning"), "skip mark2: {error}");
+    }
+
+    /// Checking a cluster's unmoved marks stays linear in the cluster size: 10,000 combining marks
+    /// on one base must be refused promptly, not scanned quadratically.
+    #[test]
+    fn many_unplaced_marks_in_one_thai_cluster_are_refused_within_a_bound() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let text = format!("กิ{}", "\u{20d0}".repeat(10_000));
+        let started = std::time::Instant::now();
+        let error = shape(face.bytes, &text).unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(5), "{:?}", started.elapsed());
+    }
+
+    /// A run starting with Latin before Thai marks is shaped under `thai` so Thai contextual rules
+    /// and Thai mark lookups agree.
+    #[test]
+    fn mixed_latin_and_thai_run_shapes_thai_marks_under_thai_script() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let thai_only: Vec<_> = shape(face.bytes, "กิ่").unwrap().glyphs.into_iter().map(|g| g.id).collect();
+        let mixed: Vec<_> = shape(face.bytes, "ok กิ่").unwrap().glyphs.into_iter().skip(3).map(|g| g.id).collect();
+        assert_eq!(mixed, thai_only);
     }
 }
