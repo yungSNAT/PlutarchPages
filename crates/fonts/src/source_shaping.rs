@@ -1723,8 +1723,9 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
     }
 
-    /// A `MarkToBase` lookup flagged `IgnoreBaseGlyphs` excludes GDEF base glyphs (`class 1`) as
-    /// attachment targets; when anchor coordinates leave net offset unchanged, it must be refused.
+    /// HarfRust's `MarkBasePosFormat1::apply` overrides the target search with `IGNORE_MARKS`, so
+    /// `IgnoreBaseGlyphs` (`0x0002`) only refuses attachment when the current mark glyph itself is
+    /// classified as `GDEF class 1` (`Base`), whilst a `class 3` mark still attaches onto `class 1`.
     #[test]
     fn thai_mark_lookup_with_ignore_base_glyphs_is_refused() {
         use skrifa::MetadataProvider as _;
@@ -1741,7 +1742,14 @@ mod tests {
         let lookups = u16_at(&gpos, 8);
         let l0 = lookups + u16_at(&gpos, lookups + 2);
         gpos[l0 + 2..l0 + 4].copy_from_slice(&0x0002u16.to_be_bytes());
-        let bytes = with_table(face.bytes, b"GPOS", gpos);
+        let with_gpos = with_table(face.bytes, b"GPOS", gpos);
+        assert!(shape(&with_gpos, "กิ").is_ok());
+        // GDEF Format 2 GlyphClassDef mapping both `ka` and `sara_i` to class 1 (Base).
+        let mut sorted = [ka, sara_i];
+        sorted.sort_unstable();
+        let gdef: Vec<u8> =
+            [1u16, 0, 12, 0, 0, 0, 2, 2, sorted[0], sorted[0], 1, sorted[1], sorted[1], 1].into_iter().flat_map(u16::to_be_bytes).collect();
+        let bytes = with_table(&with_gpos, b"GDEF", gdef);
         let error = shape(&bytes, "กิ").unwrap_err();
         assert!(error.contains("mark positioning"), "{error}");
     }
@@ -2067,5 +2075,231 @@ mod tests {
         assert!(shape(&bytes, "ก\u{0e34}").is_ok(), "baseline zero-delta passes");
         assert!(shape(&bytes, "ก\u{034f}\u{0e34}").is_ok(), "CGJ before zero-delta mark should pass");
         assert!(shape(&bytes, "ก\u{0e34}\u{034f}\u{0e48}").is_ok(), "CGJ before mkmk mark should pass");
+    }
+
+    /// Generated zero-delta `MarkToBase`, `MarkToLigature`, and `MarkToMark` cases (including `GDEF`
+    /// presence/classes, lookup flags, filtering sets, CGJ, and missing/corrupt anchors) match
+    /// HarfRust's actual shaping decisions with zero false accepts or false refusals (`G1`).
+    #[test]
+    fn thai_validator_matches_harfrust_oracle_across_targets_filters_and_anchors() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let font = FontRef::new(face.bytes).unwrap();
+        let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
+        let gid_adv = |g: u16| metrics.advance_width(GlyphId::new(u32::from(g))).unwrap_or_default().round() as i16;
+        let [no_gid, ka_gid, mid_gid, sara_i, sara_ii, mai_ek, unrelated] = [
+            shape(face.bytes, "น").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ร").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ก\u{0e34}").unwrap().glyphs[1].id.to_u32(),
+            shape(face.bytes, "น\u{0e35}").unwrap().glyphs[1].id.to_u32(),
+            shape(face.bytes, "ก\u{0e48}").unwrap().glyphs[1].id.to_u32(),
+            shape(face.bytes, "ข").unwrap().glyphs[0].id.to_u32(),
+        ]
+        .map(|g| u16::try_from(g).unwrap());
+        let [ka_adv, mid_adv] = [gid_adv(ka_gid), gid_adv(mid_gid)];
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+
+        let build_gdef = |cls: &[(u16, u16)], mcls: &[(u16, u16)], fset_gid: Option<u16>| -> Vec<u8> {
+            let mut out = Vec::new();
+            for _ in 0..7 {
+                push(&mut out, 0);
+            }
+            out[0..4].copy_from_slice(&[0, 1, 0, 2]);
+            let write_cls = |buf: &mut Vec<u8>, items: &[(u16, u16)]| -> u16 {
+                if items.is_empty() {
+                    return 0;
+                }
+                let mut sorted = items.to_vec();
+                sorted.sort_by_key(|x| x.0);
+                sorted.dedup_by_key(|x| x.0);
+                let off = buf.len() as u16;
+                push(buf, 2);
+                push(buf, sorted.len() as u16);
+                for (g, c) in sorted {
+                    for w in [g, g, c] {
+                        push(buf, w);
+                    }
+                }
+                off
+            };
+            let cls_off = write_cls(&mut out, cls);
+            let mcls_off = write_cls(&mut out, mcls);
+            let msets_off = fset_gid.map_or(0, |fg| {
+                let off = out.len() as u16;
+                for w in [1u16, 1, 6, 1, 1, fg] {
+                    push(&mut out, w);
+                }
+                off
+            });
+            out[4..6].copy_from_slice(&cls_off.to_be_bytes());
+            out[10..12].copy_from_slice(&mcls_off.to_be_bytes());
+            out[12..14].copy_from_slice(&msets_off.to_be_bytes());
+            out
+        };
+
+        let apply_gdef = |bytes: &[u8], gdef: Option<&Vec<u8>>| match gdef {
+            None => bytes.to_vec(),
+            Some(tbl) => with_table(bytes, b"GDEF", tbl.clone()),
+        };
+
+        let harfrust_attaches = |bytes: &[u8], text: &str, expected_marks: usize| -> bool {
+            let f = FontRef::new(bytes).unwrap();
+            let sd = harfrust::ShaperData::new(&f);
+            let sh = sd.shaper(&f).build();
+            let off = [b"mark", b"mkmk"].map(|t| harfrust::Feature::new(harfrust::Tag::new(t), 0, ..));
+            let (on_b, off_b) = (
+                shape_in(&sh, text, Direction::LeftToRight, Some(harfrust::script::THAI), &[]),
+                shape_in(&sh, text, Direction::LeftToRight, Some(harfrust::script::THAI), &off),
+            );
+            let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
+            on_b.glyph_positions().iter().zip(off_b.glyph_positions()).filter(|(a, b)| at(a) != at(b)).count() >= expected_marks
+        };
+
+        let assert_oracle = |zero_bytes: &[u8], shifted_bytes: &[u8], text: &str, expected_marks: usize, label: &str| {
+            let oracle = harfrust_attaches(shifted_bytes, text, expected_marks);
+            assert_eq!(shape(zero_bytes, text).is_ok(), oracle, "oracle={oracle} on {label}");
+        };
+
+        // 1. MarkToBase across flags, GDEF class variations, and missing/corrupt anchors.
+        #[derive(Clone, Copy)]
+        enum AnchorKind {
+            Valid,
+            NullTarget,
+            CorruptTarget,
+            CorruptMark,
+        }
+        let build_mtb = |flag: u16, anchor: AnchorKind, base_y: i16| {
+            let mut gpos = minimal_thai_gpos(ka_gid, sara_i, sara_i, ka_adv, 0, 0);
+            let lookups = u16_at(&gpos, 8);
+            let l0 = lookups + u16_at(&gpos, lookups + 2);
+            gpos[l0 + 2..l0 + 4].copy_from_slice(&flag.to_be_bytes());
+            gpos[l0 + 52..l0 + 54].copy_from_slice(&base_y.to_be_bytes());
+            match anchor {
+                AnchorKind::Valid => {}
+                AnchorKind::NullTarget => gpos[l0 + 46..l0 + 48].copy_from_slice(&0u16.to_be_bytes()),
+                AnchorKind::CorruptTarget => gpos[l0 + 48..l0 + 50].copy_from_slice(&9u16.to_be_bytes()),
+                AnchorKind::CorruptMark => gpos[l0 + 38..l0 + 40].copy_from_slice(&9u16.to_be_bytes()),
+            }
+            with_table(face.bytes, b"GPOS", gpos)
+        };
+        let empty_gdef = Vec::new();
+        let gdef_match = build_gdef(&[(ka_gid, 1), (sara_i, 3)], &[(sara_i, 1)], Some(sara_i));
+        let gdef_mismatch = build_gdef(&[(ka_gid, 0), (sara_i, 3)], &[(sara_i, 2)], Some(unrelated));
+        let gdefs_mtb: [(&str, Option<&Vec<u8>>); 4] =
+            [("keep", None), ("drop", Some(&empty_gdef)), ("match", Some(&gdef_match)), ("mismatch", Some(&gdef_mismatch))];
+        for flag in [0x0000u16, 0x0002, 0x0004, 0x0008, 0x0100, 0x0010] {
+            for (gname, gdef) in gdefs_mtb {
+                let z = apply_gdef(&build_mtb(flag, AnchorKind::Valid, 0), gdef);
+                let s = apply_gdef(&build_mtb(flag, AnchorKind::Valid, 200), gdef);
+                assert_oracle(&z, &s, "ก\u{0e34}", 1, &format!("mtb flag={flag:#06x} gdef={gname}"));
+            }
+        }
+        for (aname, anchor) in
+            [("null_target", AnchorKind::NullTarget), ("corrupt_target", AnchorKind::CorruptTarget), ("corrupt_mark", AnchorKind::CorruptMark)]
+        {
+            let z = build_mtb(0, anchor, 0);
+            let s = build_mtb(0, anchor, 200);
+            assert_oracle(&z, &s, "ก\u{0e34}", 1, &format!("mtb anchor={aname}"));
+        }
+
+        // 2. MarkToLigature across component masks, CGJ, non-ligated target, GDEF classes, and flags.
+        let liga_gsub = minimal_transitive_liga_gsub(no_gid, ka_gid, mid_gid, mid_gid, false);
+        let build_mtl = |lig: u16, adv: i16, flag: u16, c0_on: bool, c1_on: bool, anc_fmt: u16, base_y: i16| {
+            let mut gpos = minimal_thai_gpos(lig, sara_i, sara_i, adv, 0, 0);
+            let l0 = u16_at(&gpos, 8) + u16_at(&gpos, u16_at(&gpos, 8) + 2);
+            gpos[l0..l0 + 2].copy_from_slice(&5u16.to_be_bytes());
+            gpos[l0 + 2..l0 + 4].copy_from_slice(&flag.to_be_bytes());
+            gpos.truncate(l0 + 8);
+            for w in [1u16, 12, 18, 1, 24, 36, 1, 1, sara_i, 1, 1, lig, 1, 0, 6, 1, 0, 0] {
+                push(&mut gpos, w);
+            }
+            for w in [1u16, 4, 2, if c0_on { 6 } else { 0 }, if c1_on { 6 } else { 0 }] {
+                push(&mut gpos, w);
+            }
+            push(&mut gpos, anc_fmt);
+            push_i(&mut gpos, adv);
+            push_i(&mut gpos, base_y);
+            let gp = with_table(face.bytes, b"GPOS", gpos);
+            with_table(&gp, b"GSUB", liga_gsub.clone())
+        };
+        let gdef_lig1 = build_gdef(&[(mid_gid, 1), (sara_i, 3)], &[], None);
+        let gdef_lig2 = build_gdef(&[(mid_gid, 2), (sara_i, 3)], &[], None);
+        let gdef_lig0 = build_gdef(&[(mid_gid, 0), (sara_i, 3)], &[], None);
+        for (c0, c1, fmt) in [(true, true, 1), (true, false, 1), (false, true, 1), (false, false, 1), (true, true, 9)] {
+            for text in ["น\u{0e34}ก", "นก\u{0e34}", "น\u{034f}\u{0e34}ก"] {
+                let z = build_mtl(mid_gid, mid_adv, 0, c0, c1, fmt, 0);
+                let s = build_mtl(mid_gid, mid_adv, 0, c0, c1, fmt, 200);
+                assert_oracle(&z, &s, text, 1, &format!("mtl c=({c0},{c1},fmt={fmt}) text={text:?}"));
+            }
+        }
+        for flag in [0x0000u16, 0x0002, 0x0004, 0x0008] {
+            for (gname, gdef) in
+                [("keep", None), ("drop", Some(&empty_gdef)), ("c1", Some(&gdef_lig1)), ("c2", Some(&gdef_lig2)), ("c0", Some(&gdef_lig0))]
+            {
+                let z = apply_gdef(&build_mtl(mid_gid, mid_adv, flag, true, true, 1, 0), gdef);
+                let s = apply_gdef(&build_mtl(mid_gid, mid_adv, flag, true, true, 1, 200), gdef);
+                assert_oracle(&z, &s, "น\u{0e34}ก", 1, &format!("mtl flag={flag:#06x} gdef={gname}"));
+            }
+        }
+        for (c0, c1) in [(true, false), (false, true)] {
+            let z = build_mtl(ka_gid, ka_adv, 0, c0, c1, 1, 0);
+            let s = build_mtl(ka_gid, ka_adv, 0, c0, c1, 1, 200);
+            assert_oracle(&z, &s, "ก\u{0e34}", 1, &format!("mtl nonlig c=({c0},{c1})"));
+        }
+
+        // 3. MarkToMark across unligated/CGJ/ligated-cross-comp, flags, GDEF sets, and anchors.
+        let build_mkmk = |base: u16, adv: i16, m1: u16, flag: u16, corrupt: Option<bool>, m2_y: i16| {
+            let mut gpos = minimal_thai_gpos(base, m1, mai_ek, adv, flag, 1);
+            let l0 = u16_at(&gpos, 8) + u16_at(&gpos, u16_at(&gpos, 8) + 2);
+            gpos[l0 + 52..l0 + 54].copy_from_slice(&200i16.to_be_bytes());
+            let l1 = l0 + 54;
+            gpos[l1 + 52..l1 + 54].copy_from_slice(&m2_y.to_be_bytes());
+            if let Some(is_corrupt) = corrupt {
+                if is_corrupt {
+                    gpos[l1 + 48..l1 + 50].copy_from_slice(&9u16.to_be_bytes());
+                } else {
+                    gpos[l1 + 46..l1 + 48].copy_from_slice(&0u16.to_be_bytes());
+                }
+            }
+            let gp = with_table(face.bytes, b"GPOS", gpos);
+            with_table(&gp, b"GSUB", liga_gsub.clone())
+        };
+        let gdef_mk_match = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 1)], Some(mai_ek));
+        let gdef_mk_miss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 2)], Some(unrelated));
+        let gdef_mk_tmiss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 2), (mai_ek, 1)], Some(mai_ek));
+        for flag in [0x0000u16, 0x0008, 0x0100, 0x0010] {
+            for (gname, gdef) in [
+                ("keep", None),
+                ("drop", Some(&empty_gdef)),
+                ("match", Some(&gdef_mk_match)),
+                ("miss", Some(&gdef_mk_miss)),
+                ("target_miss", Some(&gdef_mk_tmiss)),
+            ] {
+                let z = apply_gdef(&build_mkmk(ka_gid, ka_adv, sara_i, flag, None, 0), gdef);
+                let s = apply_gdef(&build_mkmk(ka_gid, ka_adv, sara_i, flag, None, 200), gdef);
+                assert_oracle(&z, &s, "ก\u{0e34}\u{0e48}", 2, &format!("mkmk flag={flag:#06x} gdef={gname}"));
+            }
+        }
+        for (cname, cval) in [("null", Some(false)), ("corrupt", Some(true))] {
+            let z = build_mkmk(ka_gid, ka_adv, sara_i, 0, cval, 0);
+            let s = build_mkmk(ka_gid, ka_adv, sara_i, 0, cval, 200);
+            assert_oracle(&z, &s, "ก\u{0e34}\u{0e48}", 2, &format!("mkmk anchor={cname}"));
+        }
+        let z_cgj = build_mkmk(ka_gid, ka_adv, sara_i, 0, None, 0);
+        let s_cgj = build_mkmk(ka_gid, ka_adv, sara_i, 0, None, 200);
+        assert_oracle(&z_cgj, &s_cgj, "ก\u{0e34}\u{034f}\u{0e48}", 2, "mkmk cgj");
+        let z_lig = build_mkmk(mid_gid, mid_adv, sara_ii, 0, None, 0);
+        let s_lig = build_mkmk(mid_gid, mid_adv, sara_ii, 0, None, 200);
+        assert_oracle(&z_lig, &s_lig, "น\u{0e35}ก\u{0e48}", 2, "mkmk cross-component lig");
+    }
+
+    /// Thai runs followed by non-Thai combining marks keep those combining marks attached to the
+    /// preceding Thai segment rather than splitting mid-cluster (`I2`).
+    #[test]
+    fn thai_followed_by_non_thai_combining_mark_stays_in_thai_segment() {
+        assert_eq!(split_thai_scripts("ก\u{0301} ab\u{0301}"), vec!["ก\u{0301} ", "ab\u{0301}"]);
+        assert_eq!(split_thai_scripts("ab\u{0301} ก\u{0301}"), vec!["ab\u{0301} ", "ก\u{0301}"]);
     }
 }
