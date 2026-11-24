@@ -5,7 +5,7 @@
 //! rewrite, so the earlier revision (which still holds the data) leaves the file.
 
 use pdfcraft_content::Matrix;
-use pdfcraft_cos::{Dict, Document, ObjRef, Object};
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, Stream};
 
 use crate::interp::{Mode, Scope, process};
 use crate::{RedactError, Report, annots_of, listed_annotations, page_streams, page_streams_within};
@@ -106,40 +106,35 @@ fn sub(doc: &Document, d: &Dict, key: &[u8]) -> Option<Dict> {
 /// The most name-tree nodes one count reads.
 const NAME_TREE_NODE_BUDGET: usize = 100_000;
 
-/// Entries of a name tree (`/Names` leaves, `/Kids` recursion). Each indirect node is read once,
-/// however many `/Kids` arrays list it, so shared or cyclic kids cost one step per node rather
-/// than one per path. Every `/Kids` entry the walk does not descend into (a repeated reference or
-/// a non-dictionary) costs a step as well, so a long `/Kids` array of repeats cannot outrun the
-/// budget. Depth and a total step budget bound the rest.
+/// Entries of a name tree (`/Names` leaves, `/Kids` iterative traversal). Each indirect node is
+/// read once, however many `/Kids` arrays list it, so shared or cyclic kids cost one step per node
+/// rather than one per path. Direct nesting within one indirect object is bounded by
+/// [`MAX_DIRECT_DEPTH`] whilst indirect `/Kids` chains traverse iteratively up to
+/// [`NAME_TREE_NODE_BUDGET`]; past either cap, at least 1 is returned so removal still runs.
 fn name_tree_len(doc: &Document, node: &Dict) -> usize {
-    let (mut seen, mut visited) = (std::collections::HashSet::new(), 0);
-    name_tree_len_seen(doc, node, 0, &mut seen, &mut visited)
-}
-
-fn name_tree_len_seen(doc: &Document, node: &Dict, depth: usize, seen: &mut std::collections::HashSet<ObjRef>, visited: &mut usize) -> usize {
-    *visited = visited.saturating_add(1);
-    if depth > 32 || *visited > NAME_TREE_NODE_BUDGET {
-        return 0;
-    }
-    let leaves = node.get(b"Names").and_then(|n| doc.resolve(n).as_array().map(|a| a.len() / 2)).unwrap_or(0);
-    let mut n = leaves;
-    let kids = node.get(b"Kids").map(|k| doc.resolve(k));
-    for k in kids.as_deref().and_then(Object::as_array).map_or(&[][..], Vec::as_slice) {
-        if *visited > NAME_TREE_NODE_BUDGET {
-            break;
+    let (mut seen, mut visited, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
+    let mut stack: Vec<(Object, usize)> = vec![(Object::Dict(node.clone()), 0)];
+    while let Some((o, direct_depth)) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > NAME_TREE_NODE_BUDGET || direct_depth > MAX_DIRECT_DEPTH {
+            return n.max(1);
         }
-        let held;
-        let kid = match k {
-            Object::Ref(r) if !seen.insert(*r) => None,
+        let (d, next_depth) = match &o {
             Object::Ref(r) => {
-                held = doc.get(*r);
-                held.as_dict()
+                if !seen.insert(*r) {
+                    continue;
+                }
+                let held = doc.get(*r);
+                let Some(d) = held.as_dict() else { continue };
+                (d.clone(), 0)
             }
-            other => other.as_dict(),
+            Object::Dict(d) => (d.clone(), direct_depth + 1),
+            _ => continue,
         };
-        match kid {
-            Some(kid) => n = n.saturating_add(name_tree_len_seen(doc, kid, depth + 1, seen, visited)),
-            None => *visited = visited.saturating_add(1),
+        n = n.saturating_add(d.get(b"Names").and_then(|v| doc.resolve(v).as_array().map(|a| a.len() / 2)).unwrap_or(0));
+        let kids = d.get(b"Kids").map(|k| doc.resolve(k));
+        for k in kids.as_deref().and_then(Object::as_array).map_or(&[][..], Vec::as_slice).iter().rev() {
+            stack.push((k.clone(), next_depth));
         }
     }
     n
@@ -148,45 +143,61 @@ fn name_tree_len_seen(doc: &Document, node: &Dict, depth: usize, seen: &mut std:
 /// The most distinct outline items one count reads, over all levels together.
 const OUTLINE_ITEM_BUDGET: usize = 100_000;
 
-fn outline_len(doc: &Document, first: Option<&Object>, depth: usize) -> usize {
-    let (mut seen, mut counted) = (std::collections::HashSet::new(), 0);
-    outline_len_seen(doc, first, depth, &mut seen, &mut counted)
-}
-
 /// Counts an outline level and everything below it, each item once. `seen` holds the indirect items
 /// already counted, and `counted` every item counted so far, inline ones included, which the total
 /// budget applies to. An item that two others name (as `/First` or `/Next`) is counted where the walk
-/// first reaches it, and a level stops at an item already seen, because the walk that reached that
-/// item counts the rest of its level. A hostile outline therefore costs one step per item, not 2^n
-/// steps for n levels of shared children. The depth limit of 64 only matters for outlines nested that
-/// deep: an item first reached through a deeper path is not visited again from a shallower one, so
-/// items nested beyond the limit may stay uncounted.
-fn outline_len_seen(
-    doc: &Document,
-    first: Option<&Object>,
-    depth: usize,
-    seen: &mut std::collections::HashSet<ObjRef>,
-    counted: &mut usize,
-) -> usize {
-    let mut n = 0;
-    let mut cur = first.cloned();
-    let mut guard = 0;
-    while let Some(o) = cur {
-        guard += 1;
-        if guard > 100_000 || depth > 64 || *counted >= OUTLINE_ITEM_BUDGET {
+/// first reaches it; a hostile outline therefore costs one step per item, not 2^n steps. Direct
+/// nesting past [`MAX_DIRECT_DEPTH`] fails closed with [`RedactError::TooDeep`] rather than
+/// returning a partial count, whilst indirect `/First` and `/Next` chains traverse iteratively up to
+/// [`OUTLINE_ITEM_BUDGET`].
+fn outline_len(doc: &Document, first: Option<&Object>) -> Result<usize, RedactError> {
+    let (mut seen, mut counted, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
+    let mut stack: Vec<(Object, usize)> = first.cloned().into_iter().map(|o| (o, 0)).collect();
+    while let Some((o, direct_depth)) = stack.pop() {
+        if counted >= OUTLINE_ITEM_BUDGET {
             break;
         }
-        if let Object::Ref(r) = &o
-            && !seen.insert(*r)
-        {
-            break;
+        if direct_depth > MAX_DIRECT_DEPTH {
+            return Err(RedactError::TooDeep);
         }
-        let Some(d) = doc.resolve(&o).as_dict().cloned() else { break };
-        *counted += 1;
-        n += 1 + outline_len_seen(doc, d.get(b"First"), depth + 1, seen, counted);
-        cur = d.get(b"Next").cloned();
+        let next_depth = match &o {
+            Object::Ref(r) => {
+                if !seen.insert(*r) {
+                    continue;
+                }
+                0
+            }
+            _ => direct_depth + 1,
+        };
+        let Some(d) = doc.resolve(&o).as_dict().cloned() else { continue };
+        counted += 1;
+        n += 1;
+        for key in [b"Next".as_slice(), b"First".as_slice()] {
+            if let Some(child) = d.get(key).cloned() {
+                stack.push((child, next_depth));
+            }
+        }
     }
-    n
+    Ok(n)
+}
+
+/// Strips or simplifies `/A` on a single outline item dictionary, returning `1` if modified.
+fn clean_outline_action(doc: &Document, d: &mut Dict) -> usize {
+    let Some(action) = d.get(b"A").and_then(|a| doc.resolve(a).as_dict().cloned()) else { return 0 };
+    match (action.name(b"S"), action.get(b"D")) {
+        (Some(b"GoTo"), _) if !action.contains(b"Next") => 0,
+        (Some(b"GoTo"), Some(place)) => {
+            let mut jump = Dict::new();
+            jump.set(b"S".to_vec(), Object::name("GoTo"));
+            jump.set(b"D".to_vec(), place.clone());
+            d.set(b"A".to_vec(), Object::Dict(jump));
+            1
+        }
+        _ => {
+            d.remove(b"A");
+            1
+        }
+    }
 }
 
 /// Takes out the action of outline item `d` when it does more than go to a place in this document
@@ -196,33 +207,43 @@ fn outline_len_seen(
 /// `/First` and `/Next`: a damaged outline may reach an item only backwards, and a full save keeps
 /// that item too. `items` counts every item cleaned, inline ones included. Returns how many actions
 /// went, or `None` past the depth limit or past [`OUTLINE_ITEM_BUDGET`] items.
-fn clean_outline_item(doc: &Document, d: &mut Dict, next: &mut Vec<ObjRef>, items: &mut usize, depth: usize) -> Option<usize> {
-    *items = items.saturating_add(1);
-    if depth > MAX_DIRECT_DEPTH || *items > OUTLINE_ITEM_BUDGET {
-        return None;
+fn clean_outline_item(doc: &Document, d: &mut Dict, next: &mut Vec<ObjRef>, items: &mut usize) -> Option<usize> {
+    const KEYS: [&[u8]; 5] = [b"First", b"Last", b"Next", b"Prev", b"Parent"];
+    struct Frame {
+        key: &'static [u8],
+        d: Dict,
+        depth: usize,
+        idx: usize,
     }
-    let mut n = 0;
-    if let Some(action) = d.get(b"A").and_then(|a| doc.resolve(a).as_dict().cloned()) {
-        match (action.name(b"S"), action.get(b"D")) {
-            (Some(b"GoTo"), _) if !action.contains(b"Next") => {}
-            (Some(b"GoTo"), Some(place)) => {
-                let mut jump = Dict::new();
-                jump.set(b"S".to_vec(), Object::name("GoTo"));
-                jump.set(b"D".to_vec(), place.clone());
-                d.set(b"A".to_vec(), Object::Dict(jump));
-                n += 1;
-            }
-            _ => {
-                d.remove(b"A");
-                n += 1;
-            }
+    let enter = |mut d: Dict, key: &'static [u8], depth: usize, items: &mut usize, n: &mut usize| -> Option<Frame> {
+        *items = items.saturating_add(1);
+        if depth > MAX_DIRECT_DEPTH || *items > OUTLINE_ITEM_BUDGET {
+            return None;
         }
-    }
-    for key in [&b"First"[..], b"Last", b"Next", b"Prev", b"Parent"] {
-        match d.get_mut(key) {
-            Some(Object::Ref(r)) => next.push(*r),
-            Some(Object::Dict(kid)) => n += clean_outline_item(doc, kid, next, items, depth + 1)?,
-            _ => {}
+        *n += clean_outline_action(doc, &mut d);
+        Some(Frame { key, d, depth, idx: 0 })
+    };
+    let mut n = 0;
+    let mut stack = vec![enter(std::mem::take(d), b"", 0, items, &mut n)?];
+    while let Some(top) = stack.last_mut() {
+        if let Some(&key) = KEYS.get(top.idx) {
+            top.idx += 1;
+            match top.d.get_mut(key) {
+                Some(Object::Ref(r)) => next.push(*r),
+                Some(Object::Dict(kid)) => {
+                    let frame = enter(std::mem::take(kid), key, top.depth + 1, items, &mut n)?;
+                    stack.push(frame);
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let done = stack.pop()?;
+        if let Some(parent) = stack.last_mut() {
+            parent.d.set(done.key.to_vec(), Object::Dict(done.d));
+        } else {
+            *d = done.d;
+            return Some(n);
         }
     }
     Some(n)
@@ -242,7 +263,7 @@ fn outline_without_actions(doc: &Document, mut next: Vec<ObjRef>, mut items: usi
             return None;
         }
         let Some(mut d) = doc.get(r).as_dict().cloned() else { continue };
-        let went = clean_outline_item(doc, &mut d, &mut next, &mut items, 0)?;
+        let went = clean_outline_item(doc, &mut d, &mut next, &mut items)?;
         if went > 0 {
             out.push((r, d));
             n += went;
@@ -260,7 +281,7 @@ fn outline_action_count(doc: &Document, cat: &Dict) -> usize {
             next.push(*r);
             0
         }
-        Some(Object::Dict(o)) => clean_outline_item(doc, &mut o.clone(), &mut next, &mut items, 0).unwrap_or(1),
+        Some(Object::Dict(o)) => clean_outline_item(doc, &mut o.clone(), &mut next, &mut items).unwrap_or(1),
         _ => return 0,
     };
     n += outline_without_actions(doc, next, items).map_or(1, |(_, went)| went);
@@ -301,8 +322,10 @@ const NAME_MAPS: [&[u8]; 14] = [
     b"PieceInfo",
 ];
 
-/// How deep the owner sweep follows dictionaries and arrays written in place.
-const MAX_DIRECT_DEPTH: usize = 64;
+/// How deep the owner sweep and the outline and layer walks follow dictionaries and arrays
+/// written in place: past the parser's 128 levels, so a graph read from a file never refuses as
+/// too deep, and a removal that a save's refusal names (Metadata for XMP) can always run.
+const MAX_DIRECT_DEPTH: usize = 256;
 
 /// What a dictionary is to the owner sweep.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -342,7 +365,7 @@ fn owners(doc: &Document, keys: &[&[u8]]) -> Result<(Vec<usize>, Holders), Redac
         if !seen.insert((r, role)) {
             continue;
         }
-        if find_owned(&doc.get(r), role, keys, &mut held, &mut next, 0)? {
+        if find_owned(&doc.get(r), role, keys, &mut held, &mut next)? {
             holders.push((r, role));
         }
     }
@@ -351,70 +374,132 @@ fn owners(doc: &Document, keys: &[&[u8]]) -> Result<(Vec<usize>, Holders), Redac
 
 /// Counts the dictionaries in `o` (and what it holds in place) that hold one of `keys`, and
 /// queues the indirect objects it names. Returns whether any key was found.
-fn find_owned(o: &Object, role: Held, keys: &[&[u8]], held: &mut [usize], next: &mut Vec<(ObjRef, Held)>, depth: usize) -> Result<bool, RedactError> {
-    if depth > MAX_DIRECT_DEPTH {
-        return Err(RedactError::TooDeep);
-    }
-    let (d, role) = match o {
-        Object::Ref(r) => {
-            next.push((*r, role));
-            return Ok(false);
-        }
-        Object::Array(a) => {
-            let mut found = false;
-            for v in a {
-                found |= find_owned(v, Held::Owner, keys, held, next, depth + 1)?;
-            }
-            return Ok(found);
-        }
-        Object::Dict(d) => (d, role),
-        // A stream's dictionary is never a name map.
-        Object::Stream(s) => (&s.dict, Held::Owner),
-        _ => return Ok(false),
-    };
+fn find_owned(o: &Object, role: Held, keys: &[&[u8]], held: &mut [usize], next: &mut Vec<(ObjRef, Held)>) -> Result<bool, RedactError> {
     let mut found = false;
-    if role != Held::Map {
-        for (i, k) in keys.iter().enumerate() {
-            if d.contains(k)
-                && let Some(n) = held.get_mut(i)
-            {
-                *n = n.saturating_add(1);
-                found = true;
+    let mut stack = vec![(o, role, 0usize)];
+    while let Some((o, role, depth)) = stack.pop() {
+        if depth > MAX_DIRECT_DEPTH {
+            return Err(RedactError::TooDeep);
+        }
+        let (d, role) = match o {
+            Object::Ref(r) => {
+                next.push((*r, role));
+                continue;
+            }
+            Object::Array(a) => {
+                stack.extend(a.iter().rev().map(|v| (v, Held::Owner, depth + 1)));
+                continue;
+            }
+            Object::Dict(d) => (d, role),
+            // A stream's dictionary is never a name map.
+            Object::Stream(s) => (&s.dict, Held::Owner),
+            _ => continue,
+        };
+        if role != Held::Map {
+            for (i, k) in keys.iter().enumerate() {
+                if d.contains(k)
+                    && let Some(n) = held.get_mut(i)
+                {
+                    *n = n.saturating_add(1);
+                    found = true;
+                }
             }
         }
-    }
-    for (k, v) in d.iter() {
-        found |= find_owned(v, role.child(k), keys, held, next, depth + 1)?;
+        for (k, v) in d.iter() {
+            stack.push((v, role.child(k), depth + 1));
+        }
     }
     Ok(found)
 }
 
+fn is_owner_container(v: &Object) -> bool {
+    matches!(v, Object::Array(_) | Object::Dict(_) | Object::Stream(_))
+}
+
 /// Removes `keys` from `o` and from what it holds in place, outside name maps. [`owners`] has
 /// already refused anything nested past the depth limit.
-fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]], depth: usize) {
-    if depth > MAX_DIRECT_DEPTH {
+fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
+    enum Parent {
+        Index(usize),
+        Key(Vec<u8>),
+    }
+    enum Node {
+        Array(Vec<Object>),
+        Dict { d: Dict, children: Vec<Vec<u8>>, role: Held },
+    }
+    struct Frame {
+        parent: Option<Parent>,
+        node: Node,
+        idx: usize,
+        depth: usize,
+        stream: Option<Stream>,
+    }
+    let open_dict = |mut d: Dict, r: Held| -> Node {
+        if r != Held::Map {
+            for k in keys {
+                d.remove(k);
+            }
+        }
+        let children = d.iter().filter(|(_, v)| is_owner_container(v)).map(|(k, _)| k.clone()).collect();
+        Node::Dict { d, children, role: r }
+    };
+    let open = |obj: Object, parent: Option<Parent>, role: Held, depth: usize| -> Option<Frame> {
+        let (node, stream) = match obj {
+            Object::Array(a) => (Node::Array(a), None),
+            Object::Dict(d) => (open_dict(d, role), None),
+            Object::Stream(mut s) => (open_dict(std::mem::take(&mut s.dict), Held::Owner), Some(s)),
+            _ => return None,
+        };
+        Some(Frame { parent, node, idx: 0, depth, stream })
+    };
+    if !is_owner_container(o) {
         return;
     }
-    let (d, role) = match o {
-        Object::Array(a) => {
-            for v in a {
-                strip_owned(v, Held::Owner, keys, depth + 1);
+    let Some(first) = open(std::mem::replace(o, Object::Null), None, role, 0) else { return };
+    let mut stack = vec![first];
+    while let Some(top) = stack.last_mut() {
+        let next = (top.depth < MAX_DIRECT_DEPTH)
+            .then(|| match &mut top.node {
+                Node::Array(a) => (top.idx..a.len()).find_map(|i| {
+                    top.idx = i + 1;
+                    is_owner_container(&a[i]).then(|| (std::mem::replace(&mut a[i], Object::Null), Parent::Index(i), Held::Owner))
+                }),
+                Node::Dict { d, children, role } => (top.idx..children.len()).find_map(|i| {
+                    top.idx = i + 1;
+                    let k = children[i].clone();
+                    let cr = role.child(&k);
+                    d.get_mut(&k).filter(|v| is_owner_container(v)).map(|v| (std::mem::replace(v, Object::Null), Parent::Key(k), cr))
+                }),
+            })
+            .flatten();
+        if let Some((child, parent, child_role)) = next
+            && let Some(frame) = open(child, Some(parent), child_role, top.depth + 1)
+        {
+            stack.push(frame);
+            continue;
+        }
+        let Some(done) = stack.pop() else { break };
+        let val = match done.node {
+            Node::Array(a) => Object::Array(a),
+            Node::Dict { d, .. } => match done.stream {
+                Some(mut s) => {
+                    s.dict = d;
+                    Object::Stream(s)
+                }
+                None => Object::Dict(d),
+            },
+        };
+        match (done.parent, stack.last_mut()) {
+            (Some(Parent::Index(i)), Some(Frame { node: Node::Array(a), .. })) => a[i] = val,
+            (Some(Parent::Key(k)), Some(Frame { node: Node::Dict { d, .. }, .. })) => {
+                if let Some(slot) = d.get_mut(&k) {
+                    *slot = val;
+                }
             }
-            return;
-        }
-        Object::Dict(d) => (d, role),
-        Object::Stream(s) => (&mut s.dict, Held::Owner),
-        _ => return,
-    };
-    if role != Held::Map {
-        for k in keys {
-            d.remove(k);
-        }
-    }
-    let names: Vec<Vec<u8>> = d.iter().filter(|(_, v)| matches!(v, Object::Array(_) | Object::Dict(_))).map(|(k, _)| k.clone()).collect();
-    for k in names {
-        if let Some(v) = d.get_mut(&k) {
-            strip_owned(v, role.child(&k), keys, depth + 1);
+            _ => {
+                *o = val;
+                return;
+            }
         }
     }
 }
@@ -426,36 +511,37 @@ pub(crate) fn owned_values(doc: &Document, key: &[u8]) -> Result<Vec<(ObjRef, bo
     let (_, holders) = owners(doc, &[key])?;
     let mut out = Vec::new();
     for (r, role) in holders {
-        collect_owned(&doc.get(r), role, key, 0, &mut |own, v| out.push((r, own, v.clone())));
+        collect_owned(&doc.get(r), role, key, &mut |own, v| out.push((r, own, v.clone())));
     }
     Ok(out)
 }
 
 /// Calls `found` with each value of `key` in `o` and what it holds in place, outside name maps
 /// (the reading counterpart of [`strip_owned`]), and whether it is `o`'s own entry.
-fn collect_owned(o: &Object, role: Held, key: &[u8], depth: usize, found: &mut dyn FnMut(bool, &Object)) {
-    if depth > MAX_DIRECT_DEPTH {
-        return;
-    }
-    let (d, role) = match o {
-        Object::Array(a) => {
-            for v in a {
-                collect_owned(v, Held::Owner, key, depth + 1, found);
-            }
-            return;
+fn collect_owned(o: &Object, role: Held, key: &[u8], found: &mut dyn FnMut(bool, &Object)) {
+    let mut stack = vec![(o, role, 0usize)];
+    while let Some((o, role, depth)) = stack.pop() {
+        if depth > MAX_DIRECT_DEPTH {
+            continue;
         }
-        Object::Dict(d) => (d, role),
-        Object::Stream(s) => (&s.dict, Held::Owner),
-        _ => return,
-    };
-    if role != Held::Map
-        && let Some(v) = d.get(key)
-    {
-        found(depth == 0, v);
-    }
-    for (k, v) in d.iter() {
-        if matches!(v, Object::Array(_) | Object::Dict(_)) {
-            collect_owned(v, role.child(k), key, depth + 1, found);
+        let (d, role) = match o {
+            Object::Array(a) => {
+                stack.extend(a.iter().rev().map(|v| (v, Held::Owner, depth + 1)));
+                continue;
+            }
+            Object::Dict(d) => (d, role),
+            Object::Stream(s) => (&s.dict, Held::Owner),
+            _ => continue,
+        };
+        if role != Held::Map
+            && let Some(v) = d.get(key)
+        {
+            found(depth == 0, v);
+        }
+        for (k, v) in d.iter() {
+            if is_owner_container(v) {
+                stack.push((v, role.child(k), depth + 1));
+            }
         }
     }
 }
@@ -550,34 +636,114 @@ fn once(
     Ok(Some(o.clone()))
 }
 
-/// `o` without the entries `keep` refuses, through nested arrays (an `/Order` holds sub-lists, and
-/// `/RBGroups` holds groups), each array written by reference cleaned [`once`]. `None` when `keep`
-/// refuses `o` itself, or when `o` is a sub-list (`depth` above 0) that named a layer and names
-/// none now: it goes, with the heading that labelled it.
-fn filtered(
-    doc: &mut Document,
+struct FilterFrame {
+    target: Option<ObjRef>,
+    orig: Option<Object>,
+    elems: Vec<Object>,
+    idx: usize,
+    out: Vec<Object>,
+    direct_depth: usize,
+    sublist: bool,
+}
+
+enum FilterStep {
+    Value(Option<Object>),
+    Enter(FilterFrame),
+}
+
+fn open_filter_step(
+    doc: &Document,
     o: &Object,
     keep: &impl Fn(&Object) -> bool,
-    depth: usize,
+    direct_depth: usize,
+    sublist: bool,
     cleaned: &mut Cleaned,
-) -> Result<Option<Object>, RedactError> {
-    if depth > MAX_DIRECT_DEPTH {
+) -> Result<FilterStep, RedactError> {
+    if direct_depth > MAX_DIRECT_DEPTH {
         return Err(RedactError::TooDeep);
     }
     if !keep(o) {
-        return Ok(None);
+        return Ok(FilterStep::Value(None));
     }
-    once(doc, o, cleaned, |doc, o, cleaned| {
-        let Object::Array(a) = o else { return Ok(Some(o.clone())) };
-        let mut out = Vec::new();
-        for x in a {
-            out.extend(filtered(doc, x, keep, depth + 1, cleaned)?);
+    if let Object::Ref(r) = o {
+        if let Some(&kept) = cleaned.get(r) {
+            return Ok(FilterStep::Value(kept.then(|| o.clone())));
         }
+        cleaned.insert(*r, true);
+        let held = doc.resolve(o);
+        let Some(a) = held.as_array() else {
+            return Ok(FilterStep::Value(Some(o.clone())));
+        };
+        return Ok(FilterStep::Enter(FilterFrame {
+            target: Some(*r),
+            orig: Some(Object::Array(a.clone())),
+            elems: a.clone(),
+            idx: 0,
+            out: Vec::new(),
+            // Crossing an indirect reference enters a distinct object at direct depth 0.
+            direct_depth: 0,
+            sublist,
+        }));
+    }
+    let Object::Array(a) = o else {
+        return Ok(FilterStep::Value(Some(o.clone())));
+    };
+    Ok(FilterStep::Enter(FilterFrame { target: None, orig: None, elems: a.clone(), idx: 0, out: Vec::new(), direct_depth, sublist }))
+}
+
+/// `o` without the entries `keep` refuses, through nested arrays (an `/Order` holds sub-lists, and
+/// `/RBGroups` holds groups), each array written by reference cleaned [`once`]. `None` when `keep`
+/// refuses `o` itself, or when `o` is a sub-list that named a layer and names none now: it goes,
+/// with the heading that labelled it. Walks iteratively so deep indirect or direct chains cannot
+/// exhaust the thread stack; direct nesting per indirect object is bounded by [`MAX_DIRECT_DEPTH`].
+fn filtered(doc: &mut Document, o: &Object, keep: &impl Fn(&Object) -> bool, cleaned: &mut Cleaned) -> Result<Option<Object>, RedactError> {
+    let mut stack = match open_filter_step(doc, o, keep, 0, false, cleaned)? {
+        FilterStep::Value(v) => return Ok(v),
+        FilterStep::Enter(f) => vec![f],
+    };
+    let mut updates = Vec::new();
+    while let Some(top) = stack.last_mut() {
+        if let Some(elem) = top.elems.get(top.idx).cloned() {
+            top.idx += 1;
+            match open_filter_step(doc, &elem, keep, top.direct_depth + 1, true, cleaned)? {
+                FilterStep::Value(Some(v)) => top.out.push(v),
+                FilterStep::Value(None) => {}
+                FilterStep::Enter(f) => stack.push(f),
+            }
+            continue;
+        }
+        let Some(done) = stack.pop() else { break };
         // Anything but a text string (a heading) is a layer or a sub-list.
         let names = |l: &[Object]| l.iter().any(|x| !matches!(x, Object::String(_)));
-        let emptied = depth > 0 && names(a.as_slice()) && !names(out.as_slice());
-        Ok((!emptied).then_some(Object::Array(out)))
-    })
+        let emptied = done.sublist && names(&done.elems) && !names(&done.out);
+        let res = if emptied {
+            if let Some(r) = done.target {
+                cleaned.insert(r, false);
+            }
+            None
+        } else {
+            let new = Object::Array(done.out);
+            if let Some(r) = done.target {
+                if done.orig.as_ref() != Some(&new) {
+                    updates.push((r, new));
+                }
+                Some(Object::Ref(r))
+            } else {
+                Some(new)
+            }
+        };
+        if let Some(parent) = stack.last_mut() {
+            if let Some(v) = res {
+                parent.out.push(v);
+            }
+        } else {
+            for (r, new) in updates {
+                doc.set_existing(r, new)?;
+            }
+            return Ok(res);
+        }
+    }
+    Ok(None)
 }
 
 /// An optional-content configuration without the layers `keep` refuses, in every list that names
@@ -587,7 +753,7 @@ fn filtered(
 fn config_without(doc: &mut Document, mut d: Dict, keep: &impl Fn(&Object) -> bool, cleaned: &mut Cleaned) -> Result<Dict, RedactError> {
     for k in [&b"ON"[..], b"OFF", b"Order", b"Locked", b"RBGroups"] {
         if let Some(v) = d.get(k).cloned() {
-            let v = filtered(doc, &v, keep, 0, cleaned)?.unwrap_or_else(|| Object::Array(Vec::new()));
+            let v = filtered(doc, &v, keep, cleaned)?.unwrap_or_else(|| Object::Array(Vec::new()));
             d.set(k.to_vec(), v);
         }
     }
@@ -599,7 +765,7 @@ fn config_without(doc: &mut Document, mut d: Dict, keep: &impl Fn(&Object) -> bo
             kept.extend(once(doc, rule, cleaned, |doc, rule, cleaned| {
                 let Some(mut rule) = rule.as_dict().cloned() else { return Ok(None) };
                 if let Some(layers) = rule.get(b"OCGs").cloned() {
-                    let Some(layers) = filtered(doc, &layers, keep, 0, cleaned)? else { return Ok(None) };
+                    let Some(layers) = filtered(doc, &layers, keep, cleaned)? else { return Ok(None) };
                     if doc.resolve(&layers).as_array().is_some_and(Vec::is_empty) {
                         return Ok(None);
                     }
@@ -816,7 +982,7 @@ pub fn scan_only(doc: &Document, which: &[Hidden]) -> Vec<(Hidden, usize)> {
                     let off = hidden_layers(doc).len();
                     off + content_pass(&mut doc2, false, true, false).map(|(n, _)| n).unwrap_or(0)
                 }
-                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First"), 0)),
+                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First")).unwrap_or(1)),
                 Hidden::LinksActionsScripts => {
                     count_sub(b"Link")
                         + usize::from(cat.get(b"OpenAction").is_some_and(|a| doc.resolve(a).as_dict().is_some()))
@@ -855,7 +1021,7 @@ fn strip_outline_actions(doc: &mut Document, cat: &mut Dict) -> Result<(), Redac
     let root = match cat.get(b"Outlines") {
         Some(Object::Dict(o)) => {
             let mut o = o.clone();
-            clean_outline_item(doc, &mut o, &mut next, &mut items, 0).ok_or(RedactError::TooDeep)?;
+            clean_outline_item(doc, &mut o, &mut next, &mut items).ok_or(RedactError::TooDeep)?;
             Some(o)
         }
         Some(Object::Ref(r)) => {
@@ -943,6 +1109,15 @@ fn drop_page_annotations(doc: &mut Document, which: &[Hidden], fields: bool) -> 
     Ok(())
 }
 
+fn check_outline_depth(doc: &Document, root: ObjRef) -> Result<(), RedactError> {
+    if let Some(cat) = doc.get(root).as_dict()
+        && let Some(o) = sub(doc, cat, b"Outlines")
+    {
+        outline_len(doc, o.get(b"First"))?;
+    }
+    Ok(())
+}
+
 /// [`remove_hidden`] with `counts` from a scan of at least the categories in `which`. With
 /// `every_page`, every page's annotation list is rewritten even when no chosen category changes
 /// it, as removal did before it skipped that work; tests compare the two.
@@ -954,6 +1129,9 @@ pub(crate) fn remove_counted(
 ) -> Result<Vec<(Hidden, usize)>, RedactError> {
     let count = |h: Hidden| counts.iter().find(|c| c.0 == h).map_or(0, |c| c.1);
     let (root, _) = catalog(doc).ok_or(RedactError::NothingToApply)?;
+    if which.contains(&Hidden::Bookmarks) {
+        check_outline_depth(doc, root)?;
+    }
     let mut done = Vec::new();
     // What a full save keeps before anything is removed: an image that leaves, by whatever route
     // below, takes a shared JBIG2 dictionary with it (`unshare_unmarked`, last).
@@ -1066,7 +1244,7 @@ pub(crate) fn remove_counted(
     if !keys.is_empty() {
         for (r, role) in owners(doc, &keys)?.1 {
             let mut o = (*doc.get(r)).clone();
-            strip_owned(&mut o, role, &keys, 0);
+            strip_owned(&mut o, role, &keys);
             doc.set(r, o);
         }
     }
