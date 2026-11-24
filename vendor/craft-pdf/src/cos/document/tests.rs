@@ -184,7 +184,7 @@ fn the_key_length_comes_from_the_filter_in_use() {
     let doc = Document::new_empty();
     let length = |dict: &str| {
         let (_, o) = crate::cos::parse_indirect(format!("1 0 obj {dict} endobj").as_bytes(), 0, &|_| None).unwrap();
-        crate::cos::security::encrypt_dict(&doc, o.as_dict().unwrap()).length_bits
+        crate::cos::security::encrypt_dict(&doc, o.as_dict().unwrap()).unwrap().length_bits
     };
     let v4 = |top: &str, filters: &str, stm: &str, str_: &str| {
         length(&format!("<< /Filter /Standard /V 4 /R 4 {top} /CF << {filters} >> /StmF /{stm} /StrF /{str_} >>"))
