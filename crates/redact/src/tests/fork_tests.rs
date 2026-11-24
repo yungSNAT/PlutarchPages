@@ -888,4 +888,41 @@ fn a_saves_search_of_a_large_file_takes() {
     let started = std::time::Instant::now();
     let left = crate::survivors(&doc, &crate::Removed::new(removed, true));
     eprintln!("S11: {pages} pages, 20 x {} byte attachments, 200 removed runs: {:?}, refuses {}", text.len(), started.elapsed(), left.refuses());
+    assert!(!left.refuses(), "nothing in the file holds a removed run: {:?}", left.items.first());
+}
+
+/// A large redaction searched for in a file with many strings stays within the search's work
+/// limit (delta 2 review NB1): past it, every place would refuse without being searched.
+#[test]
+fn a_large_redaction_in_a_file_of_many_strings_is_searched_in_full() {
+    let links = 2_000;
+    let annots: Vec<String> = (0..links).map(|i| format!("{} 0 R", 4 + i)).collect();
+    let extra: Vec<String> = (0..links)
+        .map(|i| format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (https://example.com/page/{i}/section) >> >>"))
+        .collect();
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let doc = doc_with("", &format!("/Annots [{}]", annots.join(" ")), &extra, "");
+    let removed: Vec<String> = (0..2_000).map(|i| format!("Removed sentence number {i} of the redacted page about quarterly figures")).collect();
+    let left = crate::survivors(&doc, &crate::Removed::new(removed, true));
+    assert!(!left.refuses() && !left.unsearched, "{} places, unsearched {}", left.len(), left.unsearched);
+}
+
+/// One word of a redacted line is not a reason to refuse, even when it is a field's whole name
+/// or option (delta 2 review S1).
+#[test]
+fn a_one_word_field_string_inside_a_redacted_line_is_not_refused() {
+    let fields = "/AcroForm << /Fields [4 0 R 5 0 R] >>";
+    let extra = ["<< /FT /Tx /T (Date) >>", "<< /FT /Ch /T (consent) /Opt [(Yes) (No)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &extra, ""), &["Date: 12 May 2026", "Yes, I consent"]));
+}
+
+/// The parts of a labelled line are runs of their own (delta 2 review S2): the address after
+/// "Email:" in a link, the name after "Name:" in a bookmark.
+#[test]
+fn the_parts_of_a_labelled_line_refuse_on_their_own() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (mailto:jane.citizen@example.com) >> >>";
+    assert!(save_refuses(&doc_with("", "/Annots [4 0 R]", &[link], ""), &["Email: jane.citizen@example.com"]));
+    let outline = "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>";
+    let doc = doc_with("/Outlines 4 0 R", "", &[outline, "<< /Title (Interview with Jane Citizen) /Parent 4 0 R >>"], "");
+    assert!(save_refuses(&doc, &["Name: Jane Citizen"]));
 }

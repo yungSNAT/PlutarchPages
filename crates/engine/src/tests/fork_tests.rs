@@ -362,7 +362,7 @@ fn a_save_refuses_while_a_file_an_action_opens_is_named_with_redacted_text() {
 
 #[test]
 fn a_save_refuses_while_a_form_field_value_holds_redacted_text() {
-    let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "a form field (object 6)");
+    let said = refusal("/AcroForm << /Fields [6 0 R] >>", "", &["<< /FT /Tx /T (codename) /V (Bluefin) >>"], "a form field (object 6 before saving)");
     assert!(said.contains("Form fields"), "{said}");
 }
 
@@ -514,7 +514,7 @@ fn extracting_and_splitting_refuse_while_redacted_text_survives() {
 fn a_refusal_names_each_place_and_clearing_it_saves() {
     let (mut s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
     let said = saved.expect_err("the link still holds the word").to_string();
-    assert!(said.contains("link, action or script on page 1 (object 6)"), "{said}");
+    assert!(said.contains("link, action or script on page 1 (object 6 before saving)"), "{said}");
     assert!(!said.to_lowercase().contains("bluefin"), "the refusal never repeats the text: {said}");
     s.apply(id, Edit::DeleteLink { page: 0, index: 0 }).unwrap();
     saved_or_refused(&s, id).expect("the one place holding it is gone");
@@ -586,4 +586,14 @@ fn the_last_redaction_report_keeps_no_removed_text() {
     let (s, _, _) = redact_then_save(leaky_page("", "", &[]), |_, _| {});
     let report = s.last_redaction_report().expect("the last edit applied redactions");
     assert_eq!(report.removed, pdfcraft_redact::Removed::default());
+}
+
+/// Optimize with a Remove hidden information category that clears the place writes the clean
+/// copy: the check runs after its own discarding (delta 2 review S3).
+#[test]
+fn optimizing_with_the_category_that_clears_the_place_goes_ahead() {
+    let (s, id, saved) = redact_then_save(leaky_page("", "/Annots [6 0 R]", &[BLUEFIN_LINK]), |_, _| {});
+    assert!(saved.is_err());
+    s.optimized_bytes(id, &optimize::Settings::default(), &[crate::Hidden::LinksActionsScripts]).expect("the copy discards the link's action");
+    assert!(s.optimized_bytes(id, &optimize::Settings::default(), &[crate::Hidden::Comments]).is_err(), "comments don't clear a link");
 }
