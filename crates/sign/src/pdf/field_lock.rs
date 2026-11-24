@@ -206,3 +206,20 @@ pub(super) fn lock_fields(doc: &mut Document, lock: &FieldLock) -> Result<(), Si
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::FieldLock;
+
+    /// A lock's name covers that field and the fields below it, not another whose name starts
+    /// the same way.
+    #[test]
+    fn a_name_covers_its_field_and_the_fields_below_it() {
+        let lock = FieldLock::Include(vec!["Buyer".into()]);
+        assert!(lock.covers("Buyer") && lock.covers("Buyer.Name"));
+        assert!(!lock.covers("BuyerX") && !lock.covers("Seller.Buyer"));
+        let except = FieldLock::Exclude(vec!["Buyer".into()]);
+        assert!(!except.covers("Buyer.Name") && except.covers("Notes"));
+        assert!(FieldLock::All.covers("Notes"));
+    }
+}

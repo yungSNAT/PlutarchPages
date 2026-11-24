@@ -1,5 +1,5 @@
-use super::listing::{mk_rotation, nums, sig_fields, text, walk_sig_fields};
 use super::field_lock;
+use super::listing::{mk_rotation, nums, sig_fields, text, walk_sig_fields};
 use super::{Certificate, Dict, DigestAlg, DigitalId, Document, HashSet, Object, PdfString, SaveOptions, SignError, SignedData, Stream};
 
 // ── signing ─────────────────────────────────────────────────────────────────────────────────

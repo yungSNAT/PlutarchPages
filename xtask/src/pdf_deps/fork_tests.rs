@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
 
-use super::{PACKAGES, SHARED_REV, VENDORED, validate};
+use super::{PACKAGES, SHARED_REV, VENDORED, validate, vendored_base};
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf()
@@ -20,7 +20,8 @@ fn metadata(root: &Path, local: &[&str]) -> Value {
             json!({ "name": name, "version": version, "id": name, "source": source, "manifest_path": manifest })
         })
         .collect();
-    packages.push(json!({ "name": "lopdf", "version": "0.45.0", "id": "lopdf", "source": null, "manifest_path": root.join("vendor/lopdf/Cargo.toml") }));
+    packages
+        .push(json!({ "name": "lopdf", "version": "0.45.0", "id": "lopdf", "source": null, "manifest_path": root.join("vendor/lopdf/Cargo.toml") }));
     json!({ "packages": packages, "resolve": { "nodes": [{ "id": "craft-pdf", "features": ["read", "interpret", "raster"] }] } })
 }
 
@@ -48,4 +49,27 @@ fn another_hayro_package_from_a_local_copy_fails() {
     local.push("hayro-syntax");
     let err = validate(&root, &metadata(&root, &local)).unwrap_err();
     assert!(err.starts_with("hayro-syntax: expected"), "{err}");
+}
+
+#[test]
+fn a_vendored_copy_at_another_base_fails() {
+    let at = |rev: &str| {
+        format!(
+            "# craft-pdf, vendored
+
+Base: `{rev}` (storytold/craft-libs `crates/pdf`).
+"
+        )
+    };
+    assert_eq!(vendored_base("vendor/x/PATCHES.md", &at(SHARED_REV)), Ok(()));
+    let stale = vendored_base("vendor/x/PATCHES.md", &at("8e03cd016d42032b867fef6bad86bc69bf2c1920")).unwrap_err();
+    assert!(stale.starts_with("vendor/x/PATCHES.md: expected base"), "{stale}");
+    assert!(
+        vendored_base(
+            "vendor/x/PATCHES.md",
+            "no base line
+"
+        )
+        .is_err()
+    );
 }
