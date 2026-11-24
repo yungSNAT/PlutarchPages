@@ -433,24 +433,29 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
             on_letter = letter(c);
         }
     }
-    let gpos_lookups = own.gpos().ok().and_then(|t| t.lookup_list().ok()).map_or(0, |l| l.lookups().len());
-    let gsub_lookups = own.gsub().ok().and_then(|t| t.lookup_list().ok()).map_or(0, |l| l.lookups().len());
+    let Some((gpos_lookups, gpos_subtables)) = layout_counts(own.gpos().ok().and_then(|t| t.lookup_list().ok()), pos_sub_table_count) else {
+        return false;
+    };
+    let Some((gsub_lookups, gsub_subtables)) = layout_counts(own.gsub().ok().and_then(|t| t.lookup_list().ok()), sub_sub_table_count) else {
+        return false;
+    };
     let total_lookups = gpos_lookups.saturating_add(gsub_lookups);
-    if total_lookups > 1 << 12 || total_lookups.max(1).saturating_mul(text.len()) > 1 << 27 {
+    let total_subtables = gpos_subtables.saturating_add(gsub_subtables);
+    if total_lookups > 1 << 12 || total_subtables > 1 << 14 || total_subtables.max(total_lookups).max(1).saturating_mul(text.len()) > 1 << 27 {
         return false;
     }
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
     let run_marks: Vec<(&str, Vec<(usize, char)>)> =
         text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).map(|run| (run, stacked_marks(run))).collect();
-    let mark_gpos_lookups = if run_marks.iter().any(|(_, marks)| !marks.is_empty()) {
+    let mark_gpos_subtables = if run_marks.iter().any(|(_, marks)| !marks.is_empty()) {
         let Some(n) = mark_lookups_attach_only(&own) else { return false };
         n
     } else {
         0
     };
-    let scale = mark_gpos_lookups.max(1);
+    let scale = mark_gpos_subtables.max(1);
     // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
-    // the text and scaled by reachable mark/mkmk lookups, is bounded before any shaping begins.
+    // the text and scaled by reachable mark/mkmk subtables, is bounded before any shaping begins.
     if run_marks
         .iter()
         .map(|(run, marks)| {
@@ -835,9 +840,58 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
     }
 }
 
-fn charge_arabic_gpos(work: &mut usize) -> bool {
-    *work = work.saturating_add(1);
+fn pos_sub_table_count(l: &skrifa::raw::tables::gpos::PositionLookup<'_>) -> u16 {
+    use skrifa::raw::tables::gpos::PositionLookup as L;
+    match l {
+        L::Single(i) => i.sub_table_count(),
+        L::Pair(i) => i.sub_table_count(),
+        L::Cursive(i) => i.sub_table_count(),
+        L::MarkToBase(i) => i.sub_table_count(),
+        L::MarkToLig(i) => i.sub_table_count(),
+        L::MarkToMark(i) => i.sub_table_count(),
+        L::Contextual(i) => i.sub_table_count(),
+        L::ChainContextual(i) => i.sub_table_count(),
+        L::Extension(i) => i.sub_table_count(),
+    }
+}
+
+fn sub_sub_table_count(l: &skrifa::raw::tables::gsub::SubstitutionLookup<'_>) -> u16 {
+    use skrifa::raw::tables::gsub::SubstitutionLookup as L;
+    match l {
+        L::Single(i) => i.sub_table_count(),
+        L::Multiple(i) => i.sub_table_count(),
+        L::Alternate(i) => i.sub_table_count(),
+        L::Ligature(i) => i.sub_table_count(),
+        L::Contextual(i) => i.sub_table_count(),
+        L::ChainContextual(i) => i.sub_table_count(),
+        L::Extension(i) => i.sub_table_count(),
+        L::Reverse(i) => i.sub_table_count(),
+    }
+}
+
+fn layout_counts<'a, L: skrifa::raw::FontRead<'a>>(
+    list: Option<skrifa::raw::tables::layout::LookupList<'a, L>>,
+    sub_tables: impl Fn(&L) -> u16,
+) -> Option<(usize, usize)> {
+    let Some(list) = list else { return Some((0, 0)) };
+    let lookups = list.lookups().len();
+    if lookups > 1 << 12 {
+        return None;
+    }
+    let mut subtables = 0usize;
+    for lookup in list.lookups().iter() {
+        subtables = subtables.saturating_add(usize::from(sub_tables(&lookup.ok()?)));
+    }
+    Some((lookups, subtables))
+}
+
+fn charge_arabic_gpos_units(work: &mut usize, units: usize) -> bool {
+    *work = work.saturating_add(units);
     *work <= 1 << 16
+}
+
+fn charge_arabic_gpos(work: &mut usize) -> bool {
+    charge_arabic_gpos_units(work, 1)
 }
 
 fn push_mark_records(
@@ -944,10 +998,11 @@ fn check_chain_context(
     }
 }
 
-/// Unique reachable `arab` (or fallback) GPOS `mark` and `mkmk` lookup count if they contain
+/// Unique reachable `arab` (or fallback) GPOS `mark` and `mkmk` subtable count if they contain
 /// only mark attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them,
 /// so clearing `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment
-/// chain; `None` on non-attachment lookups, non-zero contextual targets or budget exhaustion.
+/// chain; `None` on non-attachment lookups, non-zero contextual targets, excessive subtable fanout
+/// (`> 1 << 12`) or budget exhaustion (`1 << 16` work units).
 fn mark_lookups_attach_only(face: &FontRef) -> Option<usize> {
     use skrifa::raw::tables::gpos::PositionSubtables;
     let gpos = face.gpos().ok()?;
@@ -960,13 +1015,18 @@ fn mark_lookups_attach_only(face: &FontRef) -> Option<usize> {
     if !collected || todo.is_empty() {
         return None;
     }
+    let mut subtables = 0usize;
     while let Some(idx) = todo.pop() {
-        if !charge_arabic_gpos(&mut work) {
+        let lookup = list.lookups().get(usize::from(idx)).ok()?;
+        let lookup_subtables = usize::from(pos_sub_table_count(&lookup));
+        subtables = subtables.saturating_add(lookup_subtables.max(1));
+        if subtables > 1 << 12 || !charge_arabic_gpos(&mut work) {
             return None;
         }
-        let lookup = list.lookups().get(usize::from(idx)).ok()?;
         let ok = match lookup.subtables() {
-            Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => true,
+            Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => {
+                charge_arabic_gpos_units(&mut work, lookup_subtables)
+            }
             Ok(PositionSubtables::Contextual(subs)) => {
                 subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_seq_context(s, &mut todo, &mut seen, &mut work))
             }
@@ -979,7 +1039,7 @@ fn mark_lookups_attach_only(face: &FontRef) -> Option<usize> {
             return None;
         }
     }
-    Some(seen.len())
+    Some(subtables)
 }
 
 /// Whether each mark of `run` that `reference` attaches to an earlier mark, `own` attaches to that
