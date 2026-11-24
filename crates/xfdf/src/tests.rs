@@ -2306,7 +2306,8 @@ fn tab_delimited_export_guards_formula_cells_and_round_trips() {
     assert!(row.starts_with("'=SUM(A1:A9)"), "{row:?}");
     let mut again = blank();
     import(&mut again, text.as_bytes()).unwrap();
-    assert_eq!(values(&again).iter().find(|(k, _)| k == "Name").map(|(_, v)| v.clone()), Some(vec!["=SUM(A1:A9)".to_string()]));
+    // Fork: import keeps the apostrophe, so the cell doesn't turn back into a formula (PATCHES.md).
+    assert_eq!(values(&again).iter().find(|(k, _)| k == "Name").map(|(_, v)| v.clone()), Some(vec!["'=SUM(A1:A9)".to_string()]));
 }
 
 /// Merging many files with many distinct names stays linear: every column once, in first-seen

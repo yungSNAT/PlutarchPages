@@ -31,7 +31,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - **CSV exports** write formula-like cells as text, and import doesn't strip the apostrophe, so a
   neutralised cell doesn't round-trip back into a formula. A signed number stays a number, including
   an amount with thousands commas or a `$` (`-1,234.56`, `-$50.00`); `runs_as_formula` in
-  `crates/xfdf/src/lib.rs` holds the rule and `FORMULA_CELLS` in `crates/xfdf/src/tests.rs` its cases.
+  `crates/xfdf/src/lib.rs` holds the rule and `FORMULA_CELLS` in `crates/xfdf/src/tests.rs` its cases. Tab-delimited
+  export guards the same way and its import keeps the apostrophe too, so upstream's
+  `tab_delimited_export_guards_formula_cells_and_round_trips` expects `'=SUM(A1:A9)` back.
 - **Crypt filters** named by a reference that can't be read are never `/Identity`. Upstream reads
   the reference as absent, which saves the stream in the clear. Here a stream's `/DecodeParms` or
   `/Name`, or a `/Name` that `/CF` doesn't hold, takes the document's filter, and a save drops its
