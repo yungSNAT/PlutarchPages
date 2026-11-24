@@ -420,7 +420,7 @@ struct Walker<'a> {
     /// under a clip that is no box: the audit reads no cover from it.
     shaped: HashSet<usize>,
     /// Something was painted on the page whose colours the audit doesn't read as what lies under
-    /// text: a stroke, or an image with a mask of its own.
+    /// text: a stroke not read as a band, or an image with a mask of its own.
     unread: bool,
 }
 
@@ -511,7 +511,7 @@ impl<'a> Walker<'a> {
                         line = Line::Other;
                     }
                 }
-                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"d" | b"gs" => {
+                b"g" | b"rg" | b"k" | b"G" | b"RG" | b"K" | b"cs" | b"CS" | b"sc" | b"scn" | b"SC" | b"SCN" | b"w" | b"J" | b"d" | b"gs" => {
                     self.set_state(op, gs, res, calls, i)?;
                 }
                 b"re" => {
@@ -750,10 +750,12 @@ impl<'a> Walker<'a> {
     /// Record the cover the stroke at index `at` paints along `line`: the band [`Line::band`] gives,
     /// within the clip, as a fill in the stroking colour and alpha would paint it. Under a clip that
     /// is not a box ([`Gs::clip_exact`]) the band may be clipped away from what it seems to cover, so
-    /// none is read.
+    /// none is read. A band read is recorded as a fill would be, so it leaves the lines' backdrop
+    /// read; any other stroke paints where the audit doesn't read, and unreads it.
     fn stroke(&mut self, line: Line, gs: &Gs, calls: &[usize], at: usize) {
-        self.unread |= self.inside.is_none();
-        let Some(band) = line.band(gs).filter(|_| gs.clip_exact) else { return };
+        let band = line.band(gs).filter(|_| gs.clip_exact);
+        self.unread |= self.inside.is_none() && band.is_none();
+        let Some(band) = band else { return };
         let area = meet(gs.clip, band);
         if gs.stroke_alpha > 0.0 && self.inside.is_none() && area[2] > area[0] && area[3] > area[1] {
             let pen = Gs { alpha: gs.stroke_alpha, ..gs.clone() };
