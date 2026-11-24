@@ -944,6 +944,39 @@ fn a_forms_own_wording_refuses_only_for_a_whole_run() {
     assert!(save_refuses(&doc_with(fields, "", &filled, ""), &["Date of birth: 01/02/1980"]));
     let named = ["<< /FT /Ch /T (project) /Opt [(Project Bluefin) (Other)] >>"];
     assert!(save_refuses(&doc_with(fields, "", &named, ""), &["Project Bluefin"]));
+    // A label's value and a line's parts are not whole runs to a form's wording (delta 4 NB3).
+    assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["State: New South Wales"]));
+    let country = ["<< /FT /Ch /T (country) /Opt [(Australia) (New Zealand)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &country, ""), &["Address: 1 Queen St, Auckland, New Zealand"]));
+    assert!(!save_refuses(&doc_with(fields, "", &country, ""), &["Country: New Zealand"]));
+}
+
+/// Only short text before a colon is a label (delta 4 S1, N1): a sentence's name keeps its word
+/// sequences, and a time is not a label.
+#[test]
+fn only_a_short_text_before_a_colon_is_a_label() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let name = ["<< /FT /Tx /T (name) /V (Jane Citizen) >>"];
+    assert!(save_refuses(&doc_with(fields, "", &name, ""), &["Interviewed Jane Citizen at home, she said: no comment"]));
+    let time = ["<< /FT /Tx /T (time) /V (2:30 pm) >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &time, ""), &["Meeting at 10: 30 pm"]));
+}
+
+/// XFA's filled-in data is searched as values; its template only for whole runs (delta 4 S2).
+#[test]
+fn xfa_data_is_searched_as_values_and_its_template_as_wording() {
+    let packet = |xml: &str| stream_of("", xml);
+    let doc = |name: &str, xml: &str| doc_with(&format!("/AcroForm << /Fields [] /XFA [({name}) 4 0 R] >>"), "", &[&packet(xml)], "");
+    let data =
+        "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data><f><name>Jane Citizen</name></f></xfa:data></xfa:datasets>";
+    assert!(save_refuses(&doc("datasets", data), &["Paid Jane Citizen $500"]));
+    let template = "<template><field name=\"state\"><items><text>New South Wales</text><text>Victoria</text></items></field></template>";
+    assert!(!save_refuses(&doc("template", template), &["State: New South Wales"]));
+    // A whole XDP in one stream: its datasets element is the data.
+    let whole = format!("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\">{template}{data}</xdp:xdp>");
+    let one = doc_with("/AcroForm << /Fields [] /XFA 4 0 R >>", "", &[&packet(&whole)], "");
+    assert!(save_refuses(&one, &["Paid Jane Citizen $500"]));
+    assert!(!save_refuses(&one, &["State: New South Wales"]));
 }
 
 /// A label's one-word value is not a run of its own (delta 3 review S1), unless it has a digit or
