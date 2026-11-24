@@ -396,7 +396,7 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
     if own == Some(Place::Link)
         && let Some(Object::Stream(s)) = d.get(b"JS").map(|js| doc.resolve(js)).as_deref()
     {
-        note(Place::Link, data_holds(doc, s, search, false));
+        note(Place::Link, data_holds(doc, s, search));
     }
     // An embedded file's data, by its use under a file specification's `/EF` (its `/Type` is
     // optional).
@@ -405,19 +405,26 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
     {
         for (_, f) in ef.iter() {
             if let Object::Stream(s) = &*doc.resolve(f) {
-                note(Place::Attachment, data_holds(doc, s, search, false));
+                note(Place::Attachment, data_holds(doc, s, search));
             }
         }
     }
     // XFA form data and template: XML, searched by its text.
     if let Some(xfa) = d.get(b"XFA").map(|x| doc.resolve(x)) {
-        let parts: Vec<Object> = match &*xfa {
-            Object::Array(a) => a.iter().skip(1).step_by(2).cloned().collect(),
-            other => vec![other.clone()],
+        // An array names each packet before it: "datasets" is the filled-in data.
+        let parts: Vec<(Option<bool>, Object)> = match &*xfa {
+            Object::Array(a) => a
+                .chunks(2)
+                .filter_map(|p| {
+                    let name = p.first().map(|n| doc.resolve(n)).and_then(|n| n.as_string().map(crate::metadata::text_string));
+                    Some((Some(name.as_deref() == Some("datasets")), p.get(1)?.clone()))
+                })
+                .collect(),
+            other => vec![(None, other.clone())],
         };
-        for part in parts {
+        for (datasets, part) in parts {
             if let Object::Stream(s) = &*doc.resolve(&part) {
-                note(Place::Field, data_holds(doc, s, search, true));
+                note(Place::Field, xfa_holds(doc, s, search, datasets));
             }
         }
     }
@@ -491,15 +498,53 @@ fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>, depth: usize) -> Opti
 }
 
 /// Whether a stream's data, read as text, holds it; `None` when it can't be searched: data that
-/// isn't text, can't be decoded or is too large. `xml` searches XML's text values, not its markup.
-fn data_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search, xml: bool) -> Option<bool> {
+/// isn't text, can't be decoded or is too large.
+fn data_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search) -> Option<bool> {
+    let text = stream_text(doc, s)?;
+    Some(!text.trim().is_empty() && search.data(&text, false))
+}
+
+/// A stream's data as text ([`as_text`]), if it can be read.
+fn stream_text(doc: &Document, s: &pdfcraft_cos::Stream) -> Option<String> {
     if s.filters().len() > 1 {
         return None;
     }
     let bytes = doc.with_direct_parms(s).decoded_first_filter_strict(crate::metadata::MAX_XMP_BYTES).ok()?;
-    let text = as_text(&bytes)?;
-    let text = if xml { crate::metadata::xml_values(&text).join(" ") } else { text };
-    Some(!text.trim().is_empty() && search.data(&text, xml))
+    as_text(&bytes)
+}
+
+/// [`data_holds`] for an XFA packet, by its XML's text values. `datasets`: the packet is the
+/// form's data (each value searched as a value), not its template or other wording (whole runs
+/// only, [`Search::wording`]); `None` for a whole XDP, whose `datasets` element is the data.
+fn xfa_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search, datasets: Option<bool>) -> Option<bool> {
+    let xml = stream_text(doc, s)?;
+    let holds = |xml: &str, wording: bool| {
+        let values = crate::metadata::xml_values(xml);
+        search.data(&values.join(" "), wording) || values.iter().any(|v| !v.trim().is_empty() && search.data(v, wording))
+    };
+    Some(match datasets {
+        Some(data) => holds(&xml, !data),
+        // No datasets element found: all of it is searched as data (fail-closed).
+        None => match datasets_range(&xml) {
+            Some(r) => {
+                holds(xml.get(r.clone()).unwrap_or_default(), false)
+                    || holds(&[xml.get(..r.start).unwrap_or_default(), xml.get(r.end..).unwrap_or_default()].join(" "), true)
+            }
+            None => holds(&xml, false),
+        },
+    })
+}
+
+/// Where a whole XDP's `datasets` element (`<xfa:datasets>`, any prefix or none) lies.
+fn datasets_range(xml: &str) -> Option<std::ops::Range<usize>> {
+    let start = xml.match_indices("datasets").find_map(|(i, _)| {
+        let tag = xml.get(..i)?.rfind('<')?;
+        let prefix = xml.get(tag + 1..i)?;
+        let named = prefix.is_empty() || (prefix.ends_with(':') && prefix.chars().all(|c| c.is_alphanumeric() || matches!(c, ':' | '_' | '-' | '.')));
+        named.then_some(tag)
+    })?;
+    let end = xml.get(start..)?.rfind("datasets>").map_or(xml.len(), |e| start + e + "datasets>".len());
+    Some(start..end)
 }
 
 /// Data as text, or `None` when it isn't: UTF-16 or UTF-8 behind a byte order mark, or else
