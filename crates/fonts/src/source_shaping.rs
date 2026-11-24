@@ -247,18 +247,24 @@ impl<'a> MarkFilter<'a> {
         true
     }
 
-    fn allows_current(&self, flag: skrifa::raw::tables::layout::LookupFlag, filtering_set: Option<u16>, gid: GlyphId) -> bool {
+    fn allows_non_mark(&self, flag: skrifa::raw::tables::layout::LookupFlag, gid: GlyphId) -> bool {
         use skrifa::raw::tables::layout::LookupFlag;
-        if flag.contains(LookupFlag::IGNORE_MARKS) {
-            return false;
-        }
         let class = self.classes.as_ref().map(|c| c.get(gid));
         if matches!(class, Some(1)) && flag.contains(LookupFlag::IGNORE_BASE_GLYPHS) {
             return false;
         }
-        if matches!(class, Some(2)) && flag.contains(LookupFlag::IGNORE_LIGATURES) {
+        if (matches!(class, Some(2)) || (class != Some(3) && self.ligatures.contains(&gid.to_u32()))) && flag.contains(LookupFlag::IGNORE_LIGATURES) {
             return false;
         }
+        true
+    }
+
+    fn allows_current(&self, flag: skrifa::raw::tables::layout::LookupFlag, filtering_set: Option<u16>, gid: GlyphId) -> bool {
+        use skrifa::raw::tables::layout::LookupFlag;
+        if flag.contains(LookupFlag::IGNORE_MARKS) || !self.allows_non_mark(flag, gid) {
+            return false;
+        }
+        let class = self.classes.as_ref().map(|c| c.get(gid));
         if class.is_none_or(|c| c == 3) {
             return self.allows_mark_properties(flag, filtering_set, gid);
         }
@@ -447,12 +453,13 @@ impl<'a> ThaiValidator<'a> {
             return None;
         }
         let attached = self.selected.iter().any(|&(idx, mkmk_slot, ref lookup)| {
-            if !self.filter.allows_current(lookup.lookup_flag(), lookup.mark_filtering_set(), mark) {
+            let flag = lookup.lookup_flag();
+            if !self.filter.allows_current(flag, lookup.mark_filtering_set(), mark) {
                 return false;
             }
             let onto = match mkmk_slot {
                 Some(slot) => entry.last_mark.get(slot).copied().flatten(),
-                None => entry.last_base,
+                None => entry.last_base.filter(|&b| self.filter.allows_non_mark(flag, GlyphId::new(b))),
             };
             let Some(onto) = onto else { return false };
             *self.cache.entry((idx, mark.to_u32(), onto)).or_insert_with(|| lookup_attaches(lookup, mark, GlyphId::new(onto)))
@@ -699,6 +706,33 @@ pub(crate) fn shape_legacy_thai(bytes: &[u8], text: &str) -> Result<ShapedRun, S
     shape_inner(bytes, text, true)
 }
 
+fn split_thai_scripts(input: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut start, mut cur_thai) = (0usize, None);
+    for (idx, c) in input.char_indices() {
+        let kind = if ('\u{0e00}'..='\u{0e7f}').contains(&c) {
+            Some(true)
+        } else if c.is_alphabetic() {
+            Some(false)
+        } else {
+            None
+        };
+        if let Some(k) = kind {
+            if let Some(prev) = cur_thai
+                && prev != k
+            {
+                out.push(&input[start..idx]);
+                start = idx;
+            }
+            cur_thai = Some(k);
+        }
+    }
+    if start < input.len() {
+        out.push(&input[start..]);
+    }
+    out
+}
+
 fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun, String> {
     if text.len() > 262_144 || text.contains(['\n', '\r']) {
         return Err("shape one bounded text row at a time".into());
@@ -731,34 +765,40 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     let mut glyphs = Vec::new();
     let mut x = 0.0;
     for run in runs {
-        let Some(input) = text.get(run.clone()) else { continue };
+        let Some(run_text) = text.get(run.clone()) else { continue };
         let direction = if levels.get(run.start).is_some_and(Level::is_rtl) { Direction::RightToLeft } else { Direction::LeftToRight };
-        let script = (!legacy_thai && thai_marks(input)).then_some(harfrust::script::THAI);
-        let output = match (&mut thai_validator, script) {
-            (Some(validator), Some(_)) => places_thai_marks(validator, &shaper, (input, direction, script)).ok_or_else(no_thai_positioning)?,
-            _ => shape_in(&shaper, input, direction, script, &[]),
-        };
-        let mut starts: Vec<_> = output.glyph_infos().iter().map(|g| g.cluster as usize).collect();
-        starts.sort_unstable();
-        starts.dedup();
-        let mut seen = std::collections::HashSet::new();
-        for (g, p) in output.glyph_infos().iter().zip(output.glyph_positions()) {
-            if g.glyph_id == 0 {
-                let missing = input.get(g.cluster as usize..).and_then(|s| s.chars().next()).unwrap_or('\u{fffd}');
-                return Err(format!(
-                    "the full font lacks a required contextual glyph for {missing} (U+{:04X}); choose the complete source face",
-                    u32::from(missing)
-                ));
+        let mut subruns = if !legacy_thai && thai_marks(run_text) { split_thai_scripts(run_text) } else { vec![run_text] };
+        if direction == Direction::RightToLeft {
+            subruns.reverse();
+        }
+        for input in subruns {
+            let script = (!legacy_thai && thai_marks(input)).then_some(harfrust::script::THAI);
+            let output = match (&mut thai_validator, script) {
+                (Some(validator), Some(_)) => places_thai_marks(validator, &shaper, (input, direction, script)).ok_or_else(no_thai_positioning)?,
+                _ => shape_in(&shaper, input, direction, script, &[]),
+            };
+            let mut starts: Vec<_> = output.glyph_infos().iter().map(|g| g.cluster as usize).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            let mut seen = std::collections::HashSet::new();
+            for (g, p) in output.glyph_infos().iter().zip(output.glyph_positions()) {
+                if g.glyph_id == 0 {
+                    let missing = input.get(g.cluster as usize..).and_then(|s| s.chars().next()).unwrap_or('\u{fffd}');
+                    return Err(format!(
+                        "the full font lacks a required contextual glyph for {missing} (U+{:04X}); choose the complete source face",
+                        u32::from(missing)
+                    ));
+                }
+                let start = g.cluster as usize;
+                let end = starts.get(starts.partition_point(|i| *i <= start)).copied().unwrap_or(input.len());
+                let logical = if seen.insert(start) { input.get(start..end).unwrap_or_default().to_string() } else { String::new() };
+                glyphs.push(ShapedGlyph {
+                    id: GlyphId::new(g.glyph_id),
+                    position: [x + f64::from(p.x_offset) / em, f64::from(p.y_offset) / em],
+                    text: logical,
+                });
+                x += f64::from(p.x_advance) / em;
             }
-            let start = g.cluster as usize;
-            let end = starts.get(starts.partition_point(|i| *i <= start)).copied().unwrap_or(input.len());
-            let logical = if seen.insert(start) { input.get(start..end).unwrap_or_default().to_string() } else { String::new() };
-            glyphs.push(ShapedGlyph {
-                id: GlyphId::new(g.glyph_id),
-                position: [x + f64::from(p.x_offset) / em, f64::from(p.y_offset) / em],
-                text: logical,
-            });
-            x += f64::from(p.x_advance) / em;
         }
     }
     if !x.is_finite() || glyphs.len() > 65_534 {
@@ -1545,6 +1585,7 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
     }
+
     /// A `MarkToBase` lookup flagged `IgnoreBaseGlyphs` excludes GDEF base glyphs (`class 1`) as
     /// attachment targets; when anchor coordinates leave net offset unchanged, it must be refused.
     #[test]
