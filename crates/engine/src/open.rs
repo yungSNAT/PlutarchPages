@@ -337,6 +337,7 @@ impl Session {
                         appearances: AppearanceCache::default(),
                         field_appearances: pdfcraft_forms::FieldAppearanceCache::default(),
                         page_text: PageTextCache::default(),
+                        held: Vec::new(),
                     }),
                     None,
                 )

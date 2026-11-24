@@ -45,6 +45,23 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/cos/tests/it/encryption.rs`. The cos
   part of upstream's `9203e4a6b` (#5548) came in ahead of the next merge; its hayro-syntax patch 30
   and renderer tests didn't.
+- **Saving after Apply Redactions** refuses, writing nothing, while the document about to be
+  written still holds the removed text in a place the user can clear: bookmarks, attachments and
+  their text data, comments, `/Info` and XMP, links, actions and scripts, form field values, XFA
+  data, signers' names and other applications' private data. Upstream only counts some of these
+  places. The refusal lists each place by kind, page and object, never by its text. Every route
+  that writes the edited document checks before the writer stamps its date and ID
+  (`Session::refuse_redacted`: Save, Save As, signing, timestamps, LTV, Optimize, Reduce File Size,
+  Extract and Split), and a file that keeps an earlier revision refuses too. A save refuses only
+  for a whole removed run of 4 or more letters or digits at word edges, or a value of 2 or more
+  words part of a run (`Search::whole`, linear in what it searches). Told when applying, never
+  refused: a form's own wording (field names, tooltips, choice options, the XFA template),
+  name-tree names, single words, a run joined to other letters, attachment data that isn't text
+  and objects past the sweep's first 4,000,000. Not searched at all: page content (the
+  redaction's own check), appearance streams, form XObjects, images and marked content. The engine holds each apply's removed text with its undo
+  step until a save (`Editor::held`). Code in `crates/redact/src/elsewhere.rs` and `metadata.rs`
+  and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
+  `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
 
 ## Only here
 

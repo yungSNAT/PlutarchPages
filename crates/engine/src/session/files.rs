@@ -477,6 +477,7 @@ impl Session {
             return Err(EditError::NotPermitted("extracting pages"));
         }
         let out = pdfcraft_organize::extract_pages(src, pages)?;
+        self.refuse_redacted(id, &out)?;
         self.write_new(&out)
     }
 
@@ -491,6 +492,7 @@ impl Session {
             .into_iter()
             .map(|r| {
                 let doc = pdfcraft_organize::extract_pages(src, &r.clone().collect::<Vec<_>>())?;
+                self.refuse_redacted(id, &doc)?;
                 Ok((r.start + 1, r.end, self.write_new(&doc)?))
             })
             .collect()

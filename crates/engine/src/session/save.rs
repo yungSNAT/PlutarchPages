@@ -25,6 +25,7 @@ impl Session {
         // a reconstructed file) still writes the current graph on its own.
         let rewrite = editor.cos.full_save_required() || editor.cos.encryption_changed() || editor.cos.revisions().is_empty();
         let cos = writable(&editor.cos)?;
+        self.refuse_redacted(id, &cos)?;
         guard(|| {
             if on_saved || rewrite {
                 write_incremental(&cos, &opts)
@@ -48,6 +49,7 @@ impl Session {
         let editor = doc.editor.as_ref().ok_or_else(|| EditError::ReadOnly(doc.read_only_reason.clone().unwrap_or_default()))?;
         let opts = SaveOptions { mod_date: self.now().map(pdfcraft_cos::pdf_date), ..SaveOptions::default() };
         let cos = writable(&editor.cos)?;
+        self.refuse_redacted(id, &cos)?;
         guard(|| write_full(&cos, &opts)).map_err(EditError::Write)?.map(Arc::new).map_err(|e| EditError::Write(e.to_string()))
     }
 
@@ -57,7 +59,13 @@ impl Session {
     pub fn check_save(&self, id: DocId, bytes: &Arc<Vec<u8>>) -> Result<(), EditError> {
         let doc = self.get(id).ok_or(EditError::NoDocument)?;
         let Some(editor) = doc.editor.as_ref() else { return Ok(()) };
-        pdfcraft_cos::Document::open_with_password(bytes.clone(), editor.keys.reopen.as_deref()).map_err(|e| EditError::Reopen(e.to_string()))?;
+        let written =
+            pdfcraft_cos::Document::open_with_password(bytes.clone(), editor.keys.reopen.as_deref()).map_err(|e| EditError::Reopen(e.to_string()))?;
+        // An earlier revision would keep what was redacted since the last save. (Where else the
+        // text is, the bytes were refused for before they were written: `refuse_redacted`.)
+        if held_text(editor).is_some() && written.revisions().len() > 1 {
+            return Err(EditError::RedactedRevisionKept);
+        }
         pdfcraft_render::check_pages(bytes.clone(), doc.password.as_deref(), doc.info.pages.len()).map_err(|e| EditError::Reopen(e.to_string()))
     }
 
@@ -90,6 +98,7 @@ impl Session {
             editor.saved = bytes;
             editor.saved_keys = keys;
             editor.unsaved_file = false;
+            editor.held.clear();
         }
         if let Some(p) = path {
             doc.name = std::path::Path::new(&p).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| p.clone());
@@ -154,6 +163,7 @@ impl Session {
         editor.keys = keys;
         editor.undo.clear();
         editor.redo.clear();
+        editor.held.clear();
         Self::adopt_keys(doc);
         Self::sync_dirty(doc);
         // The changes whose exits ran are gone with the rest: skip no exit.
@@ -346,7 +356,9 @@ impl Session {
             opts.date = self.signing_date();
         }
         // A typed Password-field value is not signed into the file (#3926), as it isn't saved.
-        let cos = drawn_for_first_signature(writable(&editor.cos)?);
+        let cos = writable(&editor.cos)?;
+        self.refuse_redacted(doc, &cos)?;
+        let cos = drawn_for_first_signature(cos);
         Ok(Arc::new(pdfcraft_sign::sign(&cos, id, &opts)?))
     }
 
@@ -364,7 +376,9 @@ impl Session {
         if opts.date.is_empty() {
             opts.date = self.signing_date();
         }
-        let cos = drawn_for_first_signature(writable(&editor.cos)?);
+        let cos = writable(&editor.cos)?;
+        self.refuse_redacted(doc, &cos)?;
+        let cos = drawn_for_first_signature(cos);
         let signed = Arc::new(pdfcraft_sign::sign_with_timestamp(&cos, id, &opts, tsa)?);
         // Checked like a save before anyone writes it (#2166).
         self.check_save(doc, &signed)?;
@@ -378,6 +392,7 @@ impl Session {
         let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
         let date = if date.is_empty() { self.signing_date() } else { date };
         let cos = writable(&editor.cos)?;
+        self.refuse_redacted(doc, &cos)?;
         let stamped = Arc::new(pdfcraft_sign::timestamp_document(&cos, tsa, &date)?);
         self.check_save(doc, &stamped)?;
         Ok(stamped)
@@ -389,6 +404,7 @@ impl Session {
         let d = self.get(doc).ok_or(EditError::NoDocument)?;
         let editor = d.editor.as_ref().ok_or_else(|| EditError::ReadOnly(d.read_only_reason.clone().unwrap_or_default()))?;
         let cos = writable(&editor.cos)?;
+        self.refuse_redacted(doc, &cos)?;
         let embedded = Arc::new(pdfcraft_sign::dss::embed(&cos, evidence)?);
         self.check_save(doc, &embedded)?;
         Ok(embedded)
@@ -480,4 +496,40 @@ fn stream_draws_text(cos: &pdfcraft_cos::Document, s: &pdfcraft_cos::Stream, bud
         }
     }
     false
+}
+
+impl Session {
+    /// Refuse to write `cos` while a place in it still holds text redacted in document `id` since
+    /// the last save ([`pdfcraft_redact::survivors`]). `cos` is what the route is about to write,
+    /// before the writer stamps its date and identifier, so nothing a save adds is searched. Every
+    /// route that writes the edited document runs it: Save, Save As, signing, timestamping,
+    /// Optimize, Reduce File Size, Extract and Split.
+    pub(crate) fn refuse_redacted(&self, id: DocId, cos: &pdfcraft_cos::Document) -> Result<(), EditError> {
+        let Some(removed) = self.held_redacted(id) else { return Ok(()) };
+        guard(|| refuse_survivors(cos, &removed)).map_err(EditError::Reopen)?
+    }
+
+    /// The text redacted in document `id` since the last save that a write must not keep.
+    pub(crate) fn held_redacted(&self, id: DocId) -> Option<pdfcraft_redact::Removed> {
+        self.get(id).and_then(|d| d.editor.as_ref()).and_then(held_text)
+    }
+}
+
+/// Refuse `cos` while a place in it still holds `removed` ([`Session::refuse_redacted`]).
+pub(crate) fn refuse_survivors(cos: &pdfcraft_cos::Document, removed: &pdfcraft_redact::Removed) -> Result<(), EditError> {
+    let left = pdfcraft_redact::survivors(cos, removed);
+    if left.refuses() {
+        return Err(EditError::RedactedTextSurvives(Box::new(left)));
+    }
+    Ok(())
+}
+
+/// The text removed by every Apply Redactions since the last save that hasn't been undone.
+fn held_text(editor: &crate::history::Editor) -> Option<pdfcraft_redact::Removed> {
+    let mut held = editor.held.iter().filter(|(at, _)| *at <= editor.undo.len()).map(|(_, r)| r);
+    let first = held.next()?.clone();
+    Some(held.fold(first, |mut all, r| {
+        all.extend(r);
+        all
+    }))
 }

@@ -653,3 +653,414 @@ fn content_whose_inline_image_ends_elsewhere_does_not_read_back() {
     let cut = b"q\nBI /W 1 /H 1 /CS /G /BPC 8 /F /AHx ID 7\nEI\nQ\n".to_vec();
     assert!(!crate::interp::reads_back(&[Some(cut)], &streams, &processed), "cut short");
 }
+
+/// Removed text that couldn't all be collected stays so when later applies add text that could:
+/// the save's search must still count every place holding any text.
+#[test]
+fn removed_text_cut_short_stays_cut_short_when_more_is_added() {
+    let mut held = crate::Removed::new(Vec::new(), false);
+    held.extend(&crate::Removed::new(vec!["Bluefin".into()], true));
+    let doc = Document::open(Arc::new(pdf_with_outline_title("Annual figures"))).unwrap();
+    let left = crate::survivors(&doc, &held);
+    assert!(left.unsearched && left.refuses(), "{left:?}");
+}
+
+/// A one-page document whose only bookmark is titled `title`.
+fn pdf_with_outline_title(title: &str) -> Vec<u8> {
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 4 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>".to_string(),
+        "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>".to_string(),
+        format!("<< /Title ({title}) /Parent 4 0 R >>"),
+    ];
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    pdf
+}
+
+/// A one-page document with `catalog` and `page` entries added, `extra` objects numbered from 4
+/// and `trailer` entries added to its trailer.
+fn doc_with(catalog: &str, page: &str, extra: &[&str], trailer: &str) -> Document {
+    let mut objs = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog} >>"),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] {page} >>"),
+    ];
+    objs.extend(extra.iter().map(ToString::to_string));
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R {trailer} >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    Document::open(Arc::new(pdf)).unwrap()
+}
+
+/// Whether a save of `doc` refuses after `removed` was redacted.
+fn save_refuses(doc: &Document, removed: &[&str]) -> bool {
+    crate::survivors(doc, &crate::Removed::new(removed.iter().map(ToString::to_string).collect(), true)).refuses()
+}
+
+/// A stream object holding `data`.
+fn stream_of(dict: &str, data: &str) -> String {
+    format!("<< {dict} /Length {} >>\nstream\n{data}\nendstream", data.len())
+}
+
+/// A save's check matches whole removed runs (review B3): a short run, or one word of a removed
+/// sentence, in a field's default appearance, a link's address or a destination's name is not
+/// the redacted text.
+#[test]
+fn a_save_refuses_only_for_a_whole_removed_run() {
+    let field = "<< /FT /Tx /T (total) /DA (/Helv 12 Tf 0 g) >>";
+    assert!(!save_refuses(&doc_with("/AcroForm << /Fields [4 0 R] >>", "", &[field], ""), &["12"]), "a field's /DA holds '12'");
+    let link = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (https://example.com/annual-report) >> >>";
+    let doc = doc_with("", "/Annots [4 0 R]", &[link], "");
+    assert!(!save_refuses(&doc, &["Codename BLUEFIN report"]), "one word of the sentence is in the address");
+    assert!(save_refuses(&doc, &["annual report"]), "the whole run is");
+    let dests = "/Names << /Dests << /Names [(page.1) [3 0 R /Fit] (table.1) [3 0 R /Fit]] >> >>";
+    assert!(!save_refuses(&doc_with(dests, "", &[], ""), &["See the table on page 4"]));
+}
+
+/// A redacted year is not in the date a save stamps, or an earlier one (review B1).
+#[test]
+fn a_redacted_year_is_not_in_a_date() {
+    let doc = doc_with("", "", &["<< /ModDate (D:20231114221320Z) /CreationDate (D:20231101) >>"], "/Info 4 0 R");
+    assert!(!save_refuses(&doc, &["2023"]));
+}
+
+/// A named destination's name is told, not refused (review B2): no category or edit removes one
+/// name, so refusing would leave no way to save.
+#[test]
+fn a_named_destination_holding_the_text_is_told_not_refused() {
+    let doc = doc_with("/Names << /Dests << /Names [(Bluefin plans) [3 0 R /Fit]] >> >>", "", &[], "");
+    assert!(!save_refuses(&doc, &["BLUEFIN"]));
+}
+
+/// Binary attachment data isn't read as text (review B4): squeezed to its letters, any short term
+/// is somewhere in a photo. Text data still is, found by its use under `/EF` whatever its `/Type`
+/// (review S4).
+#[test]
+fn attachment_data_is_searched_only_as_text() {
+    let names = "/Names << /EmbeddedFiles << /Names [(photo.png) 4 0 R] >> >> /AF [6 0 R]";
+    let photo = stream_of("/Type /EmbeddedFile", "\u{1}PNG\r\n\u{1a}\n\u{0}\u{0}xBLUEFINx\u{0}");
+    let spec = "<< /Type /Filespec /F (photo.png) /EF << /F 5 0 R >> >>";
+    assert!(!save_refuses(
+        &doc_with(names, "", &[spec, &photo, "<< /Type /Filespec /F (a.txt) /EF << /F 7 0 R >> >>", &stream_of("", "notes")], ""),
+        &["BLUEFIN"]
+    ));
+    let text = stream_of("", "draft: Codename BLUEFIN report");
+    assert!(save_refuses(&doc_with(names, "", &[spec, &photo, "<< /Type /Filespec /F (a.txt) /EF << /F 7 0 R >> >>", &text], ""), &["BLUEFIN"]));
+}
+
+/// XFA form data is searched as form fields (review S3).
+#[test]
+fn xfa_form_data_holding_the_text_refuses() {
+    let data = stream_of(
+        "",
+        "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data><f><name>Bluefin</name></f></xfa:data></xfa:datasets>",
+    );
+    assert!(save_refuses(&doc_with("/AcroForm << /Fields [] /XFA [(datasets) 4 0 R] >>", "", &[&data], ""), &["BLUEFIN"]));
+}
+
+/// A signature's name, reason and location are searched; only its data is skipped (review S5).
+#[test]
+fn a_signers_name_holding_the_text_refuses() {
+    let sig = "<< /Type /Sig /Name (Bluefin) /Reason (approval) /ByteRange [0 0 0 0] /Contents <00> >>";
+    let field = "<< /FT /Sig /T (sig) /V 5 0 R >>";
+    assert!(save_refuses(&doc_with("/AcroForm << /Fields [4 0 R] >>", "", &[field, sig], ""), &["BLUEFIN"]));
+}
+
+/// An object that can't be read is written as null by the full save a redaction needs
+/// (`write_full` treats it as a dangling reference), so it holds nothing back and doesn't refuse:
+/// refusing would leave no way to save (review S6, settled by reading the writer).
+#[test]
+fn an_object_that_cant_be_read_holds_nothing_back() {
+    let doc = doc_with("/Extra 4 0 R", "", &["<< /Title (Report) /Author ) >>"], "");
+    assert!(pdfcraft_cos::reachable_objects(&doc).is_ok_and(|r| !r.contains(&4)), "the full save leaves it out");
+    assert!(!save_refuses(&doc, &["BLUEFIN"]));
+}
+
+/// An object nothing refers to isn't written by the full save a redaction needs, so it holds
+/// nothing back.
+#[test]
+fn an_object_nothing_refers_to_holds_nothing_back() {
+    assert!(!save_refuses(&doc_with("", "", &["<< /S /URI /URI (https://example.com/bluefin) >>"], ""), &["BLUEFIN"]));
+}
+
+/// Right-to-left text collected in drawing order is found where it is stored in logical order
+/// (review S9).
+#[test]
+fn right_to_left_text_is_found_in_either_order() {
+    let outline = "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>";
+    let doc = doc_with("/Outlines 4 0 R", "", &[outline, "<< /Title <FEFF05E905DC05D505DD> /Parent 4 0 R >>"], "");
+    assert!(save_refuses(&doc, &["\u{5DD}\u{5D5}\u{5DC}\u{5E9}"]), "drawn right to left, stored left to right");
+}
+
+/// Strings anywhere in an `/Info` entry are searched, not only a string value (review N3).
+#[test]
+fn an_info_entry_that_is_an_array_is_searched() {
+    let doc = doc_with("", "", &["<< /Keywords [(Bluefin) (plans)] >>"], "/Info 4 0 R");
+    assert!(save_refuses(&doc, &["BLUEFIN"]));
+}
+
+/// Private data refuses: Remove hidden information's Private data removes it (review N4).
+#[test]
+fn private_data_holding_the_text_refuses() {
+    assert!(save_refuses(&doc_with("", "/PieceInfo << /App << /Private << /Note (Bluefin) >> >> >>", &[], ""), &["BLUEFIN"]));
+}
+
+/// A catalog's base address doesn't make the catalog's own strings links (review N5).
+#[test]
+fn a_base_address_doesnt_make_the_catalog_a_link() {
+    let catalog = "/URI << /Base (https://example.com/) >> /PageLabels << /Nums [0 << /S /D /P (Bluefin-) >>] >>";
+    assert!(!save_refuses(&doc_with(catalog, "", &[], ""), &["BLUEFIN"]));
+}
+
+/// A portfolio's fields for an attachment are searched with it (review N6).
+#[test]
+fn a_portfolio_field_holding_the_text_refuses() {
+    let names = "/Names << /EmbeddedFiles 5 0 R >>";
+    assert!(save_refuses(
+        &doc_with(names, "", &["<< /Type /Filespec /F (a.txt) /CI << /Owner (Bluefin) >> >>", "<< /Names [(a.txt) 4 0 R] >>"], ""),
+        &["BLUEFIN"]
+    ));
+}
+
+/// What a save's search costs on a large file (review S11): 10,000 pages, each with a link and a
+/// form field, and 20 text attachments of 1 MB. Run with `--ignored --nocapture` to read it.
+#[test]
+#[ignore = "a timing, not a check"]
+fn a_saves_search_of_a_large_file_takes() {
+    let pages = 10_000;
+    let mut extra = Vec::new();
+    let mut kids = Vec::new();
+    let mut fields = Vec::new();
+    // Objects from 4: per page a page object, a link and a field widget.
+    for p in 0..pages {
+        let at = 4 + p * 3;
+        kids.push(format!("{at} 0 R"));
+        fields.push(format!("{} 0 R", at + 2));
+        extra.push(format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Annots [{} 0 R {} 0 R] >>", at + 1, at + 2));
+        extra.push(format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (https://example.com/page/{p}) >> >>"));
+        extra.push(format!("<< /Type /Annot /Subtype /Widget /FT /Tx /T (f{p}) /V (value {p}) /Rect [0 20 10 30] >>"));
+    }
+    let first_file = 4 + pages * 3;
+    let names: Vec<String> = (0..20).map(|i| format!("(f{i}.txt) {} 0 R", first_file + i * 2)).collect();
+    let text = "Lorem ipsum dolor sit amet, consectetur adipiscing elit. ".repeat(18_000);
+    for i in 0..20 {
+        extra.push(format!("<< /Type /Filespec /F (f{i}.txt) /EF << /F {} 0 R >> >>", first_file + i * 2 + 1));
+        extra.push(stream_of("/Type /EmbeddedFile", &text));
+    }
+    let catalog = format!("/AcroForm << /Fields [{}] >> /Names << /EmbeddedFiles << /Names [{}] >> >>", fields.join(" "), names.join(" "));
+    let mut objs = vec![
+        format!("<< /Type /Catalog /Pages 2 0 R {catalog} >>"),
+        format!("<< /Type /Pages /Kids [{}] /Count {pages} >>", kids.join(" ")),
+        "<< >>".to_string(),
+    ];
+    objs.extend(extra);
+    let mut pdf = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for off in offsets {
+        pdf.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    let doc = Document::open(Arc::new(pdf)).unwrap();
+    let removed: Vec<String> = (0..200).map(|i| format!("Removed sentence number {i} of the redacted page")).collect();
+    let started = std::time::Instant::now();
+    let left = crate::survivors(&doc, &crate::Removed::new(removed, true));
+    eprintln!("S11: {pages} pages, 20 x {} byte attachments, 200 removed runs: {:?}, refuses {}", text.len(), started.elapsed(), left.refuses());
+    assert!(!left.refuses(), "nothing in the file holds a removed run: {:?}", left.items.first());
+}
+
+/// A large redaction searched for in a file with many strings stays within the search's work
+/// limit (delta 2 review NB1): past it, every place would refuse without being searched.
+#[test]
+fn a_large_redaction_in_a_file_of_many_strings_is_searched_in_full() {
+    let links = 2_000;
+    let annots: Vec<String> = (0..links).map(|i| format!("{} 0 R", 4 + i)).collect();
+    let extra: Vec<String> = (0..links)
+        .map(|i| format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (https://example.com/page/{i}/section) >> >>"))
+        .collect();
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let doc = doc_with("", &format!("/Annots [{}]", annots.join(" ")), &extra, "");
+    let removed: Vec<String> = (0..2_000).map(|i| format!("Removed sentence number {i} of the redacted page about quarterly figures")).collect();
+    let left = crate::survivors(&doc, &crate::Removed::new(removed, true));
+    assert!(!left.refuses() && !left.unsearched, "{} places, unsearched {}", left.len(), left.unsearched);
+}
+
+/// One word of a redacted line is not a reason to refuse, even when it is a field's whole name
+/// or option (delta 2 review S1).
+#[test]
+fn a_one_word_field_string_inside_a_redacted_line_is_not_refused() {
+    let fields = "/AcroForm << /Fields [4 0 R 5 0 R] >>";
+    let extra = ["<< /FT /Tx /T (Date) >>", "<< /FT /Ch /T (consent) /Opt [(Yes) (No)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &extra, ""), &["Date: 12 May 2026", "Yes, I consent"]));
+}
+
+/// The parts of a labelled line are runs of their own (delta 2 review S2): the address after
+/// "Email:" in a link, the name after "Name:" in a bookmark.
+#[test]
+fn the_parts_of_a_labelled_line_refuse_on_their_own() {
+    let link = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI (mailto:jane.citizen@example.com) >> >>";
+    assert!(save_refuses(&doc_with("", "/Annots [4 0 R]", &[link], ""), &["Email: jane.citizen@example.com"]));
+    let outline = "<< /Type /Outlines /First 5 0 R /Last 5 0 R /Count 1 >>";
+    let doc = doc_with("/Outlines 4 0 R", "", &[outline, "<< /Title (Interview with Jane Citizen) /Parent 4 0 R >>"], "");
+    assert!(save_refuses(&doc, &["Name: Jane Citizen"]));
+}
+
+/// A form's own wording (choice options, tooltip, names) is told, never refused (delta 3 review
+/// NB2, delta 4 NB3, delta 5 NB4); a filled-in value still refuses.
+#[test]
+fn a_forms_own_wording_is_told_not_refused() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let state = ["<< /FT /Ch /T (state) /Opt [(New South Wales) (Victoria)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["Address: 1 Smith St, Sydney, New South Wales 2000"]));
+    let birth = ["<< /FT /Tx /T (dob) /TU (Date of birth) >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &birth, ""), &["Date of birth: 01/02/1980"]));
+    let filled = ["<< /FT /Tx /T (dob) /TU (Date of birth) /V (01/02/1980) >>"];
+    assert!(save_refuses(&doc_with(fields, "", &filled, ""), &["Date of birth: 01/02/1980"]));
+    let named = ["<< /FT /Ch /T (project) /Opt [(Project Bluefin) (Other)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &named, ""), &["Project Bluefin"]));
+    // A redacted table cell or line that is the whole of a form's wording.
+    let sex = ["<< /FT /Ch /T (sex) /Opt [(Male) (Female)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &sex, ""), &["Female"]));
+    assert!(!save_refuses(&doc_with(fields, "", &birth, ""), &["Date of birth"]));
+    assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["State: New South Wales"]));
+    let country = ["<< /FT /Ch /T (country) /Opt [(Australia) (New Zealand)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &country, ""), &["Address: 1 Queen St, Auckland, New Zealand"]));
+    assert!(!save_refuses(&doc_with(fields, "", &country, ""), &["Country: New Zealand"]));
+}
+
+/// Only short text before a colon is a label (delta 4 S1, N1): a sentence's name keeps its word
+/// sequences, and a time is not a label.
+#[test]
+fn only_a_short_text_before_a_colon_is_a_label() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let name = ["<< /FT /Tx /T (name) /V (Jane Citizen) >>"];
+    assert!(save_refuses(&doc_with(fields, "", &name, ""), &["Interviewed Jane Citizen at home, she said: no comment"]));
+    let time = ["<< /FT /Tx /T (time) /V (2:30 pm) >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &time, ""), &["Meeting at 10: 30 pm"]));
+}
+
+/// XFA's filled-in data is searched as values; its template only for whole runs (delta 4 S2).
+#[test]
+fn xfa_data_is_searched_as_values_and_its_template_as_wording() {
+    let packet = |xml: &str| stream_of("", xml);
+    let doc = |name: &str, xml: &str| doc_with(&format!("/AcroForm << /Fields [] /XFA [({name}) 4 0 R] >>"), "", &[&packet(xml)], "");
+    let data =
+        "<xfa:datasets xmlns:xfa=\"http://www.xfa.org/schema/xfa-data/1.0/\"><xfa:data><f><name>Jane Citizen</name></f></xfa:data></xfa:datasets>";
+    assert!(save_refuses(&doc("datasets", data), &["Paid Jane Citizen $500"]));
+    let template = "<template><field name=\"state\"><items><text>New South Wales</text><text>Victoria</text></items></field></template>";
+    assert!(!save_refuses(&doc("template", template), &["State: New South Wales"]));
+    // A whole XDP in one stream: its datasets element is the data.
+    let whole = format!("<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\">{template}{data}</xdp:xdp>");
+    let one = doc_with("/AcroForm << /Fields [] /XFA 4 0 R >>", "", &[&packet(&whole)], "");
+    assert!(save_refuses(&one, &["Paid Jane Citizen $500"]));
+    assert!(!save_refuses(&one, &["State: New South Wales"]));
+}
+
+/// A label's one-word value is not a run of its own (delta 3 review S1), unless it has a digit or
+/// an '@'.
+#[test]
+fn a_labels_one_word_value_refuses_only_with_a_digit_or_at() {
+    let link = |uri: &str| format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI ({uri}) >> >>");
+    let doc = |uri: &str| doc_with("", "/Annots [4 0 R]", &[link(uri).as_str()], "");
+    assert!(!save_refuses(&doc("https://australia.gov.au/"), &["Country: Australia"]));
+    assert!(save_refuses(&doc("https://example.com/tfn/123456789"), &["TFN: 123456789"]));
+}
+
+/// A string held by reference keeps the place of what refers to it (Alcuin round 2, S1): a
+/// field's `/V 5 0 R`, a link's `/URI 5 0 R`, a list box's indirect array of values. An array
+/// that refers to itself is read once.
+#[test]
+fn an_indirect_string_keeps_its_place() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let field = ["<< /FT /Tx /T (code) /V 5 0 R >>", "(Project Bluefin)"];
+    assert!(save_refuses(&doc_with(fields, "", &field, ""), &["Project Bluefin"]));
+    let list = ["<< /FT /Ch /T (code) /V 5 0 R >>", "[6 0 R (Other)]", "(Project Bluefin)"];
+    assert!(save_refuses(&doc_with(fields, "", &list, ""), &["Project Bluefin"]));
+    let link = ["<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI 5 0 R >> >>", "(https://bluefin.example/)"];
+    assert!(save_refuses(&doc_with("", "/Annots [4 0 R]", &link, ""), &["Bluefin"]));
+    let looped = ["<< /FT /Ch /T (code) /V 5 0 R >>", "[5 0 R 5 0 R (Other)]"];
+    assert!(!save_refuses(&doc_with(fields, "", &looped, ""), &["Project Bluefin"]));
+}
+
+/// A walk cut short at its cap is listed as its own place, which its category clears, not as
+/// an object nothing clears (Alcuin round 2, S2).
+#[test]
+fn a_name_tree_too_deep_to_walk_is_listed_as_an_attachment() {
+    // Past the walk's depth cap (`MAX_NAME_TREE_DEPTH`, 32).
+    let levels = 36;
+    let mut extra: Vec<String> = (0..levels).map(|i| format!("<< /Kids [{} 0 R] >>", i + 5)).collect();
+    extra.push("<< /Names [(a.txt) << /Type /Filespec /F (a.txt) >>] >>".to_string());
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let doc = doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "");
+    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
+}
+
+/// A place nested deeper than 32 arrays is still read and listed as itself (Alcuin round 3, S3):
+/// the sweep reads past the parser's own nesting limit, so a parsed object never ends in a place
+/// nothing clears.
+#[test]
+fn a_place_nested_deep_in_an_object_keeps_its_place() {
+    let nested = format!("{}<< /S /URI /URI (https://bluefin.example/) >>{}", "[".repeat(40), "]".repeat(40));
+    let doc = doc_with("/Extra 4 0 R", "", &[nested.as_str()], "");
+    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Bluefin".to_string()], true));
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Link), "{:?}", left.items);
+}
+
+/// Document information that refers to itself is read once, not once for each way round the loop.
+#[test]
+fn document_information_that_refers_to_itself_is_read_once() {
+    let looped = ["<< /Keywords 5 0 R >>", "[5 0 R 5 0 R (Project Bluefin)]"];
+    assert!(save_refuses(&doc_with("", "", &looped, "/Info 4 0 R"), &["Project Bluefin"]));
+    let clean = ["<< /Keywords 5 0 R >>", "[5 0 R 5 0 R (Other)]"];
+    assert!(!save_refuses(&doc_with("", "", &clean, "/Info 4 0 R"), &["Project Bluefin"]));
+}
+
+/// The sweep keeps its own stack (delta 9 review S1): an object nested about as deep as the
+/// parser reads, and a long chain of arrays held by reference, are swept on a 1 MiB thread
+/// stack, the size of a Windows main thread's.
+#[test]
+fn a_deep_object_is_swept_on_a_small_stack() {
+    let refuses = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            let links = 120;
+            let mut extra = vec!["<< /FT /Tx /T (code) /V 6 0 R >>".to_string(), format!("{}(x){}", "<< /A ".repeat(120), " >>".repeat(120))];
+            extra.extend((0..links).map(|i| format!("[{} 0 R]", i + 7)));
+            extra.push("(Project Bluefin)".to_string());
+            let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+            save_refuses(&doc_with("/AcroForm << /Fields [4 0 R] >> /Extra 5 0 R", "", &extra, ""), &["Project Bluefin"])
+        })
+        .expect("a thread starts")
+        .join()
+        .expect("the sweep doesn't overflow the stack");
+    assert!(refuses);
+}

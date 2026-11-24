@@ -66,7 +66,7 @@ fn places_apply_leaves_that_still_hold_the_removed_text_are_counted_and_kept() {
     mark(&mut doc, 0, &[[55.0, 95.0, 90.0, 110.0]], "");
     let r = apply(&mut doc, None).unwrap();
     assert_eq!(r.glyphs, 7, "{r:?}");
-    assert_eq!(r.still_holding, Elsewhere { bookmarks: 2, attachments: 3, comments: 3, xmp: 1, unsearched: false }, "{r:?}");
+    assert_eq!(r.still_holding, Elsewhere { bookmarks: 2, attachments: 3, comments: 3, xmp: 1, unsearched: false, ..Default::default() }, "{r:?}");
     assert_eq!(r.still_holding.total(), 9);
     assert_eq!(held(&doc), before, "counting changes nothing");
     let catalog = doc.get(doc.root().unwrap()).as_dict().cloned().unwrap();
@@ -96,7 +96,7 @@ fn places_count_whenever_they_hold_text_if_the_removed_text_is_unknown() {
     let r = apply(&mut doc, None).unwrap();
     // Every bookmark title, every attachment (each has a name), every comment but the pop-up,
     // and both XMP packets (the font's too).
-    assert_eq!(r.still_holding, Elsewhere { bookmarks: 3, attachments: 4, comments: 5, xmp: 2, unsearched: true }, "{r:?}");
+    assert_eq!(r.still_holding, Elsewhere { bookmarks: 3, attachments: 4, comments: 5, xmp: 2, unsearched: true, ..Default::default() }, "{r:?}");
     assert_eq!(held(&doc), before);
 }
 
