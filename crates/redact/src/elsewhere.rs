@@ -19,7 +19,9 @@
 //! wording (field names, tooltips, choice options, the XFA template), a single word of a removed
 //! sentence, a few of its words inside a longer value (the bookmark "Interview with Jane
 //! Citizen" after redacting "Jane Citizen paid $500"), and a run joined to other letters
-//! ("projectBluefin", "Bluefin2"). Not searched at all: page
+//! ("projectBluefin", "Bluefin2"), and objects past the sweep's cap (nothing clears what may be
+//! there). A walk cut short at its cap is its own place, which its category clears. Not
+//! searched at all: page
 //! content (the redaction's own check), appearance streams, form XObjects, images and marked
 //! content (`/ActualText`), and attachment data that isn't text.
 
@@ -307,9 +309,12 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
     // A file the next save writes in full leaves out what nothing refers to; when that can't be
     // worked out, every object is searched.
     let reachable = pdfcraft_cos::reachable_objects(doc).ok();
+    let mut seen = Seen::new();
     for (read, (r, o)) in doc.scan_objects_checked().enumerate() {
         if read >= MAX_SWEEP_OBJECTS {
-            out.add(Place::Unread, None, None, None);
+            // Objects past the cap aren't read. Nothing clears what may be there, so it is
+            // told, not refused.
+            out.add(Place::Other, None, None, None);
             break;
         }
         if skip.contains(&r) || reachable.as_ref().is_some_and(|k| !k.contains(&r.num)) {
@@ -317,7 +322,7 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
         }
         let mut found = HashSet::new();
         match o {
-            Ok(o) => visit(doc, &o, None, 0, search, &mut found),
+            Ok(o) => visit(doc, &o, None, 0, search, &mut seen, &mut found),
             // An object that can't be read may hold it.
             Err(_) => {
                 found.insert(Place::Unread);
@@ -351,14 +356,35 @@ fn page_of(doc: &Document, skip: &mut HashSet<ObjRef>) -> HashMap<ObjRef, usize>
     pages
 }
 
+/// Arrays held by reference already read, with the place they were read in ([`visit`]).
+type Seen = HashSet<(ObjRef, Place)>;
+
 /// Note in `found` the place of each string under `o` that holds the text. `place` is that of the
 /// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text.
-fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, found: &mut HashSet<Place>) {
+fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, seen: &mut Seen, found: &mut HashSet<Place>) {
     if depth > MAX_SWEEP_DEPTH {
-        found.insert(Place::Unread);
+        // Too deep to read: its place's category clears it, if it has one.
+        found.insert(place.unwrap_or(Place::Unread));
         return;
     }
     match o {
+        // A string or array held by reference is part of what refers to it (a field's `/V 7 0 R`):
+        // its object alone says nothing of where it is. A dictionary or stream is swept as an
+        // object of its own.
+        // An array is read once for each place it is in, however many refer to it, so a file
+        // can't make the sweep read one array for each of many references.
+        Object::Ref(r) => {
+            let Some(p) = place else { return };
+            let target = doc.resolve(o);
+            let read = match &*target {
+                Object::String(_) => true,
+                Object::Array(_) => seen.insert((*r, p)),
+                _ => false,
+            };
+            if read {
+                visit(doc, &target, place, depth + 1, search, seen, found);
+            }
+        }
         Object::String(s) => {
             // Other places never refuse a save, so a save's search spends nothing on them.
             if let Some(p) = place
@@ -370,14 +396,22 @@ fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search:
                 }
             }
         }
-        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, search, found)),
-        Object::Dict(d) => visit_dict(doc, d, place, depth, search, found),
-        Object::Stream(s) => visit_dict(doc, &s.dict, place, depth, search, found),
+        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, search, seen, found)),
+        Object::Dict(d) => visit_dict(doc, d, place, depth, search, seen, found),
+        Object::Stream(s) => visit_dict(doc, &s.dict, place, depth, search, seen, found),
         _ => {}
     }
 }
 
-fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, depth: usize, search: &Search, found: &mut HashSet<Place>) {
+fn visit_dict(
+    doc: &Document,
+    d: &pdfcraft_cos::Dict,
+    place: Option<Place>,
+    depth: usize,
+    search: &Search,
+    seen: &mut Seen,
+    found: &mut HashSet<Place>,
+) {
     let own = place_of(d, place, depth);
     let mut note = |p: Place, holds: Option<bool>| match holds {
         Some(true) => {
@@ -449,7 +483,7 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
             Some(Place::Field) if FORM_WORDING.contains(&k) => Some(Place::Other),
             _ => own,
         };
-        visit(doc, v, child, depth + 1, search, found);
+        visit(doc, v, child, depth + 1, search, seen, found);
     }
 }
 
@@ -632,8 +666,8 @@ fn bookmarks(doc: &Document, hit: &dyn Fn(Option<&Object>) -> bool, found: &mut 
         }
         let Some(item) = doc.resolve(&o).as_dict().cloned() else { continue };
         if read >= MAX_OUTLINE_ITEMS {
-            // Items past the cap aren't read: count one for them.
-            found.add(Place::Unread, None, None, None);
+            // Items past the cap aren't read: count one for them, which Bookmarks clears.
+            found.add(Place::Bookmark, None, None, None);
             return;
         }
         if hit(item.get(b"Title")) {
@@ -688,8 +722,9 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
             }
             let Some(node) = doc.resolve(&o).as_dict().cloned() else { continue };
             if read >= MAX_NAME_TREE_NODES || depth > MAX_NAME_TREE_DEPTH {
-                // A node past the cap isn't read: count one for what it holds.
-                found.add(Place::Unread, o.as_ref(), None, None);
+                // A node past the cap isn't read: count one for what it holds, which Attachments
+                // clears.
+                found.add(Place::Attachment, o.as_ref(), None, None);
                 break;
             }
             read += 1;
@@ -759,8 +794,8 @@ fn rich_text(doc: &Document, o: &Object) -> Option<String> {
 fn xmp(doc: &Document, search: &Search, found: &mut Found) {
     let scrubbed: HashSet<ObjRef> = crate::metadata::catalog_and_pages(doc).into_iter().collect();
     let Ok(values) = crate::sanitize::owned_values(doc, b"Metadata") else {
-        // A graph too deep to walk: some XMP may be there, unread.
-        found.add(Place::Unread, None, None, None);
+        // A graph too deep to walk: some XMP may be there, unread, which XMP metadata clears.
+        found.add(Place::Xmp, None, None, None);
         return;
     };
     let mut seen = HashSet::new();
