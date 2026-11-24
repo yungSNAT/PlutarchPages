@@ -7729,5 +7729,44 @@ fn deep_indirect_outline_past_64_levels_is_counted_and_removed_on_a_small_stack(
         assert_eq!(counts.get(&Hidden::Bookmarks), Some(&levels));
         let removed: std::collections::HashMap<Hidden, usize> = remove_hidden(&mut doc, &[Hidden::Bookmarks]).unwrap().into_iter().collect();
         assert_eq!(removed.get(&Hidden::Bookmarks), Some(&levels));
+
+        let mut deep_inline = Object::Dict(Dict::from_iter([
+            (b"Title".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"Past".to_vec()))),
+            (b"First".to_vec(), Object::Ref(ObjRef::new(6, 0))),
+        ]));
+        for _ in 0..258 {
+            deep_inline = Object::Dict(Dict::from_iter([
+                (b"Title".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"In".to_vec()))),
+                (b"First".to_vec(), deep_inline),
+            ]));
+        }
+        let mut inline_doc = outlined_document(vec![b"<< /Title (Target) >>".to_vec()]);
+        inline_doc
+            .set(ObjRef::new(5, 0), Object::Dict(Dict::from_iter([(b"Type".to_vec(), Object::name("Outlines")), (b"First".to_vec(), deep_inline)])));
+        let inline_counts: std::collections::HashMap<Hidden, usize> = scan(&inline_doc).into_iter().collect();
+        assert_eq!(inline_counts.get(&Hidden::Bookmarks), Some(&257));
+    });
+}
+
+/// `owned_values` / `collect_owned` traverses inline `Object::Stream` dictionaries nested inside
+/// dictionaries and arrays on a 1 MiB stack and `Hidden::Metadata` removal clears them.
+#[test]
+fn collect_owned_reads_metadata_inside_inline_streams_on_a_small_stack() {
+    use crate::sanitize::{Hidden, owned_values, remove_hidden};
+    on_small_stack(|| {
+        let meta = Object::Ref(ObjRef::new(8, 0));
+        let in_dict = Object::Stream(pdfcraft_cos::Stream::flate(Dict::from_iter([(b"Metadata".to_vec(), meta.clone())]), b"%dict-meta"));
+        let in_arr = Object::Stream(pdfcraft_cos::Stream::flate(Dict::from_iter([(b"Metadata".to_vec(), meta)]), b"%arr-meta"));
+        let holder = Dict::from_iter([(b"InDict".to_vec(), in_dict), (b"InArr".to_vec(), Object::Array(vec![in_arr]))]);
+        let mut doc =
+            one_page(b"BT ET", "", vec![b"<< >>".to_vec(), stream("<< /Type /Metadata /Subtype /XML >>", b"<x:xmpmeta>LEAK_STREAM_XMP</x:xmpmeta>")]);
+        doc.set(ObjRef::new(7, 0), wrap_dicts(Object::Dict(holder), 200));
+        doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"PieceInfo".to_vec(), Object::Ref(ObjRef::new(7, 0)))).unwrap();
+        let vals = owned_values(&doc, b"Metadata").unwrap();
+        assert_eq!(vals.iter().filter(|(r, own, v)| *r == ObjRef::new(7, 0) && !own && v.as_ref() == Some(ObjRef::new(8, 0))).count(), 2, "{vals:?}");
+        let kept = remove_hidden(&mut doc, &[Hidden::Metadata]).unwrap();
+        assert!(kept.iter().any(|(h, n)| *h == Hidden::Metadata && *n >= 2), "{kept:?}");
+        let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(15).any(|w| w == b"LEAK_STREAM_XMP"), "stream metadata survived");
     });
 }
