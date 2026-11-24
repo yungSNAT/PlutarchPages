@@ -29,26 +29,74 @@ pub fn has_thai_layout(bytes: &[u8]) -> bool {
     FontRef::new(bytes).is_ok_and(|f| positions_marks(&f, b"thai"))
 }
 
-/// Whether the GPOS features the shaper uses for `script` include `mark` or `mkmk`. The selection
-/// is HarfRust's, through the same read-fonts calls: the `script` script, else `DFLT`, `dflt` or
-/// `latn` (`ScriptList::select`); then, given no language, a language system tagged `dflt`,
-/// else the script's default one. Marks under a script or language it doesn't select don't
-/// count, nor does a GPOS with only kerning.
+/// Whether the GPOS features the shaper uses for `script` include `mark` or `mkmk`
+/// ([`mark_lookups`]).
 fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
+    mark_lookups(face, script).is_some()
+}
+
+/// The lookups of the `mark` and `mkmk` features the shaper uses for `script`, if it uses either.
+/// The selection is HarfRust's, through the same read-fonts calls: the `script` script, else
+/// `DFLT`, `dflt` or `latn` (`ScriptList::select`); then, given no language, a language system
+/// tagged `dflt`, else the script's default one. Marks under a script or language it doesn't
+/// select don't count, nor does a GPOS with only kerning.
+fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
     use skrifa::Tag;
-    let Ok(gpos) = face.gpos() else { return false };
-    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else { return false };
+    let gpos = face.gpos().ok()?;
+    let (scripts, features) = (gpos.script_list().ok()?, gpos.feature_list().ok()?);
     let records = features.feature_records();
-    let marks = |index: u16| records.get(usize::from(index)).is_some_and(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk");
-    let Some(selected) = scripts.select(&[Tag::new(script)]) else { return false };
-    let Ok(script) = scripts.get(selected.index) else { return false };
+    let selected = scripts.select(&[Tag::new(script)])?;
+    let script = scripts.get(selected.index).ok()?;
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
         None => script.default_lang_sys().transpose().ok().flatten(),
+    }?;
+    let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
+    let marks: Vec<_> = language
+        .feature_indices()
+        .iter()
+        .map(|i| i.get())
+        .chain(required)
+        .filter_map(|i| records.get(usize::from(i)))
+        .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
+        .collect();
+    (!marks.is_empty()).then(|| {
+        marks
+            .iter()
+            .filter_map(|r| r.feature(features.offset_data()).ok())
+            .flat_map(|f| f.lookup_list_indices().iter().map(|i| i.get()).collect::<Vec<_>>())
+            .collect()
+    })
+}
+
+/// Whether one of `lookups` (mark-to-base or mark-to-mark) attaches `mark` to `onto`: both are
+/// covered, and `onto` has an anchor for `mark`'s class.
+fn attaches(gpos: &skrifa::raw::tables::gpos::Gpos, lookups: &[u16], mark: u32, onto: u32) -> bool {
+    use skrifa::raw::tables::gpos::PositionSubtables;
+    let anchored = |offsets: &[skrifa::raw::types::BigEndian<skrifa::raw::types::Nullable<skrifa::raw::types::Offset16>>], class: u16| {
+        offsets.get(usize::from(class)).is_some_and(|o| !o.get().is_null())
     };
-    let Some(language) = language else { return false };
-    language.feature_indices().iter().any(|i| marks(i.get()))
-        || (language.required_feature_index() != 0xFFFF && marks(language.required_feature_index()))
+    let Ok(list) = gpos.lookup_list() else { return false };
+    let (mark, onto) = (GlyphId::new(mark), GlyphId::new(onto));
+    lookups.iter().filter_map(|&i| list.lookups().get(usize::from(i)).ok()).any(|lookup| match lookup.subtables() {
+        Ok(PositionSubtables::MarkToBase(subtables)) => subtables.iter().flatten().any(|t| {
+            let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark_coverage(), t.base_coverage(), t.mark_array(), t.base_array()) else {
+                return false;
+            };
+            let (Some(m), Some(b)) = (marks.get(mark), bases.get(onto)) else { return false };
+            let Some(class) = classes.mark_records().get(usize::from(m)).map(|r| r.mark_class()) else { return false };
+            anchors.base_records().get(usize::from(b)).is_ok_and(|r| anchored(r.base_anchor_offsets(), class))
+        }),
+        Ok(PositionSubtables::MarkToMark(subtables)) => subtables.iter().flatten().any(|t| {
+            let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark1_coverage(), t.mark2_coverage(), t.mark1_array(), t.mark2_array()) else {
+                return false;
+            };
+            let (Some(m), Some(b)) = (marks.get(mark), bases.get(onto)) else { return false };
+            let Some(class) = classes.mark_records().get(usize::from(m)).map(|r| r.mark_class()) else { return false };
+            anchors.mark2_records().get(usize::from(b)).is_ok_and(|r| anchored(r.mark2_anchor_offsets(), class))
+        }),
+        _ => false,
+    })
 }
 
 /// Whether `program`, as a page embeds it (not with a cmap the editor rebuilt from ToUnicode),
@@ -134,6 +182,38 @@ fn places_marks(shaper: &harfrust::Shaper, space: Option<u32>, run: &str) -> boo
         .is_some_and(|clusters| clusters.values().all(|&(glyphs, unmoved)| glyphs < 2 || unmoved <= 1))
 }
 
+/// Whether the GPOS places the marks of `run`, one bidi run shaped in its direction by `face`
+/// with `lookups` (its `mark` and `mkmk` lookups for Thai): each cluster must have as many placed
+/// glyphs as combining marks, Sara Am counting for its Nikhahit. A glyph is placed if it moves when
+/// `mark` and `mkmk` are turned off, or if one of `lookups` attaches it to a glyph before it in the
+/// cluster ([`attaches`]): a face may draw a mark where it sits over most bases, so its anchors
+/// move it only over some. Feature names alone don't count: a GPOS whose lookups are empty or
+/// miss these glyphs would leave each mark at its glyph origin. A cluster whose GSUB merges 2
+/// marks into one glyph is refused too, which only costs the page's font.
+fn places_thai_marks(face: &FontRef, lookups: &[u16], shaper: &harfrust::Shaper, (run, direction): (&str, Direction)) -> bool {
+    let Ok(gpos) = face.gpos() else { return false };
+    let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, ..));
+    let (with, without) = (shape_in(shaper, run, direction, &[]), shape_in(shaper, run, direction, &off));
+    if with.glyph_infos().iter().map(|g| g.glyph_id).ne(without.glyph_infos().iter().map(|g| g.glyph_id)) {
+        return false;
+    }
+    let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
+    let mut clusters = std::collections::BTreeMap::<usize, (Vec<u32>, usize)>::new();
+    for ((info, on), off) in with.glyph_infos().iter().zip(with.glyph_positions()).zip(without.glyph_positions()) {
+        let (glyphs, placed) = clusters.entry(info.cluster as usize).or_default();
+        if !glyphs.is_empty() && (at(on) != at(off) || glyphs.iter().any(|&onto| attaches(&gpos, lookups, info.glyph_id, onto))) {
+            *placed += 1;
+        }
+        glyphs.push(info.glyph_id);
+    }
+    let marks = |text: &str| text.chars().filter(|&c| c == '\u{0e33}' || unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM).count();
+    let starts: Vec<usize> = clusters.keys().copied().collect();
+    clusters.values().zip(&starts).enumerate().all(|(i, ((_, placed), &start))| {
+        let end = starts.get(i + 1).copied().unwrap_or(run.len());
+        run.get(start..end).is_some_and(|text| *placed >= marks(text))
+    })
+}
+
 /// Whether `own` stacks as many marks with its GPOS (`mkmk`) as `reference` does, in every cluster
 /// of `run`. Without the mark-to-mark data for a pair, the later mark (fatha on shadda, or sukun on
 /// that fatha) is attached to the base's anchor, on top of the first, and still moves, so
@@ -183,10 +263,15 @@ fn moved_without(
 
 /// `text` shaped right to left with `features`.
 fn rtl_shape(shaper: &harfrust::Shaper, text: &str, features: &[harfrust::Feature]) -> harfrust::GlyphBuffer {
+    shape_in(shaper, text, Direction::RightToLeft, features)
+}
+
+/// `text` shaped in `direction` with `features`.
+fn shape_in(shaper: &harfrust::Shaper, text: &str, direction: Direction, features: &[harfrust::Feature]) -> harfrust::GlyphBuffer {
     let mut buffer = UnicodeBuffer::new();
     buffer.push_str(text);
     buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
-    buffer.set_direction(Direction::RightToLeft);
+    buffer.set_direction(direction);
     buffer.guess_segment_properties();
     shaper.shape(buffer, ShapeOptions::new().features(features))
 }
@@ -223,9 +308,9 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     let face = FontRef::new(bytes).map_err(|e| e.to_string())?;
     // Only a vowel or tone mark set on its base (or Sara Am, whose Nikhahit is) needs positioning:
     // digits and bare letters shape the same without it.
-    if !legacy_thai && text.chars().any(|c| matches!(u32::from(c), 0x0e31 | 0x0e33..=0x0e3a | 0x0e47..=0x0e4e)) && !positions_marks(&face, b"thai") {
-        return Err("the source subset has no Thai mark positioning (GPOS mark/mkmk); select its full font".into());
-    }
+    let thai_marks = |text: &str| text.chars().any(|c| matches!(u32::from(c), 0x0e31 | 0x0e33..=0x0e3a | 0x0e47..=0x0e4e));
+    let no_thai_positioning = || "the source subset has no Thai mark positioning (GPOS mark/mkmk); select its full font".to_string();
+    let thai_lookups = if !legacy_thai && thai_marks(text) { Some(mark_lookups(&face, b"thai").ok_or_else(no_thai_positioning)?) } else { None };
     if text.chars().any(|c| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x08a0..=0x0dff | 0x0e80..=0x0fff | 0x1780..=0x17ff))
         && face.gsub().is_err()
     {
@@ -241,13 +326,14 @@ fn shape_inner(bytes: &[u8], text: &str, legacy_thai: bool) -> Result<ShapedRun,
     let mut x = 0.0;
     for run in runs {
         let Some(input) = text.get(run.clone()) else { continue };
-        let rtl = levels.get(run.start).is_some_and(Level::is_rtl);
-        let mut buffer = UnicodeBuffer::new();
-        buffer.push_str(input);
-        buffer.set_cluster_level(BufferClusterLevel::MonotoneGraphemes);
-        buffer.set_direction(if rtl { Direction::RightToLeft } else { Direction::LeftToRight });
-        buffer.guess_segment_properties();
-        let output = shaper.shape(buffer, ShapeOptions::new());
+        let direction = if levels.get(run.start).is_some_and(Level::is_rtl) { Direction::RightToLeft } else { Direction::LeftToRight };
+        if let Some(lookups) = &thai_lookups
+            && thai_marks(input)
+            && !places_thai_marks(&face, lookups, &shaper, (input, direction))
+        {
+            return Err(no_thai_positioning());
+        }
+        let output = shape_in(&shaper, input, direction, &[]);
         let mut starts: Vec<_> = output.glyph_infos().iter().map(|g| g.cluster as usize).collect();
         starts.sort_unstable();
         starts.dedup();
