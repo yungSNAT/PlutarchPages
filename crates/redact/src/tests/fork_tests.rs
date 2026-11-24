@@ -930,3 +930,28 @@ fn the_parts_of_a_labelled_line_refuse_on_their_own() {
     let doc = doc_with("/Outlines 4 0 R", "", &[outline, "<< /Title (Interview with Jane Citizen) /Parent 4 0 R >>"], "");
     assert!(save_refuses(&doc, &["Name: Jane Citizen"]));
 }
+
+/// A form's own wording (choice options, tooltip, names) refuses only for a whole removed run, not
+/// for words of one (delta 3 review NB2); a filled-in value still does.
+#[test]
+fn a_forms_own_wording_refuses_only_for_a_whole_run() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let state = ["<< /FT /Ch /T (state) /Opt [(New South Wales) (Victoria)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["Address: 1 Smith St, Sydney, New South Wales 2000"]));
+    let birth = ["<< /FT /Tx /T (dob) /TU (Date of birth) >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &birth, ""), &["Date of birth: 01/02/1980"]));
+    let filled = ["<< /FT /Tx /T (dob) /TU (Date of birth) /V (01/02/1980) >>"];
+    assert!(save_refuses(&doc_with(fields, "", &filled, ""), &["Date of birth: 01/02/1980"]));
+    let named = ["<< /FT /Ch /T (project) /Opt [(Project Bluefin) (Other)] >>"];
+    assert!(save_refuses(&doc_with(fields, "", &named, ""), &["Project Bluefin"]));
+}
+
+/// A label's one-word value is not a run of its own (delta 3 review S1), unless it has a digit or
+/// an '@'.
+#[test]
+fn a_labels_one_word_value_refuses_only_with_a_digit_or_at() {
+    let link = |uri: &str| format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI ({uri}) >> >>");
+    let doc = |uri: &str| doc_with("", "/Annots [4 0 R]", &[link(uri).as_str()], "");
+    assert!(!save_refuses(&doc("https://australia.gov.au/"), &["Country: Australia"]));
+    assert!(save_refuses(&doc("https://example.com/tfn/123456789"), &["TFN: 123456789"]));
+}
