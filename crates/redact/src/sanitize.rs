@@ -301,8 +301,13 @@ const NAME_MAPS: [&[u8]; 14] = [
     b"PieceInfo",
 ];
 
-/// How deep the owner sweep follows dictionaries and arrays written in place.
+/// How deep the outline and layer walks follow dictionaries and arrays written in place.
 const MAX_DIRECT_DEPTH: usize = 64;
+
+/// How deep the owner sweep follows dictionaries and arrays written in place: past the parser's
+/// 128 levels, so a graph read from a file never refuses as too deep, and a removal that a save's
+/// refusal names (Metadata for XMP) can always run.
+const MAX_OWNER_DEPTH: usize = 256;
 
 /// What a dictionary is to the owner sweep.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -352,7 +357,7 @@ fn owners(doc: &Document, keys: &[&[u8]]) -> Result<(Vec<usize>, Holders), Redac
 /// Counts the dictionaries in `o` (and what it holds in place) that hold one of `keys`, and
 /// queues the indirect objects it names. Returns whether any key was found.
 fn find_owned(o: &Object, role: Held, keys: &[&[u8]], held: &mut [usize], next: &mut Vec<(ObjRef, Held)>, depth: usize) -> Result<bool, RedactError> {
-    if depth > MAX_DIRECT_DEPTH {
+    if depth > MAX_OWNER_DEPTH {
         return Err(RedactError::TooDeep);
     }
     let (d, role) = match o {
@@ -392,7 +397,7 @@ fn find_owned(o: &Object, role: Held, keys: &[&[u8]], held: &mut [usize], next: 
 /// Removes `keys` from `o` and from what it holds in place, outside name maps. [`owners`] has
 /// already refused anything nested past the depth limit.
 fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]], depth: usize) {
-    if depth > MAX_DIRECT_DEPTH {
+    if depth > MAX_OWNER_DEPTH {
         return;
     }
     let (d, role) = match o {
@@ -434,7 +439,7 @@ pub(crate) fn owned_values(doc: &Document, key: &[u8]) -> Result<Vec<(ObjRef, bo
 /// Calls `found` with each value of `key` in `o` and what it holds in place, outside name maps
 /// (the reading counterpart of [`strip_owned`]), and whether it is `o`'s own entry.
 fn collect_owned(o: &Object, role: Held, key: &[u8], depth: usize, found: &mut dyn FnMut(bool, &Object)) {
-    if depth > MAX_DIRECT_DEPTH {
+    if depth > MAX_OWNER_DEPTH {
         return;
     }
     let (d, role) = match o {
