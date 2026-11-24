@@ -1043,3 +1043,24 @@ fn document_information_that_refers_to_itself_is_read_once() {
     let clean = ["<< /Keywords 5 0 R >>", "[5 0 R 5 0 R (Other)]"];
     assert!(!save_refuses(&doc_with("", "", &clean, "/Info 4 0 R"), &["Project Bluefin"]));
 }
+
+/// The sweep keeps its own stack (delta 9 review S1): an object nested about as deep as the
+/// parser reads, and a long chain of arrays held by reference, are swept on a 1 MiB thread
+/// stack, the size of a Windows main thread's.
+#[test]
+fn a_deep_object_is_swept_on_a_small_stack() {
+    let refuses = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            let links = 120;
+            let mut extra = vec!["<< /FT /Tx /T (code) /V 6 0 R >>".to_string(), format!("{}(x){}", "<< /A ".repeat(120), " >>".repeat(120))];
+            extra.extend((0..links).map(|i| format!("[{} 0 R]", i + 7)));
+            extra.push("(Project Bluefin)".to_string());
+            let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+            save_refuses(&doc_with("/AcroForm << /Fields [4 0 R] >> /Extra 5 0 R", "", &extra, ""), &["Project Bluefin"])
+        })
+        .expect("a thread starts")
+        .join()
+        .expect("the sweep doesn't overflow the stack");
+    assert!(refuses);
+}
