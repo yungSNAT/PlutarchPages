@@ -1005,6 +1005,24 @@ fn many_stacked_marks_are_refused_within_a_bound() {
     assert!(started.elapsed() < std::time::Duration::from_secs(10), "{:?}", started.elapsed());
 }
 
+/// Patching positive `hmtx` advances to `65_000` on a 35,000-comma Arabic run pushes the summed
+/// `x` advance past `i32::MAX` inside `followers` (`2.275e9`) without overflowing or panicking.
+#[test]
+fn wide_advances_on_a_long_arabic_run_do_not_overflow_advance() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let metrics = be16(tables(face.bytes)[b"hhea"], 34);
+    let mut hmtx = tables(face.bytes)[b"hmtx"].to_vec();
+    for i in 0..metrics {
+        if be16(&hmtx, 4 * i) > 0 {
+            hmtx[4 * i..4 * i + 2].copy_from_slice(&65_000u16.to_be_bytes());
+        }
+    }
+    let wide = with_table(face.bytes, b"hmtx", hmtx);
+    let text = format!("{}ب\u{064e}\u{0651}", "\u{060c}".repeat(35_000));
+    assert!(joins_arabic(&wide, face.bytes, &text));
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
