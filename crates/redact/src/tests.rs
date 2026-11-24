@@ -7672,3 +7672,62 @@ fn a_layer_a_view_rule_turns_off_is_hidden() {
     let c = content(&doc, 0);
     assert!(!c.contains("ScreenOff") && c.contains("(PrintOff)"), "{c}");
 }
+
+/// An inline `Object::Stream` nested inside an indirect owner's dictionary or array is cleaned on
+/// removal alongside dictionaries and arrays, on a 1 MiB stack.
+#[test]
+fn strip_owned_cleans_inline_streams_on_a_small_stack() {
+    use crate::sanitize::{Hidden, remove_hidden};
+    on_small_stack(|| {
+        let mut dict_stream_d = Dict::new();
+        dict_stream_d.set(
+            b"AA".to_vec(),
+            Object::Dict(Dict::from_iter([(
+                b"O".to_vec(),
+                Object::Dict(Dict::from_iter([
+                    (b"S".to_vec(), Object::name("JavaScript")),
+                    (b"JS".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"LEAK_STREAM_DICT".to_vec()))),
+                ])),
+            )])),
+        );
+        let mut arr_stream_d = Dict::new();
+        arr_stream_d.set(
+            b"AA".to_vec(),
+            Object::Dict(Dict::from_iter([
+                (b"S".to_vec(), Object::name("JavaScript")),
+                (b"JS".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"LEAK_STREAM_ARR".to_vec()))),
+            ])),
+        );
+        let inline_dict_stream = Object::Stream(pdfcraft_cos::Stream::flate(dict_stream_d, b"%inline-dict"));
+        let inline_arr_stream = Object::Stream(pdfcraft_cos::Stream::flate(arr_stream_d, b"%inline-arr"));
+        let holder = Dict::from_iter([(b"InDict".to_vec(), inline_dict_stream), (b"InArr".to_vec(), Object::Array(vec![inline_arr_stream]))]);
+        let mut doc = one_page(b"BT ET", "", vec![b"<< >>".to_vec()]);
+        doc.set(ObjRef::new(7, 0), wrap_dicts(Object::Dict(holder), 200));
+        doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"PieceInfo".to_vec(), Object::Ref(ObjRef::new(7, 0)))).unwrap();
+        let kept = remove_hidden(&mut doc, &[Hidden::LinksActionsScripts]).unwrap();
+        assert!(kept.iter().any(|(h, n)| *h == Hidden::LinksActionsScripts && *n >= 2), "{kept:?}");
+        let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(16).any(|w| w == b"LEAK_STREAM_DICT"), "stream inside dict kept /AA");
+        assert!(!bytes.windows(15).any(|w| w == b"LEAK_STREAM_ARR"), "stream inside array kept /AA");
+    });
+}
+
+/// A parser-readable indirect outline deeper than 64 levels is counted past level 64 in both
+/// `scan` and `remove_hidden(Bookmarks)` on a 1 MiB stack.
+#[test]
+fn deep_indirect_outline_past_64_levels_is_counted_and_removed_on_a_small_stack() {
+    use crate::sanitize::{Hidden, remove_hidden, scan};
+    on_small_stack(|| {
+        let levels = 120;
+        let mut items = Vec::with_capacity(levels);
+        for i in 0..levels {
+            let child = if i + 1 < levels { format!(" /First {} 0 R", 7 + i) } else { String::new() };
+            items.push(format!("<< /Title (L{i}){child} >>").into_bytes());
+        }
+        let mut doc = outlined_document(items);
+        let counts: std::collections::HashMap<Hidden, usize> = scan(&doc).into_iter().collect();
+        assert_eq!(counts.get(&Hidden::Bookmarks), Some(&levels));
+        let removed: std::collections::HashMap<Hidden, usize> = remove_hidden(&mut doc, &[Hidden::Bookmarks]).unwrap().into_iter().collect();
+        assert_eq!(removed.get(&Hidden::Bookmarks), Some(&levels));
+    });
+}
