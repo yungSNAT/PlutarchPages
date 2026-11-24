@@ -34,20 +34,30 @@ pub fn has_thai_layout(bytes: &[u8]) -> bool {
 /// `DFLT`, `dflt` or `latn` (`ScriptList::select`); then, given no language, a language system
 /// tagged `dflt`, else the script's default one. Marks under a script or language it doesn't
 /// select don't count, nor does a GPOS with only kerning.
-fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
+fn visit_mark_features<'a>(
+    gpos: &skrifa::raw::tables::gpos::Gpos<'a>,
+    script: &[u8; 4],
+    mut visit: impl FnMut(Result<skrifa::raw::tables::layout::Feature<'a>, skrifa::raw::ReadError>) -> bool,
+) -> bool {
     use skrifa::Tag;
-    let gpos = face.gpos().ok()?;
-    let (scripts, features) = (gpos.script_list().ok()?, gpos.feature_list().ok()?);
-    let records = features.feature_records();
-    let selected = scripts.select(&[Tag::new(script)])?;
-    let script = scripts.get(selected.index).ok()?;
+    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else {
+        return false;
+    };
+    let Some(selected) = scripts.select(&[Tag::new(script)]) else {
+        return false;
+    };
+    let Ok(script) = scripts.get(selected.index) else {
+        return false;
+    };
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
         None => script.default_lang_sys().transpose().ok().flatten(),
-    }?;
+    };
+    let Some(language) = language else {
+        return false;
+    };
+    let records = features.feature_records();
     let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
-    let mut found = false;
-    let mut indices = Vec::new();
     for r in language
         .feature_indices()
         .iter()
@@ -56,11 +66,23 @@ fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
         .filter_map(|i| records.get(usize::from(i)))
         .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
     {
-        found = true;
-        if let Ok(f) = r.feature(features.offset_data()) {
-            indices.extend(f.lookup_list_indices().iter().map(|i| i.get()));
+        if !visit(r.feature(features.offset_data())) {
+            return false;
         }
     }
+    true
+}
+
+fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
+    let gpos = face.gpos().ok()?;
+    let (mut found, mut indices) = (false, Vec::new());
+    visit_mark_features(&gpos, script, |feature| {
+        found = true;
+        if let Ok(f) = feature {
+            indices.extend(f.lookup_list_indices().iter().map(|i| i.get()));
+        }
+        true
+    });
     found.then(|| {
         indices.sort_unstable();
         indices.dedup();
@@ -378,7 +400,9 @@ fn lookup_attaches(
 /// in glyphs other than those it draws the letter and its marks with alone (a joining form or
 /// part of a ligature), the program's must too, each face judged against its own isolated form;
 /// and its GPOS must place every glyph that sits on another ([`places_marks`]) and stack marks
-/// wherever the reference does ([`stacks_marks`]). A cmap that maps
+/// wherever the reference does ([`stacks_marks`]), on the marks the reference puts them on
+/// ([`follows_like`]); every combining mark of `text` must follow an
+/// Arabic letter in its joining run, where those checks reach it. A cmap that maps
 /// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
 /// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
@@ -390,23 +414,73 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     if text.len() > 262_144 {
         return false;
     }
-    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
-    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
-    let own_map = own.charmap();
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
     let mark = |c: char| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc | 0x06df..=0x06e4 | 0x06e7..=0x06e8 | 0x06ea..=0x06ed | 0x08ca..=0x08ff);
     let letter = |c: char| {
         !mark(c) && matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff)
     };
+    // Every combining mark must follow an Arabic letter (or marks on one) in its joining run: the
+    // runs below are all that is shaped, so a mark outside them (U+0301 after a digit or a Latin
+    // letter, or after an Arabic letter) or opening one would be placed unjudged, at the glyph
+    // origin if the GPOS doesn't place it. Refusing such text costs only the page's font.
+    let mut on_letter = false;
+    for c in text.chars() {
+        if unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM {
+            if !(joins(c) && on_letter) {
+                return false;
+            }
+        } else {
+            on_letter = letter(c);
+        }
+    }
+    let Some((gpos_lookups, gpos_subtables)) = layout_counts(own.gpos().ok().and_then(|t| t.lookup_list().ok()), pos_sub_table_count) else {
+        return false;
+    };
+    let Some((gsub_lookups, gsub_subtables)) = layout_counts(own.gsub().ok().and_then(|t| t.lookup_list().ok()), sub_sub_table_count) else {
+        return false;
+    };
+    let total_lookups = gpos_lookups.saturating_add(gsub_lookups);
+    let total_subtables = gpos_subtables.saturating_add(gsub_subtables);
+    if total_lookups > 1 << 12 || total_subtables > 1 << 14 || total_subtables.max(total_lookups).max(1).saturating_mul(text.len()) > 1 << 27 {
+        return false;
+    }
+    // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
+    let run_marks: Vec<(&str, Vec<(usize, char)>)> =
+        text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).map(|run| (run, stacked_marks(run))).collect();
+    let mark_gpos_subtables = if run_marks.iter().any(|(_, marks)| !marks.is_empty()) {
+        let Some(n) = mark_lookups_attach_only(&own) else { return false };
+        n
+    } else {
+        0
+    };
+    let scale = mark_gpos_subtables.max(1);
+    // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
+    // the text and scaled by reachable mark/mkmk subtables, is bounded before any shaping begins.
+    if run_marks
+        .iter()
+        .map(|(run, marks)| {
+            let base = marks.len().saturating_mul(run.len());
+            (base, scale.saturating_mul(base))
+        })
+        .try_fold((0usize, 0usize), |(a, b), (x, y)| Some((a.checked_add(x).filter(|&n| n <= 1 << 20)?, b.checked_add(y).filter(|&n| n <= 1 << 24)?)))
+        .is_none()
+    {
+        return false;
+    }
+    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
+    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
+    let own_map = own.charmap();
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
     }
     let space = |face: &FontRef| face.charmap().map(' ').map(|g| g.to_u32());
     let (own_space, reference_space) = (space(&own), space(&reference));
-    // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
-    text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
-        if !places_marks(&own_shaper, own_space, run) || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run) {
+    run_marks.into_iter().all(|(run, marks)| {
+        if !places_marks(&own_shaper, own_space, run)
+            || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
+            || !follows_like(&own_shaper, &reference_shaper, run, &marks)
+        {
             return false;
         }
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
@@ -764,6 +838,285 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
         }
         _ => false,
     }
+}
+
+fn pos_sub_table_count(l: &skrifa::raw::tables::gpos::PositionLookup<'_>) -> u16 {
+    use skrifa::raw::tables::gpos::PositionLookup as L;
+    match l {
+        L::Single(i) => i.sub_table_count(),
+        L::Pair(i) => i.sub_table_count(),
+        L::Cursive(i) => i.sub_table_count(),
+        L::MarkToBase(i) => i.sub_table_count(),
+        L::MarkToLig(i) => i.sub_table_count(),
+        L::MarkToMark(i) => i.sub_table_count(),
+        L::Contextual(i) => i.sub_table_count(),
+        L::ChainContextual(i) => i.sub_table_count(),
+        L::Extension(i) => i.sub_table_count(),
+    }
+}
+
+fn sub_sub_table_count(l: &skrifa::raw::tables::gsub::SubstitutionLookup<'_>) -> u16 {
+    use skrifa::raw::tables::gsub::SubstitutionLookup as L;
+    match l {
+        L::Single(i) => i.sub_table_count(),
+        L::Multiple(i) => i.sub_table_count(),
+        L::Alternate(i) => i.sub_table_count(),
+        L::Ligature(i) => i.sub_table_count(),
+        L::Contextual(i) => i.sub_table_count(),
+        L::ChainContextual(i) => i.sub_table_count(),
+        L::Extension(i) => i.sub_table_count(),
+        L::Reverse(i) => i.sub_table_count(),
+    }
+}
+
+fn layout_counts<'a, L: skrifa::raw::FontRead<'a>>(
+    list: Option<skrifa::raw::tables::layout::LookupList<'a, L>>,
+    sub_tables: impl Fn(&L) -> u16,
+) -> Option<(usize, usize)> {
+    let Some(list) = list else { return Some((0, 0)) };
+    let lookups = list.lookups().len();
+    if lookups > 1 << 12 {
+        return None;
+    }
+    let mut subtables = 0usize;
+    for lookup in list.lookups().iter() {
+        subtables = subtables.saturating_add(usize::from(sub_tables(&lookup.ok()?)));
+    }
+    Some((lookups, subtables))
+}
+
+fn charge_arabic_gpos_units(work: &mut usize, units: usize) -> bool {
+    *work = work.saturating_add(units);
+    *work <= 1 << 16
+}
+
+fn charge_arabic_gpos(work: &mut usize) -> bool {
+    charge_arabic_gpos_units(work, 1)
+}
+
+fn push_mark_records(
+    recs: &[skrifa::raw::tables::layout::SequenceLookupRecord],
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
+    for r in recs {
+        if !charge_arabic_gpos(work) || r.sequence_index() != 0 {
+            return false;
+        }
+        let idx = r.lookup_list_index();
+        if seen.insert(idx) {
+            todo.push(idx);
+        }
+    }
+    true
+}
+
+fn push_feature_lookups(
+    indices: &[skrifa::raw::types::BigEndian<u16>],
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
+    if !charge_arabic_gpos(work) {
+        return false;
+    }
+    for idx in indices {
+        if !charge_arabic_gpos(work) {
+            return false;
+        }
+        let idx = idx.get();
+        if seen.insert(idx) {
+            todo.push(idx);
+        }
+    }
+    true
+}
+
+fn check_rule_sets<T, F>(sets: impl Iterator<Item = Option<Result<T, skrifa::raw::ReadError>>>, work: &mut usize, mut f: F) -> bool
+where
+    F: FnMut(T, &mut usize) -> bool,
+{
+    for set in sets {
+        if !charge_arabic_gpos(work) {
+            return false;
+        }
+        match set {
+            None => {}
+            Some(Ok(s)) => {
+                if !f(s, work) {
+                    return false;
+                }
+            }
+            Some(Err(_)) => return false,
+        }
+    }
+    true
+}
+
+fn check_seq_context(
+    sub: Result<skrifa::raw::tables::layout::SequenceContext<'_>, skrifa::raw::ReadError>,
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
+    use skrifa::raw::tables::layout::SequenceContext;
+    let Ok(sub) = sub else { return false };
+    match sub {
+        SequenceContext::Format1(s) => check_rule_sets(s.seq_rule_sets().iter(), work, |set, work| {
+            set.seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
+        }),
+        SequenceContext::Format2(s) => check_rule_sets(s.class_seq_rule_sets().iter(), work, |set, work| {
+            set.class_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
+        }),
+        SequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, seen, work),
+    }
+}
+
+fn check_chain_context(
+    sub: Result<skrifa::raw::tables::layout::ChainedSequenceContext<'_>, skrifa::raw::ReadError>,
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
+    use skrifa::raw::tables::layout::ChainedSequenceContext;
+    let Ok(sub) = sub else { return false };
+    match sub {
+        ChainedSequenceContext::Format1(s) => check_rule_sets(s.chained_seq_rule_sets().iter(), work, |set, work| {
+            set.chained_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
+        }),
+        ChainedSequenceContext::Format2(s) => check_rule_sets(s.chained_class_seq_rule_sets().iter(), work, |set, work| {
+            set.chained_class_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
+        }),
+        ChainedSequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, seen, work),
+    }
+}
+
+/// Unique reachable `arab` (or fallback) GPOS `mark` and `mkmk` subtable count if they contain
+/// only mark attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them,
+/// so clearing `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment
+/// chain; `None` on non-attachment lookups, non-zero contextual targets, excessive subtable fanout
+/// (`> 1 << 12`) or budget exhaustion (`1 << 16` work units).
+fn mark_lookups_attach_only(face: &FontRef) -> Option<usize> {
+    use skrifa::raw::tables::gpos::PositionSubtables;
+    let gpos = face.gpos().ok()?;
+    let list = gpos.lookup_list().ok()?;
+    let (mut seen, mut todo, mut work) = (std::collections::BTreeSet::new(), Vec::new(), 0usize);
+    let collected = visit_mark_features(&gpos, b"arab", |feature| {
+        let Ok(f) = feature else { return false };
+        push_feature_lookups(f.lookup_list_indices(), &mut todo, &mut seen, &mut work)
+    });
+    if !collected || todo.is_empty() {
+        return None;
+    }
+    let mut subtables = 0usize;
+    while let Some(idx) = todo.pop() {
+        let lookup = list.lookups().get(usize::from(idx)).ok()?;
+        let lookup_subtables = usize::from(pos_sub_table_count(&lookup));
+        subtables = subtables.saturating_add(lookup_subtables.max(1));
+        if subtables > 1 << 12 || !charge_arabic_gpos(&mut work) {
+            return None;
+        }
+        let ok = match lookup.subtables() {
+            Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => {
+                charge_arabic_gpos_units(&mut work, lookup_subtables)
+            }
+            Ok(PositionSubtables::Contextual(subs)) => {
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_seq_context(s, &mut todo, &mut seen, &mut work))
+            }
+            Ok(PositionSubtables::ChainContextual(subs)) => {
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_chain_context(s, &mut todo, &mut seen, &mut work))
+            }
+            _ => false,
+        };
+        if !ok {
+            return None;
+        }
+    }
+    Some(subtables)
+}
+
+/// Whether each mark of `run` that `reference` attaches to an earlier mark, `own` attaches to that
+/// mark too. [`stacks_marks`] shows that `mkmk` moves each stacked mark, not what it puts it on:
+/// a lookup whose flags skip the middle of 3 marks puts the third on the first, through the
+/// second. A mark follows another if its glyphs move when the other alone loses `mark` and
+/// `mkmk`, which moves it; every pair that follows in the reference must follow in `own`. A pair
+/// only `own` has (a mark put on one the reference doesn't stack it on) is accepted, as
+/// [`stacks_marks`] accepts more stacked marks: a subset keeps its face's attachments. Only a
+/// mark beside another can have one follow it (`marks` precomputed once per run); a run with none
+/// is not shaped again.
+fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> bool {
+    if marks.is_empty() {
+        return true;
+    }
+    match (followers(own, run, marks), followers(reference, run, marks)) {
+        (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
+        _ => false,
+    }
+}
+
+/// The combining marks of `run` (byte offset and character) beside another one. The shaper
+/// reorders a letter's marks, so each of them may carry another.
+fn stacked_marks(run: &str) -> Vec<(usize, char)> {
+    let is_mark = |c: char| unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM;
+    let chars: Vec<(usize, char)> = run.char_indices().collect();
+    let beside = |i: usize| [i.wrapping_sub(1), i + 1].iter().any(|&j| chars.get(j).is_some_and(|&(_, c)| is_mark(c)));
+    chars.iter().enumerate().filter(|&(i, &(_, c))| is_mark(c) && beside(i)).map(|(_, &p)| p).collect()
+}
+
+/// The pairs (a mark's byte offset in `run`, that of a character whose glyphs move when the mark
+/// alone loses `mark` and `mkmk`), shaped right to left a character to a cluster. `None` if that
+/// changes the glyphs, changes any `x_advance` or overflows glyph positions.
+fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> Option<std::collections::BTreeSet<(usize, usize)>> {
+    // Each glyph's cluster and where it is drawn.
+    let placed = |features: &[harfrust::Feature]| {
+        let mut buffer = UnicodeBuffer::new();
+        buffer.push_str(run);
+        buffer.set_cluster_level(BufferClusterLevel::Characters);
+        buffer.set_direction(Direction::RightToLeft);
+        buffer.guess_segment_properties();
+        let output = shaper.shape(buffer, ShapeOptions::new().features(features));
+        let mut x = 0i64;
+        output
+            .glyph_infos()
+            .iter()
+            .zip(output.glyph_positions())
+            .map(|(info, p)| {
+                let at = [x.checked_add(i64::from(p.x_offset))?, i64::from(p.y_offset)];
+                x = x.checked_add(i64::from(p.x_advance))?;
+                Some((info.cluster, info.glyph_id, at, p.x_advance))
+            })
+            .collect::<Option<Vec<(u32, u32, [i64; 2], i32)>>>()
+    };
+    let unchanged = placed(&[])?;
+    let mut pairs = std::collections::BTreeSet::new();
+    for &(at, mark) in marks {
+        // HarfRust stores the range's end less one and tests `cluster < end`, so this covers the
+        // mark's first byte alone; that is its cluster, as every combining mark takes 2 bytes or
+        // more. An inclusive range would cover nothing.
+        let alone = at..at + mark.len_utf8();
+        let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
+        let moved = placed(&off)?;
+        if moved.iter().map(|g| (g.1, g.3)).ne(unchanged.iter().map(|g| (g.1, g.3))) {
+            return None;
+        }
+        // Fail closed if turning off mark/mkmk for the perturbed mark did not displace its own
+        // glyph(s); marks merged into an earlier GSUB ligature keep no cluster here and are checked
+        // under that ligature's cluster instead.
+        let (has_own, self_moved) =
+            unchanged.iter().zip(&moved).filter(|(a, _)| a.0 as usize == at).fold((false, false), |(_, m), (a, b)| (true, m || a.2 != b.2));
+        if has_own && !self_moved {
+            return None;
+        }
+        pairs.extend(unchanged.iter().zip(&moved).filter(|(a, b)| a.0 as usize != at && a.2 != b.2).map(|(a, _)| (at, a.0 as usize)));
+    }
+    Some(pairs)
 }
 
 /// Per cluster of `run` (the space glyph a joiner gets aside): its glyphs, and how many of them
