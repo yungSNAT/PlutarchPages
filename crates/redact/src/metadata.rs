@@ -181,6 +181,151 @@ fn mentions(text: &str, terms: &[String], squeezed: &[String], work: &Work) -> b
         || squeezed.iter().any(|t| letters.contains(t.as_str()))
 }
 
+/// The fewest letters or digits a removed run needs for [`Whole`]: a shorter one ("12", a
+/// page number, a year's last digits) is in too many names and values by chance.
+const MIN_WHOLE: usize = 4;
+
+/// The most words of a value matched as a whole against the removed runs ([`Whole`]); a longer
+/// value is matched by its first ones.
+const MAX_WORDS: usize = 8;
+/// The most words of a label ([`label_value`]).
+const MAX_LABEL_WORDS: usize = 4;
+/// The most word sequences kept ([`Whole`]): past it (about 140,000 redacted words) the removed
+/// text can't be searched for, as for too much text to collect, so every place holding text
+/// refuses until its category is removed (fail-closed).
+const MAX_SEQUENCES: usize = 1_000_000;
+
+/// What a save looks for: each removed run of at least [`MIN_WHOLE`] letters or digits, by its
+/// letters and digits alone, in one automaton, and each sequence of 2 to [`MAX_WORDS`] of a
+/// run's words (by hash) with at least as many letters or digits, so that a value part of a run
+/// ("Jane Citizen" in "Paid Jane Citizen $500") is found too. A value of one word never matches
+/// that way: "Date" or "Yes" is part of too many lines. Nor does a label ("Date of birth" in
+/// "Date of birth: 1 May 1980"): only its value gives sequences.
+pub(crate) struct Whole {
+    runs: aho_corasick::AhoCorasick,
+    any_run: bool,
+    sequences: HashSet<u64>,
+}
+
+impl Whole {
+    /// `None` when the automaton can't be built (too large) or there are more than
+    /// [`MAX_SEQUENCES`] sequences.
+    fn new(runs: &[String]) -> Option<Self> {
+        let mut letters = HashSet::new();
+        let mut sequences = HashSet::new();
+        for r in runs {
+            let l = squeeze(r);
+            if l.chars().count() >= MIN_WHOLE {
+                letters.insert(l);
+            }
+            let words = words_of(label_value(r).unwrap_or(r));
+            for i in 0..words.len() {
+                for end in i + 2..=words.len().min(i + MAX_WORDS) {
+                    let seq = words.get(i..end).unwrap_or_default();
+                    if seq.iter().map(|w| w.chars().count()).sum::<usize>() >= MIN_WHOLE {
+                        sequences.insert(hash_words(seq));
+                    }
+                }
+            }
+            if sequences.len() > MAX_SEQUENCES {
+                return None;
+            }
+        }
+        let runs = aho_corasick::AhoCorasick::new(&letters).ok()?;
+        Some(Self { runs, any_run: !letters.is_empty(), sequences })
+    }
+
+    fn is_empty(&self) -> bool {
+        !self.any_run && self.sequences.is_empty()
+    }
+
+    /// Does `text` hold a whole run at word edges, or are its first [`MAX_WORDS`] words a
+    /// sequence of a run's words? A value of more words matches by its first ones alone. Too
+    /// much text to search counts as holding it (fail-closed).
+    fn holds(&self, text: &str, work: &Work) -> bool {
+        let Some(text) = normalize(text) else { return true };
+        if !work.spend(text.len()) {
+            return true;
+        }
+        let hay = Run::new(text);
+        let edge = |i: usize| hay.edges.get(i).copied().unwrap_or(false);
+        if self.any_run && self.runs.find_overlapping_iter(&hay.letters).any(|m| edge(m.start()) && edge(m.end())) {
+            return true;
+        }
+        let words = words_of(&hay.text);
+        words.len() >= 2 && self.sequences.contains(&hash_words(words.get(..words.len().min(MAX_WORDS)).unwrap_or_default()))
+    }
+}
+
+/// The words (runs of letters and digits) of normalized text.
+fn words_of(s: &str) -> Vec<&str> {
+    s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).collect()
+}
+
+fn hash_words(words: &[&str]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    words.hash(&mut h);
+    h.finish()
+}
+
+/// The parts of a run worth finding alone: the value after a label's colon ("Name: Jane Citizen"
+/// gives "Jane Citizen"), and the parts of 2 or more words between commas or semicolons
+/// ("Jane Citizen, Sydney" gives "Jane Citizen"), each mark followed by a space. Not the label
+/// ("Date"), nor a one-word value or part ("Sex: Male", "Yes, I consent"): too many lines hold
+/// them. A one-word value with a digit or '@' ("TFN: 123456789", an email address) is kept.
+/// Parts come from a run as collected, not from its right-to-left reversal, so a labelled
+/// right-to-left line drawn in visual order gives none.
+fn labelled_parts(run: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let value = label_value(run);
+    if let Some(v) = value
+        && (words_of(v).len() >= 2 || v.chars().any(|c| c.is_ascii_digit() || c == '@'))
+    {
+        parts.push(v.trim().to_string());
+    }
+    let listed = split_after(value.unwrap_or(run), &[',', ';']);
+    if listed.len() > 1 {
+        parts.extend(listed.iter().filter(|p| words_of(p).len() >= 2).map(|p| p.trim().to_string()));
+    }
+    parts.retain(|p| significant(p, MIN_WHOLE));
+    parts
+}
+
+/// What follows a run's label: the text after its first colon followed by whitespace, when what
+/// comes before it looks like a label: at most [`MAX_LABEL_WORDS`] words, a letter, no comma and
+/// not ending in a digit ("Date of birth", not "Interviewed Jane Citizen at home, she said" or
+/// the "Meeting at 10" of "Meeting at 10: 30 pm").
+fn label_value(run: &str) -> Option<&str> {
+    let labelled = split_after(run, &[':']);
+    let label = labelled.first().filter(|_| labelled.len() > 1)?;
+    let looks = words_of(label).len() <= MAX_LABEL_WORDS
+        && label.chars().any(char::is_alphabetic)
+        && !label.contains(',')
+        && !label.trim_end().ends_with(|c: char| c.is_ascii_digit());
+    looks.then(|| run.get(label.len() + 1..)).flatten()
+}
+
+/// `s` split at each of `marks` followed by whitespace.
+fn split_after<'a>(s: &'a str, marks: &[char]) -> Vec<&'a str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut chars = s.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        if marks.contains(&c) && chars.peek().is_some_and(|&(_, n)| n.is_whitespace()) {
+            parts.push(s.get(start..i).unwrap_or_default());
+            start = i + c.len_utf8();
+        }
+    }
+    parts.push(s.get(start..).unwrap_or_default());
+    parts
+}
+
+/// Hebrew, Arabic, Syriac, Thaana, N'Ko and their presentation forms.
+fn right_to_left(c: char) -> bool {
+    matches!(c, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
 /// Is `value` itself part of one of the removed `runs`, as whole words, compared as written or by
 /// letters and digits alone ("Bluefin" is part of "b l u e f i n")? It needs three letters or
 /// digits, so an entry such as "by" doesn't go with every sentence that contains it, and word
@@ -397,6 +542,9 @@ pub(crate) fn xmp_text(doc: &Document, o: &Object) -> Option<String> {
 pub(crate) struct Search {
     lookup: Lookup,
     work: Work,
+    /// The searching left for stream data (attachments, scripts, XFA), kept apart so that one
+    /// large file can't use up what the other places need.
+    data: Work,
 }
 
 enum Lookup {
@@ -408,6 +556,8 @@ enum Lookup {
     /// The terms ([`terms`]), the same by their letters and digits alone ([`squeezed_terms`]),
     /// and the distinct runs, normalized.
     Terms(Vec<String>, Vec<String>, Vec<Run>),
+    /// A save's search ([`Search::whole`]).
+    Whole(Whole),
 }
 
 impl Search {
@@ -415,6 +565,11 @@ impl Search {
     /// tests). `complete` is false when the collection of removed text was cut short; then, as
     /// when the terms exceed their limits, everything matches.
     pub(crate) fn new(removed: &[String], complete: bool, limit: usize) -> Self {
+        // Right-to-left text is collected in the order it is drawn, which is often the reverse of
+        // the order it is stored in elsewhere: it is searched for both ways.
+        let reversed = removed.iter().filter(|r| r.chars().any(right_to_left)).map(|r| r.chars().rev().collect::<String>());
+        let removed: Vec<String> = removed.iter().cloned().chain(reversed).collect();
+        let removed = removed.as_slice();
         let runs: Option<Vec<String>> = removed.iter().map(|r| normalize(r)).collect();
         let lookup = match (terms(removed).filter(|_| complete), runs) {
             (Some(t), _) if t.is_empty() => Lookup::Nothing,
@@ -427,7 +582,42 @@ impl Search {
             }
             _ => Lookup::Everything,
         };
-        Self { lookup, work: Work::new(limit) }
+        Self { lookup, work: Work::new(limit), data: Work::new(limit) }
+    }
+
+    /// The search a save makes ([`crate::survivors`]): only a whole removed run of at least
+    /// [`MIN_WHOLE`] letters or digits, at word edges, or a value of 2 or more words part of a
+    /// removed run ([`Whole`]), holds it. A false match there refuses the save, where the
+    /// metadata scrub's only removes an entry.
+    ///
+    /// Its cost grows with the length of what is searched alone, not times the removed text, so
+    /// a large redaction in a large file stays within the work limit.
+    pub(crate) fn whole(removed: &[String], complete: bool) -> Self {
+        let lookup = if complete {
+            // "Name: Jane Citizen": the parts after a label, and between commas or semicolons,
+            // are runs of their own, so "Jane Citizen" alone is found too.
+            let parts = removed.iter().flat_map(|r| labelled_parts(r));
+            let reversed = removed.iter().filter(|r| r.chars().any(right_to_left)).map(|r| r.chars().rev().collect::<String>());
+            let runs: Option<Vec<String>> = removed.iter().cloned().chain(parts).chain(reversed).map(|r| normalize(&r)).collect();
+            match runs.and_then(|r| Whole::new(&r)) {
+                None => Lookup::Everything,
+                Some(w) if w.is_empty() => Lookup::Nothing,
+                Some(w) => Lookup::Whole(w),
+            }
+        } else {
+            Lookup::Everything
+        };
+        Self { lookup, work: Work::new(MAX_WORK), data: Work::new(MAX_WORK) }
+    }
+
+    /// A save's search ([`Search::whole`]).
+    pub(crate) fn is_whole(&self) -> bool {
+        matches!(self.lookup, Lookup::Whole(_))
+    }
+
+    /// The work limit ran out: every answer since was "yes" without searching.
+    pub(crate) fn exhausted(&self) -> bool {
+        self.work.0.get() == 0 || self.data.0.get() == 0
     }
 
     /// [`Search::new`] with the whole work limit.
@@ -448,10 +638,20 @@ impl Search {
     /// Does `text` hold the removed text: a term, or wholly part of a removed run? Past the
     /// work limit, yes (fail-closed).
     pub(crate) fn text(&self, text: &str) -> bool {
+        self.text_within(text, &self.work)
+    }
+
+    /// [`Search::text`] for stream data, with its own work limit.
+    pub(crate) fn data(&self, text: &str) -> bool {
+        self.text_within(text, &self.data)
+    }
+
+    fn text_within(&self, text: &str, work: &Work) -> bool {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
-            Lookup::Terms(terms, squeezed, runs) => mentions(text, terms, squeezed, &self.work) || within(text, runs, &self.work),
+            Lookup::Whole(w) => w.holds(text, work),
+            Lookup::Terms(terms, squeezed, runs) => mentions(text, terms, squeezed, work) || within(text, runs, work),
         }
     }
 
@@ -461,6 +661,9 @@ impl Search {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
+            Lookup::Whole(w) => {
+                xmp_values(doc, o).is_none_or(|values| w.holds(&values.join(" "), &self.work) || values.iter().any(|v| w.holds(v, &self.work)))
+            }
             Lookup::Terms(terms, squeezed, runs) => xmp_values(doc, o)
                 .is_none_or(|values| mentions(&values.join(" "), terms, squeezed, &self.work) || values.iter().any(|v| within(v, runs, &self.work))),
         }
