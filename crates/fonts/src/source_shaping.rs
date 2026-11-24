@@ -72,22 +72,134 @@ fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
     })
 }
 
-fn ligature_glyphs(face: &FontRef) -> std::collections::HashSet<u32> {
+const MAX_THAI_GSUB_WORK: usize = 1 << 19;
+
+enum LigRewrite<'a> {
+    Single(skrifa::raw::tables::gsub::SingleSubst<'a>),
+    Multiple(skrifa::raw::tables::gsub::MultipleSubstFormat1<'a>),
+    Alternate(skrifa::raw::tables::gsub::AlternateSubstFormat1<'a>),
+}
+
+fn push_lig_target(target: u32, work: &mut usize, ligatures: &mut std::collections::HashSet<u32>, queue: &mut Vec<u32>) -> Option<()> {
+    *work = work.saturating_add(1);
+    (*work <= MAX_THAI_GSUB_WORK).then_some(())?;
+    if ligatures.insert(target) {
+        queue.push(target);
+    }
+    Some(())
+}
+
+fn step_lig_rewrite(
+    rw: &LigRewrite<'_>,
+    gid: GlyphId,
+    work: &mut usize,
+    ligatures: &mut std::collections::HashSet<u32>,
+    queue: &mut Vec<u32>,
+) -> Option<()> {
+    use skrifa::raw::tables::gsub::SingleSubst;
+    *work = work.saturating_add(1);
+    (*work <= MAX_THAI_GSUB_WORK).then_some(())?;
+    match rw {
+        LigRewrite::Single(SingleSubst::Format1(s)) => {
+            if s.coverage().is_ok_and(|c| c.get(gid).is_some()) {
+                let target = u32::from((gid.to_u32() as i32 + i32::from(s.delta_glyph_id())) as u16);
+                push_lig_target(target, work, ligatures, queue)?;
+            }
+        }
+        LigRewrite::Single(SingleSubst::Format2(s)) => {
+            if let Ok(cov) = s.coverage()
+                && let Some(idx) = cov.get(gid)
+                && let Some(sub) = s.substitute_glyph_ids().get(usize::from(idx))
+            {
+                push_lig_target(sub.get().to_u32(), work, ligatures, queue)?;
+            }
+        }
+        LigRewrite::Multiple(s) => {
+            if let Ok(cov) = s.coverage()
+                && let Some(idx) = cov.get(gid)
+                && let Ok(seq) = s.sequences().get(usize::from(idx))
+            {
+                for sub in seq.substitute_glyph_ids() {
+                    push_lig_target(sub.get().to_u32(), work, ligatures, queue)?;
+                }
+            }
+        }
+        LigRewrite::Alternate(s) => {
+            if let Ok(cov) = s.coverage()
+                && let Some(idx) = cov.get(gid)
+                && let Ok(set) = s.alternate_sets().get(usize::from(idx))
+            {
+                for alt in set.alternate_glyph_ids() {
+                    push_lig_target(alt.get().to_u32(), work, ligatures, queue)?;
+                }
+            }
+        }
+    }
+    Some(())
+}
+
+/// Bounded GSUB walk collecting Type 4 (`Ligature`, including Type 7 wrappers) output glyphs and
+/// their transitive `Single`/`Multiple`/`Alternate` rewrites, which preserve `lig_id`/`lig_comp`
+/// inside HarfRust. Returns `None` if a present GSUB table fails to parse or hits
+/// [`MAX_THAI_GSUB_WORK`].
+fn ligature_glyphs(face: &FontRef) -> Option<std::collections::HashSet<u32>> {
     use skrifa::raw::tables::gsub::SubstitutionSubtables;
-    let Ok(gsub) = face.gsub() else { return Default::default() };
-    let Ok(list) = gsub.lookup_list() else { return Default::default() };
-    list.lookups()
-        .iter()
-        .flatten()
-        .filter_map(|l| match l.subtables() {
-            Ok(SubstitutionSubtables::Ligature(subs)) => Some(subs),
-            _ => None,
-        })
-        .flat_map(|subs| subs.iter().flatten())
-        .flat_map(|sub| sub.ligature_sets().iter().flatten())
-        .flat_map(|set| set.ligatures().iter().flatten())
-        .map(|lig| lig.ligature_glyph().to_u32())
-        .collect()
+    if face.table_data(skrifa::Tag::new(b"GSUB")).is_none() {
+        return Some(Default::default());
+    }
+    let gsub = face.gsub().ok()?;
+    let list = gsub.lookup_list().ok()?;
+    let mut work = 0usize;
+    let mut ligatures = std::collections::HashSet::new();
+    let mut rewrites = Vec::new();
+    for lookup in list.lookups().iter() {
+        work = work.saturating_add(1);
+        (work <= MAX_THAI_GSUB_WORK).then_some(())?;
+        let Ok(lookup) = lookup else { continue };
+        match lookup.subtables() {
+            Ok(SubstitutionSubtables::Ligature(subs)) => {
+                for sub in subs.iter().flatten() {
+                    work = work.saturating_add(1);
+                    (work <= MAX_THAI_GSUB_WORK).then_some(())?;
+                    for set in sub.ligature_sets().iter().flatten() {
+                        work = work.saturating_add(1);
+                        (work <= MAX_THAI_GSUB_WORK).then_some(())?;
+                        for lig in set.ligatures().iter().flatten() {
+                            work = work.saturating_add(1);
+                            (work <= MAX_THAI_GSUB_WORK).then_some(())?;
+                            ligatures.insert(lig.ligature_glyph().to_u32());
+                        }
+                    }
+                }
+            }
+            Ok(SubstitutionSubtables::Single(subs)) => {
+                for sub in subs.iter().flatten() {
+                    rewrites.push(LigRewrite::Single(sub));
+                }
+            }
+            Ok(SubstitutionSubtables::Multiple(subs)) => {
+                for sub in subs.iter().flatten() {
+                    rewrites.push(LigRewrite::Multiple(sub));
+                }
+            }
+            Ok(SubstitutionSubtables::Alternate(subs)) => {
+                for sub in subs.iter().flatten() {
+                    rewrites.push(LigRewrite::Alternate(sub));
+                }
+            }
+            _ => {}
+        }
+    }
+    if !ligatures.is_empty() && !rewrites.is_empty() {
+        let mut queue: Vec<u32> = ligatures.iter().copied().collect();
+        while let Some(gid) = queue.pop() {
+            let glyph = GlyphId::new(gid);
+            for rw in &rewrites {
+                step_lig_rewrite(rw, glyph, &mut work, &mut ligatures, &mut queue)?;
+            }
+        }
+    }
+    Some(ligatures)
 }
 
 struct MarkFilter<'a> {
@@ -98,14 +210,14 @@ struct MarkFilter<'a> {
 }
 
 impl<'a> MarkFilter<'a> {
-    fn new(face: &FontRef<'a>) -> Self {
+    fn new(face: &FontRef<'a>) -> Option<Self> {
         let gdef = face.gdef().ok();
-        Self {
+        Some(Self {
             classes: gdef.as_ref().and_then(|g| g.glyph_class_def().transpose().ok().flatten()),
             mark_classes: gdef.as_ref().and_then(|g| g.mark_attach_class_def().transpose().ok().flatten()),
             mark_sets: gdef.as_ref().and_then(|g| g.mark_glyph_sets_def().transpose().ok().flatten()),
-            ligatures: ligature_glyphs(face),
-        }
+            ligatures: ligature_glyphs(face)?,
+        })
     }
 
     fn is_gdef_mark(&self, gid: GlyphId, fallback_mark: bool) -> bool {
@@ -316,7 +428,7 @@ impl<'a> ThaiValidator<'a> {
                 _ => {}
             }
         }
-        Some(Self { filter: MarkFilter::new(face), selected, mkmk_slots, cache: std::collections::HashMap::new(), work: 0 })
+        Some(Self { filter: MarkFilter::new(face)?, selected, mkmk_slots, cache: std::collections::HashMap::new(), work: 0 })
     }
 
     fn charge(&mut self, units: usize) -> bool {
@@ -405,6 +517,34 @@ fn thai_cluster_marks(text: &str) -> usize {
     text.chars().filter(|&c| !default_ignorable(c) && (c == '\u{0e33}' || unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM)).count()
 }
 
+fn next_cluster(infos: &[harfrust::GlyphInfo], pos: &mut usize, rtl: bool) -> Option<(usize, usize)> {
+    if rtl {
+        let end = *pos;
+        if end == 0 {
+            return None;
+        }
+        let cid = infos[end - 1].cluster;
+        let mut start = end - 1;
+        while start > 0 && infos[start - 1].cluster == cid {
+            start -= 1;
+        }
+        *pos = start;
+        Some((start, end))
+    } else {
+        let start = *pos;
+        if start >= infos.len() {
+            return None;
+        }
+        let cid = infos[start].cluster;
+        let mut end = start + 1;
+        while end < infos.len() && infos[end].cluster == cid {
+            end += 1;
+        }
+        *pos = end;
+        Some((start, end))
+    }
+}
+
 /// Whether the GPOS places the marks of `run`, one bidi run shaped in its direction and script with
 /// `validator` (its `mark` and `mkmk` lookups for Thai): each Thai cluster must have as many
 /// placed glyphs as non-ignorable combining marks, Sara Am counting for its Nikhahit. Returns the
@@ -430,27 +570,27 @@ fn places_thai_marks(
     }
     let at = |p: &harfrust::GlyphPosition| (p.x_advance, p.y_advance, p.x_offset, p.y_offset);
     let (infos, on_pos, off_pos) = (with.glyph_infos(), with.glyph_positions(), without.glyph_positions());
-    let n = infos.len();
+    let rtl = direction == Direction::RightToLeft;
     let mut cluster = ThaiCluster { last_mark: vec![None; validator.mkmk_slots], ..Default::default() };
     let mut cur_start: Option<usize> = None;
     let mut validated_end = 0usize;
     let valid_slice = |start: usize, end: usize, placed: usize| run.get(start..end).is_some_and(|text| placed >= thai_cluster_marks(text));
-    for k in 0..n {
-        let idx = if direction == Direction::RightToLeft { n - 1 - k } else { k };
-        let (info, on, off) = (&infos[idx], &on_pos[idx], &off_pos[idx]);
-        let start = info.cluster as usize;
-        if let Some(prev) = cur_start
-            && start != prev
-        {
-            if start < prev || !valid_slice(validated_end, start, cluster.placed) {
+    let mut pos = if rtl { infos.len() } else { 0 };
+    while let Some((c_start, c_end)) = next_cluster(infos, &mut pos, rtl) {
+        let start = infos[c_start].cluster as usize;
+        if let Some(prev) = cur_start {
+            if start <= prev || !valid_slice(validated_end, start, cluster.placed) {
                 return None;
             }
             validated_end = start;
             cluster.reset();
         }
         cur_start = Some(start);
-        if !validator.step_glyph(&mut cluster, GlyphId::new(info.glyph_id), at(on) != at(off), on.x_advance == 0) {
-            return None;
+        for idx in c_start..c_end {
+            let (info, on, off) = (&infos[idx], &on_pos[idx], &off_pos[idx]);
+            if !validator.step_glyph(&mut cluster, GlyphId::new(info.glyph_id), at(on) != at(off), on.x_advance == 0) {
+                return None;
+            }
         }
     }
     let final_ok = match cur_start {
@@ -690,7 +830,7 @@ fn default_ignorable(c: char) -> bool {
             | 0x061c
             | 0x115f..=0x1160
             | 0x17b4..=0x17b5
-            | 0x180b..=0x180f
+            | 0x180b..=0x180e
             | 0x200b..=0x200f
             | 0x202a..=0x202e
             | 0x2060..=0x206f
