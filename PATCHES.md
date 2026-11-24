@@ -289,7 +289,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Signing a field that locks others (FieldMDP: `/Lock`, read-only and `/SV` reasons) is the
   fork's, in `crates/sign/src/pdf/field_lock.rs`. Validating a lock is upstream's #6757
   (`locks.rs`); the fork's own validation and its `locked form fields` kind were retired at the
-  `b192e36f` merge.
+  `b192e36f` merge. A form too large to compare whole now reads as Unknown (upstream's
+  `Locked::Unchecked`), not Invalid; it is still never Valid.
 - XFA's XML tree (`crates/xfa/src/xml.rs`, upstream's since it left roxmltree) keeps one copy of
   each element name and namespace (`intern`). With a copy for each element, merging a prototype
   with 20,000 children took 3.4 times the CPU time and failed

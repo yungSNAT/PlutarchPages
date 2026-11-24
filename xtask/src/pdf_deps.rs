@@ -16,8 +16,8 @@ const PACKAGES: &[(&str, &str)] = &[
     ("hayro-cmap", "0.1.0"),
 ];
 /// Fork: packages built from a patched local copy of craft-libs at [`SHARED_REV`] instead
-/// (`vendor/craft-pdf/PATCHES.md`, `vendor/README.md`). `cargo xtask fork-check` ties craft-pdf's
-/// copy to the revision the root `Cargo.toml` names.
+/// (`vendor/<name>/PATCHES.md`, whose `Base:` line must name [`SHARED_REV`]). `cargo xtask
+/// fork-check` also ties craft-pdf's copy to the revision the root `Cargo.toml` names.
 const VENDORED: &[&str] = &["craft-pdf", "hayro-interpret"];
 
 pub fn run(root: &Path) -> Result<(), String> {
@@ -31,7 +31,9 @@ pub fn run(root: &Path) -> Result<(), String> {
     }
     let metadata: Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("cargo metadata: {e}"))?;
     validate(root, &metadata)?;
-    println!("PDF reader: craft-pdf and Hayro packages pinned to {SHARED_REV} (craft-pdf and hayro-interpret as patched vendor copies); local lopdf inspector retained");
+    println!(
+        "PDF reader: craft-pdf and Hayro packages pinned to {SHARED_REV} (craft-pdf and hayro-interpret as patched vendor copies); local lopdf inspector retained"
+    );
     Ok(())
 }
 
@@ -49,7 +51,8 @@ fn validate(root: &Path, metadata: &Value) -> Result<(), String> {
         let package = one_package(name)?;
         let from_source = if VENDORED.contains(&name) {
             let manifest = root.join("vendor").join(name).join("Cargo.toml");
-            package.get("source") == Some(&Value::Null) && package.get("manifest_path").and_then(Value::as_str).map(Path::new) == Some(manifest.as_path())
+            package.get("source") == Some(&Value::Null)
+                && package.get("manifest_path").and_then(Value::as_str).map(Path::new) == Some(manifest.as_path())
         } else {
             package.get("source").and_then(Value::as_str) == Some(source.as_str())
         };
@@ -58,9 +61,10 @@ fn validate(root: &Path, metadata: &Value) -> Result<(), String> {
             return Err(format!("{name}: expected {version} from {from}; got {package}"));
         }
     }
-    let base = std::fs::read_to_string(root.join("vendor/craft-pdf/PATCHES.md")).map_err(|e| format!("vendor/craft-pdf/PATCHES.md: {e}"))?;
-    if !base.contains(&format!("Base: `{SHARED_REV}`")) {
-        return Err(format!("vendor/craft-pdf/PATCHES.md: expected base {SHARED_REV}"));
+    for name in VENDORED {
+        let path = format!("vendor/{name}/PATCHES.md");
+        let text = std::fs::read_to_string(root.join(&path)).map_err(|e| format!("{path}: {e}"))?;
+        vendored_base(&path, &text)?;
     }
     let inspector = one_package("lopdf")?;
     let manifest = root.join("vendor/lopdf/Cargo.toml");
@@ -80,6 +84,16 @@ fn validate(root: &Path, metadata: &Value) -> Result<(), String> {
         return Err(format!("craft-pdf: expected reader features {expected:?}; got {features:?}"));
     }
     Ok(())
+}
+
+/// A vendored copy's `PATCHES.md` names the craft-libs commit it was copied from on its `Base:`
+/// line; a copy left at an older base after a [`SHARED_REV`] bump would build stale code.
+fn vendored_base(path: &str, text: &str) -> Result<(), String> {
+    if text.lines().any(|l| l.trim() == format!("Base: `{SHARED_REV}`") || l.starts_with(&format!("Base: `{SHARED_REV}` "))) {
+        Ok(())
+    } else {
+        Err(format!("{path}: expected base {SHARED_REV}"))
+    }
 }
 
 #[cfg(test)]

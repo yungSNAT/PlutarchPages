@@ -25,8 +25,7 @@ on:
       - 'crates/prc-render/fuzz/**'
       - 'crates/xfa/**'
       - 'vendor/craft-pdf/**'
-      - 'vendor/hayro-jbig2/**'
-      - 'vendor/hayro-syntax/**'
+      - 'vendor/hayro-interpret/**'
 
 # The token is only used to check out the code: no job writes to the repository.
 permissions:

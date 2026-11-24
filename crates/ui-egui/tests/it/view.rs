@@ -2107,7 +2107,7 @@ fn buttons_take_presses_as_the_scripts_show_them() {
     assert_eq!(pressed(&mut h).as_deref(), Some("shown"));
     // Do not let a still-busy first click reject the second and conceal a hit-test bug.
     press_field(&mut h, "gone");
-    assert_eq!(pressed(&mut h).as_deref(), Some("shown"));
+    assert_eq!(pressed(&mut h).as_deref(), Some("shown"), "the hidden button took no press");
 }
 
 /// A radio group's read-only button can't be chosen by a click, while the group's other button
