@@ -158,8 +158,11 @@ fn outline_len(doc: &Document, first: Option<&Object>) -> usize {
     let (mut seen, mut counted, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
     let mut stack: Vec<(Object, usize)> = first.cloned().into_iter().map(|o| (o, 0)).collect();
     while let Some((o, direct_depth)) = stack.pop() {
-        if counted >= OUTLINE_ITEM_BUDGET {
-            break;
+        if counted >= OUTLINE_ITEM_BUDGET || direct_depth > MAX_DIRECT_DEPTH {
+            if counted >= OUTLINE_ITEM_BUDGET {
+                break;
+            }
+            continue;
         }
         let next_depth = match &o {
             Object::Ref(r) => {
@@ -168,7 +171,6 @@ fn outline_len(doc: &Document, first: Option<&Object>) -> usize {
                 }
                 0
             }
-            _ if direct_depth > MAX_DIRECT_DEPTH => continue,
             _ => direct_depth + 1,
         };
         let Some(d) = doc.resolve(&o).as_dict().cloned() else { continue };
@@ -414,6 +416,10 @@ fn find_owned(o: &Object, role: Held, keys: &[&[u8]], held: &mut [usize], next: 
     Ok(found)
 }
 
+fn is_owner_container(v: &Object) -> bool {
+    matches!(v, Object::Array(_) | Object::Dict(_) | Object::Stream(_))
+}
+
 /// Removes `keys` from `o` and from what it holds in place, outside name maps. [`owners`] has
 /// already refused anything nested past the depth limit.
 fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
@@ -432,14 +438,13 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
         depth: usize,
         stream: Option<Stream>,
     }
-    let container = |v: &Object| matches!(v, Object::Array(_) | Object::Dict(_) | Object::Stream(_));
     let open_dict = |mut d: Dict, r: Held| -> Node {
         if r != Held::Map {
             for k in keys {
                 d.remove(k);
             }
         }
-        let children = d.iter().filter(|(_, v)| container(v)).map(|(k, _)| k.clone()).collect();
+        let children = d.iter().filter(|(_, v)| is_owner_container(v)).map(|(k, _)| k.clone()).collect();
         Node::Dict { d, children, role: r }
     };
     let open = |obj: Object, parent: Option<Parent>, role: Held, depth: usize| -> Option<Frame> {
@@ -451,7 +456,7 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
         };
         Some(Frame { parent, node, idx: 0, depth, stream })
     };
-    if !container(o) {
+    if !is_owner_container(o) {
         return;
     }
     let Some(first) = open(std::mem::replace(o, Object::Null), None, role, 0) else { return };
@@ -461,13 +466,13 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
             .then(|| match &mut top.node {
                 Node::Array(a) => (top.idx..a.len()).find_map(|i| {
                     top.idx = i + 1;
-                    container(&a[i]).then(|| (std::mem::replace(&mut a[i], Object::Null), Parent::Index(i), Held::Owner))
+                    is_owner_container(&a[i]).then(|| (std::mem::replace(&mut a[i], Object::Null), Parent::Index(i), Held::Owner))
                 }),
                 Node::Dict { d, children, role } => (top.idx..children.len()).find_map(|i| {
                     top.idx = i + 1;
                     let k = children[i].clone();
                     let cr = role.child(&k);
-                    d.get_mut(&k).filter(|v| container(v)).map(|v| (std::mem::replace(v, Object::Null), Parent::Key(k), cr))
+                    d.get_mut(&k).filter(|v| is_owner_container(v)).map(|v| (std::mem::replace(v, Object::Null), Parent::Key(k), cr))
                 }),
             })
             .flatten();
@@ -538,7 +543,7 @@ fn collect_owned(o: &Object, role: Held, key: &[u8], found: &mut dyn FnMut(bool,
             found(depth == 0, v);
         }
         for (k, v) in d.iter() {
-            if matches!(v, Object::Array(_) | Object::Dict(_)) {
+            if is_owner_container(v) {
                 stack.push((v, role.child(k), depth + 1));
             }
         }
