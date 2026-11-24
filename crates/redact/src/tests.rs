@@ -6650,11 +6650,8 @@ fn outline_items_nested_in_place_as_deep_as_a_file_reads_are_cleaned() {
     use crate::sanitize::{Hidden, remove_hidden};
     // The outline root's item is a dictionary inside the object, so 126 items nest 126 levels.
     let levels = 125;
-    let item = format!(
-        "{}<< /Title (z) /A << /S /JavaScript /JS (LEAK_OUTLINE) >> >>{}",
-        "<< /Title (a) /First ".repeat(levels),
-        " >>".repeat(levels)
-    );
+    let item =
+        format!("{}<< /Title (z) /A << /S /JavaScript /JS (LEAK_OUTLINE) >> >>{}", "<< /Title (a) /First ".repeat(levels), " >>".repeat(levels));
     let bytes = std::thread::Builder::new()
         .stack_size(1 << 20)
         .spawn(move || {

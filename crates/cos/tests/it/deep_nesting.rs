@@ -40,11 +40,8 @@ fn on_a_small_stack(f: impl FnOnce() + Send + 'static) {
 #[test]
 fn a_deeply_nested_object_is_read_saved_and_read_back_on_a_small_stack() {
     on_a_small_stack(|| {
-        let bytes = Pdf::new()
-            .obj("<< /Type /Catalog /Pages 2 0 R /Deep 3 0 R >>")
-            .obj("<< /Type /Pages /Kids [] /Count 0 >>")
-            .obj(nested(126))
-            .build();
+        let bytes =
+            Pdf::new().obj("<< /Type /Catalog /Pages 2 0 R /Deep 3 0 R >>").obj("<< /Type /Pages /Kids [] /Count 0 >>").obj(nested(126)).build();
         let doc = Document::open(Arc::new(bytes)).unwrap();
         let deep = ObjRef::new(3, 0);
         assert_eq!(bottom(&doc.get(deep)), Some(&b"deep"[..]), "the parser reads it");
