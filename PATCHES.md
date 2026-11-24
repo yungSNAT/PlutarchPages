@@ -55,8 +55,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   words part of a run (`Search::whole`, linear in what it searches). Told when applying, never
   refused: a form's own wording (field names, tooltips, choice options, the XFA template),
   name-tree names, single words, a run joined to other letters, attachment data that isn't text
-  and objects past the sweep's first 4,000,000. Not searched at all: page content (the redaction's own check), appearance streams, form
-  XObjects, images and marked content. The engine holds each apply's removed text with its undo
+  and objects past the sweep's first 4,000,000. Not searched at all: page content (the
+  redaction's own check), appearance streams, form XObjects, images and marked content. The engine holds each apply's removed text with its undo
   step until a save (`Editor::held`). Code in `crates/redact/src/elsewhere.rs` and `metadata.rs`
   and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
