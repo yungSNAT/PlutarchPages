@@ -414,9 +414,6 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     if text.len() > 262_144 {
         return false;
     }
-    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
-    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
-    let own_map = own.charmap();
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
     let mark = |c: char| matches!(u32::from(c), 0x0610..=0x061a | 0x064b..=0x065f | 0x0670 | 0x06d6..=0x06dc | 0x06df..=0x06e4 | 0x06e7..=0x06e8 | 0x06ea..=0x06ed | 0x08ca..=0x08ff);
     let letter = |c: char| {
@@ -436,28 +433,48 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
             on_letter = letter(c);
         }
     }
+    let gpos_lookups = own.gpos().ok().and_then(|t| t.lookup_list().ok()).map_or(0, |l| l.lookups().len());
+    let gsub_lookups = own.gsub().ok().and_then(|t| t.lookup_list().ok()).map_or(0, |l| l.lookups().len());
+    let total_lookups = gpos_lookups.saturating_add(gsub_lookups);
+    if total_lookups > 1 << 12 || total_lookups.max(1).saturating_mul(text.len()) > 1 << 27 {
+        return false;
+    }
+    // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
+    let run_marks: Vec<(&str, Vec<(usize, char)>)> =
+        text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).map(|run| (run, stacked_marks(run))).collect();
+    let mark_gpos_lookups = if run_marks.iter().any(|(_, marks)| !marks.is_empty()) {
+        let Some(n) = mark_lookups_attach_only(&own) else { return false };
+        n
+    } else {
+        0
+    };
+    let scale = mark_gpos_lookups.max(1);
+    // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
+    // the text and scaled by reachable mark/mkmk lookups, is bounded before any shaping begins.
+    if run_marks
+        .iter()
+        .map(|(run, marks)| {
+            let base = marks.len().saturating_mul(run.len());
+            (base, scale.saturating_mul(base))
+        })
+        .try_fold((0usize, 0usize), |(a, b), (x, y)| Some((a.checked_add(x).filter(|&n| n <= 1 << 20)?, b.checked_add(y).filter(|&n| n <= 1 << 24)?)))
+        .is_none()
+    {
+        return false;
+    }
+    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
+    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
+    let own_map = own.charmap();
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
     }
     let space = |face: &FontRef| face.charmap().map(' ').map(|g| g.to_u32());
     let (own_space, reference_space) = (space(&own), space(&reference));
-    // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
-    let runs = || text.split(|c: char| !joins(c)).filter(|run| !run.is_empty());
-    // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
-    // the text, is bounded; past it the text is refused, which only costs the page's font.
-    if runs()
-        .map(|run| stacked_marks(run).len().saturating_mul(run.len()))
-        .try_fold(0usize, |acc, w| acc.checked_add(w).filter(|&n| n <= 1 << 20))
-        .is_none()
-    {
-        return false;
-    }
-    let mut pure_marks = None;
-    runs().all(|run| {
+    run_marks.into_iter().all(|(run, marks)| {
         if !places_marks(&own_shaper, own_space, run)
             || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
-            || !follows_like(&own, &mut pure_marks, &own_shaper, &reference_shaper, run)
+            || !follows_like(&own_shaper, &reference_shaper, run, &marks)
         {
             return false;
         }
@@ -927,26 +944,27 @@ fn check_chain_context(
     }
 }
 
-/// Whether `face`'s `arab` (or fallback) GPOS `mark` and `mkmk` lookups contain only mark
-/// attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them, so clearing
-/// `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment chain.
-fn mark_lookups_attach_only(face: &FontRef) -> bool {
+/// Unique reachable `arab` (or fallback) GPOS `mark` and `mkmk` lookup count if they contain
+/// only mark attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them,
+/// so clearing `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment
+/// chain; `None` on non-attachment lookups, non-zero contextual targets or budget exhaustion.
+fn mark_lookups_attach_only(face: &FontRef) -> Option<usize> {
     use skrifa::raw::tables::gpos::PositionSubtables;
-    let Ok(gpos) = face.gpos() else { return false };
-    let Ok(list) = gpos.lookup_list() else { return false };
+    let gpos = face.gpos().ok()?;
+    let list = gpos.lookup_list().ok()?;
     let (mut seen, mut todo, mut work) = (std::collections::BTreeSet::new(), Vec::new(), 0usize);
     let collected = visit_mark_features(&gpos, b"arab", |feature| {
         let Ok(f) = feature else { return false };
         push_feature_lookups(f.lookup_list_indices(), &mut todo, &mut seen, &mut work)
     });
     if !collected || todo.is_empty() {
-        return false;
+        return None;
     }
     while let Some(idx) = todo.pop() {
         if !charge_arabic_gpos(&mut work) {
-            return false;
+            return None;
         }
-        let Ok(lookup) = list.lookups().get(usize::from(idx)) else { return false };
+        let lookup = list.lookups().get(usize::from(idx)).ok()?;
         let ok = match lookup.subtables() {
             Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => true,
             Ok(PositionSubtables::Contextual(subs)) => {
@@ -958,10 +976,10 @@ fn mark_lookups_attach_only(face: &FontRef) -> bool {
             _ => false,
         };
         if !ok {
-            return false;
+            return None;
         }
     }
-    true
+    Some(seen.len())
 }
 
 /// Whether each mark of `run` that `reference` attaches to an earlier mark, `own` attaches to that
@@ -971,17 +989,13 @@ fn mark_lookups_attach_only(face: &FontRef) -> bool {
 /// `mkmk`, which moves it; every pair that follows in the reference must follow in `own`. A pair
 /// only `own` has (a mark put on one the reference doesn't stack it on) is accepted, as
 /// [`stacks_marks`] accepts more stacked marks: a subset keeps its face's attachments. Only a
-/// mark beside another can have one follow it ([`stacked_marks`]); a run with none is not shaped
-/// again.
-fn follows_like(own_face: &FontRef, pure_marks: &mut Option<bool>, own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
-    let marks = stacked_marks(run);
+/// mark beside another can have one follow it (`marks` precomputed once per run); a run with none
+/// is not shaped again.
+fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> bool {
     if marks.is_empty() {
         return true;
     }
-    if !*pure_marks.get_or_insert_with(|| mark_lookups_attach_only(own_face)) {
-        return false;
-    }
-    match (followers(own, run, &marks), followers(reference, run, &marks)) {
+    match (followers(own, run, marks), followers(reference, run, marks)) {
         (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
         _ => false,
     }
@@ -1030,6 +1044,14 @@ fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> O
         let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
         let moved = placed(&off)?;
         if moved.iter().map(|g| (g.1, g.3)).ne(unchanged.iter().map(|g| (g.1, g.3))) {
+            return None;
+        }
+        // Fail closed if turning off mark/mkmk for the perturbed mark did not displace its own
+        // glyph(s); marks merged into an earlier GSUB ligature keep no cluster here and are checked
+        // under that ligature's cluster instead.
+        let (has_own, self_moved) =
+            unchanged.iter().zip(&moved).filter(|(a, _)| a.0 as usize == at).fold((false, false), |(_, m), (a, b)| (true, m || a.2 != b.2));
+        if has_own && !self_moved {
             return None;
         }
         pairs.extend(unchanged.iter().zip(&moved).filter(|(a, b)| a.0 as usize != at && a.2 != b.2).map(|(a, _)| (at, a.0 as usize)));
