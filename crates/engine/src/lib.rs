@@ -51,6 +51,7 @@ pub mod print_raster;
 mod print_source;
 pub mod printcheck;
 mod protection;
+mod rename;
 mod rich_copy;
 pub mod scan_clean;
 mod scan_colours;
@@ -177,6 +178,7 @@ use pictures::{embed_image, fit_picture, mark_source, model_poster};
 pub use print_source::{PrintSource, Printed};
 use protection::unrestricted;
 pub use protection::{Changes, Printing, Protection, SecuritySummary};
+pub use rename::{RenameError, new_file_name, rename_target};
 pub use session::Session;
 pub use sources::{CombineSource, Combined, combine_source_check, source_page_count};
 use sources::{open_source, open_source_with};
@@ -235,7 +237,7 @@ pub fn conversion_notes_email(r: &pdfcraft_create::EmailReport) -> Vec<String> {
 /// The configuration of the pool that draws the viewer: the document's own, plus installed CJK
 /// fonts for fonts a PDF does not embed (`pdfcraft_render::RenderConfig::system_fonts`). Exports,
 /// printing, OCR and automation use the document configuration itself, so nothing drawn with an
-/// installed font is saved or printed (AGENTS.md §1.2, §1.4).
+/// installed font is saved or printed (licences.md; docs/development.md "Fonts and attribution").
 fn display_config(config: &pdfcraft_render::RenderConfig) -> pdfcraft_render::RenderConfig {
     config.clone().on_screen()
 }

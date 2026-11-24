@@ -1,6 +1,6 @@
 # craft-pdf, vendored
 
-Base: `8e03cd016d42032b867fef6bad86bc69bf2c1920` (storytold/craft-libs `crates/pdf`, MIT OR Apache-2.0).
+Base: `9eb02be84f21898e247daeb2af5827c9fe85a3a0` (storytold/craft-libs `crates/pdf`, MIT OR Apache-2.0).
 
 Upstream PdfCraft moved its object layer (`pdfcraft-cos`, `-crypt`, `-filters` and `-content`)
 into craft-pdf, and those 4 crates became one-line facades over it. This fork had fixed that code
@@ -24,12 +24,15 @@ building this copy after a revision bump.
 | A crypt filter named by a reference that can't be read is never `/Identity`, and a stream is never saved in the clear through a filter `/CF` doesn't hold (#63, #66, `4af80e92`, `68391f05`) | `src/cos/security.rs`, `src/cos/document/open.rs`, `src/cos/document/tests.rs` | `crates/cos/tests/it/encryption.rs` |
 | `Document::try_resolve` keeps the error of a reference that can't be loaded, for the redaction audit (#76, `0e676540`) | `src/cos/document/objects.rs` | `crates/audit` tests |
 | The weak-hash lines carry `NOSONAR` (#58) | `src/crypt.rs` | `cargo xtask fork-check` |
-| Failed operands are read again a bounded number of times (#128, `f74779bb`) | `src/cos/content.rs` | `cos::content::tests::unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times` |
+| Failed operands are read again a bounded number of times (#128, `f74779bb`): a backstop beside the base's depth limit, which bounds nested brackets only | `src/cos/content.rs` | `cos::content::tests::unclosed_dictionaries_and_arrays_are_read_a_bounded_number_of_times` |
 | A written inline image ends where it was read, as the renderer reads it (#134, `9ab4f813`) | `src/cos/content.rs` | the `cos::content::tests` inline-image cases |
 | An operator keyword holding `EI` is not written, so it can't end an inline image written before it (#198) | `src/cos/content.rs` | `cos::content::tests::an_operator_keyword_holding_ei_is_not_written` |
 | `Document::scan_objects_where` judges an encrypted file's objects as stored and decrypts only those it keeps, so the signature list's search for document timestamps no longer decrypts the whole file (#160) | `src/cos/document/objects.rs`, `src/cos/document/tests.rs` | `cos::document::tests::a_refused_object_is_not_loaded_through_its_own_length`; `crates/cos/tests/it/encryption.rs`; `crates/sign` `discovery_does_not_decrypt_what_it_refuses` |
 
-Upstream security commits the fork took early (#67) are in the base already. RC4 stays craft-pdf's
+Upstream security commits the fork took early (#67) are in the base already. At base `9eb02be8` the
+base's `/CFM` reading (an unknown method is `Unsupported`, not `/Identity`) and its `/V 4` key
+length (`v4_length_bits`) replaced the fork's own; the fork's error on a crypt filter or selector
+given by a reference that can't be read stays. RC4 stays craft-pdf's
 own: the fork's RustCrypto `rc4` (#37) was listed under 'Fixed differently upstream' in the root
 `PATCHES.md`, and its property test against the replaced code still runs
 (`crates/crypt/tests/it/proptests.rs`).

@@ -68,7 +68,7 @@ fn r(num: u32, generation: u16) -> ObjRef {
 }
 
 fn assert_refused(doc: &Document, old: Document, p: u8) {
-    let verdict = classify_changes(doc, Some(old), Some(p), None);
+    let verdict = classify_changes(doc, Some(old), Some(p));
     assert!(matches!(verdict, Modification::Disallowed(_)), "P={p}: main returns {verdict:?}");
 }
 
@@ -210,7 +210,7 @@ fn hidden_shared_alias_form_fill() {
 }
 
 fn verdict(doc: &Document, old: Document, p: Option<u8>) -> Modification {
-    classify_changes(doc, Some(old), p, None)
+    classify_changes(doc, Some(old), p)
 }
 
 /// A widget whose /Annots entry is rewritten to a generation its slot never had no longer
