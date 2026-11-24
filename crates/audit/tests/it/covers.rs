@@ -359,8 +359,7 @@ fn a_squares_appearance_is_painted_instead_of_its_interior_colour() {
 /// user space, set with `w` or an ExtGState's `/LW`. A path filled and stroked (`B`, `B*`, `b`,
 /// `b*`) is stroked over its fill, so its stroke hides the text whatever the fill's colour. A
 /// dashed one, a thin one through the text, and one drawn before the text hide nothing. A stroke
-/// leaves what lies under the text unread, so a translucent one is judged by its colour against
-/// the text's.
+/// read as a band is judged as a fill is: a translucent one against what lies under the text.
 #[test]
 fn a_stroke_over_text_hides_it() {
     let resources = "<< /Font << /F1 5 0 R >> /ExtGState << /Clear << /ca 0 >> /PenHalf << /CA 0.5 >> /Thick << /LW 33 >> \
@@ -380,7 +379,9 @@ fn a_stroke_over_text_hides_it() {
         (format!("q /Mult gs 0 0 0 1 K 33 w {pen} Q"), true),
         (format!("q /Mult gs /DeviceGray CS 1 SC 33 w {pen} Q"), false),
         (format!("q /Mult gs 1 G /DeviceGray CS 33 w {pen} Q"), true),
-        (format!("q /PenHalf gs 0 G 33 w {pen} Q"), true),
+        // A half-transparent black pen over black text leaves it readable against the grey it
+        // lays, as a half-transparent black fill does.
+        (format!("q /PenHalf gs 0 G 33 w {pen} Q"), false),
         (format!("q /PenHalf gs 1 1 0 RG 33 w {pen} Q"), false),
         (format!("0 G 33 w [4 4] 0 d {pen}"), false),
         (format!("/Dash gs 0 G 33 w {pen}"), false),

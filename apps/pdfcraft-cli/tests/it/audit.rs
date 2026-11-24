@@ -3,6 +3,8 @@
 
 use std::process::Command;
 
+mod fork_tests;
+
 const BIN: &str = env!("CARGO_BIN_EXE_pdfcraft-cli");
 
 /// Two US Letter pages with the same content. The second page is turned a quarter. `catalog` and

@@ -28,6 +28,8 @@ base64 = "0.23"
 [dev-dependencies]
 # Decodes `render` output in tests/it/owner_password.rs.
 craft-image-codecs = { workspace = true }
+# A private scratch folder for the fork's audit test (tests/it/audit/fork_tests.rs).
+tempfile = "3.27"
 
 [target.'cfg(unix)'.dependencies]
 # `geteuid` for `ui`'s control-file owner check: safe, so no `unsafe` libc call here.

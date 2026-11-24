@@ -54,10 +54,11 @@ fn form(resources: &str, content: &str) -> Vec<u8> {
     stream_obj(&format!("/Type /XObject /Subtype /Form /BBox [0 0 612 792] /Resources {resources}"), content)
 }
 
-/// The covered text of each finding, which must all be covered-text findings.
+/// The covered text of each finding, which must all be covered-text findings (hidden-under-white
+/// ones for a white cover).
 fn covered(doc: &Document) -> Vec<String> {
     let findings = audit_redactions(doc).expect("audit must run");
-    assert!(findings.iter().all(|f| f.kind == FindingKind::CoveredText), "{findings:?}");
+    assert!(findings.iter().all(|f| matches!(f.kind, FindingKind::CoveredText | FindingKind::HiddenUnderWhite)), "{findings:?}");
     findings.into_iter().map(|f| f.covered_text).collect()
 }
 
