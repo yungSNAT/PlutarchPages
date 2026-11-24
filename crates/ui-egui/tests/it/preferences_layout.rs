@@ -93,9 +93,9 @@ fn the_dialog_opens_at_its_full_size_and_does_not_grow_afterwards() {
 
 #[test]
 fn a_very_tall_window_does_not_leave_a_blank_gap_above_ok() {
-    // The settings are some 1 400 pt tall; in a taller window the scroll area is not stretched
-    // past them. Fork: with its external converters card and upstream's full screen switches they
-    // run past 2 600 pt, so the window is 3 200 pt.
+    // In a window taller than the settings, the scroll area is not stretched past them. Fork: with
+    // its external converters card and upstream's full screen switches they run past 2 600 pt, so
+    // the window is 3 200 pt.
     let mut h = harness(3200.0);
     h.run_steps(6);
     let ok = h.get_by_label("OK").rect();
