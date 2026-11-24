@@ -481,7 +481,7 @@ fn lam_alef(face: &pdfcraft_fonts::CraftFont) -> [u32; 2] {
 }
 
 /// The glyph `program`'s Unicode BMP (format 4) cmap gives `c`.
-fn nominal(program: &[u8], c: char) -> u16 {
+pub(crate) fn nominal(program: &[u8], c: char) -> u16 {
     let cmap = tables(program)[b"cmap"];
     let record = (0..be16(cmap, 2)).map(|i| 4 + 8 * i).find(|&r| matches!((be16(cmap, r), be16(cmap, r + 2)), (3, 1) | (0, 3))).unwrap();
     let t = &cmap[be32(cmap, record + 4)..];
