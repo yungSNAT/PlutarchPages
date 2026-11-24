@@ -992,6 +992,80 @@ fn a_mark_outside_an_arabic_letters_run_is_refused() {
     assert!(joins_arabic(face.bytes, face.bytes, "لَا رَيْبَ\u{06e2} فِيهِ"));
 }
 
+/// A combining mark after ZWJ (`U+200D`) is not positioned by the bundled face's GPOS (`on == off`
+/// offsets), so `joins_arabic` refusing `"ب\u{200d}\u{064e}"` is intentional fail-closed behaviour
+/// whilst `"ب\u{064e}\u{200d}"` (mark before ZWJ) passes.
+#[test]
+fn arabic_mark_after_zwj_is_unpositioned_and_refused() {
+    use pdfcraft_fonts::source_shaping::{joins_arabic, shape};
+    let Some(face) = arabic_face() else { return };
+    assert!(joins_arabic(face.bytes, face.bytes, "ب\u{064e}"));
+    assert!(joins_arabic(face.bytes, face.bytes, "ب\u{064e}\u{200d}"));
+    assert!(!joins_arabic(face.bytes, face.bytes, "ب\u{200d}\u{064e}"));
+    let shaped = shape(face.bytes, "ب\u{200d}\u{064e}").unwrap();
+    let fatha = nominal(face.bytes, '\u{064e}');
+    let placed = shaped.glyphs.iter().find(|g| g.id.to_u32() == u32::from(fatha)).unwrap();
+    assert_eq!(placed.position, [0.0, 0.0], "bundled face leaves fatha after ZWJ unpositioned: {placed:?}");
+}
+
+/// Appends a `PairPos` (`mark`) lookup adjusting `second`'s `x_offset` when preceded by `first`.
+fn add_mark_pair_pos(gpos: &[u8], first: u16, second: u16) -> Vec<u8> {
+    let (script_off, feat_off, look_off) = (be16(gpos, 4), be16(gpos, 6), be16(gpos, 8));
+    let lcount = be16(gpos, look_off);
+    let insert_at = look_off + 2 + 2 * lcount;
+    let mut out = Vec::with_capacity(gpos.len() + 128);
+    out.extend_from_slice(&gpos[..insert_at]);
+    out.extend_from_slice(&[0, 0]);
+    out.extend_from_slice(&gpos[insert_at..]);
+    let write16 = |buf: &mut [u8], at: usize, val: usize| buf[at..at + 2].copy_from_slice(&u16::try_from(val).unwrap().to_be_bytes());
+    write16(&mut out, look_off, lcount + 1);
+    if script_off >= insert_at {
+        write16(&mut out, 4, script_off + 2);
+    }
+    if feat_off >= insert_at {
+        write16(&mut out, 6, feat_off + 2);
+    }
+    for i in 0..lcount {
+        let off = be16(&out, look_off + 2 + 2 * i);
+        if look_off + off >= insert_at {
+            write16(&mut out, look_off + 2 + 2 * i, off + 2);
+        }
+    }
+    let new_lookup_abs = out.len();
+    write16(&mut out, look_off + 2 + 2 * lcount, new_lookup_abs - look_off);
+    for w in [2u16, 0, 1, 8, 1, 12, 0, 1, 1, 18, 1, 1, first, 1, second, 1] {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    let feat_base = be16(&out, 6);
+    for i in 0..be16(&out, feat_base) {
+        let rec = feat_base + 2 + 6 * i;
+        if &out[rec..rec + 4] == b"mark" {
+            let old_f = feat_base + be16(&out, rec + 4);
+            let n = be16(&out, old_f + 2);
+            let new_f_abs = out.len();
+            out.extend_from_within(old_f..old_f + 2);
+            out.extend_from_slice(&u16::try_from(n + 1).unwrap().to_be_bytes());
+            out.extend_from_within(old_f + 4..old_f + 4 + 2 * n);
+            out.extend_from_slice(&u16::try_from(lcount).unwrap().to_be_bytes());
+            write16(&mut out, rec + 4, new_f_abs - feat_base);
+        }
+    }
+    out
+}
+
+/// An altered GPOS program that re-attaches `sukun` onto `shadda` instead of `fatha` while
+/// spoofing a `(fatha, sukun)` positional dependency through a `PairPos` lookup in `mark` must be
+/// refused by `joins_arabic`.
+#[test]
+fn a_page_font_that_spoofs_stacked_mark_dependency_via_pair_pos_is_refused() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let (fatha, shadda, sukun) = (nominal(face.bytes, '\u{064e}'), nominal(face.bytes, '\u{0651}'), nominal(face.bytes, '\u{0652}'));
+    let wrong_parent = sukun_on_shadda(face.bytes, shadda, sukun);
+    let spoofed = with_table(&wrong_parent, b"GPOS", add_mark_pair_pos(tables(&wrong_parent)[b"GPOS"], fatha, sukun));
+    assert!(!joins_arabic(&spoofed, face.bytes, STACKED));
+}
+
 /// Each stacked mark shapes its word again, so their work over the whole text is bounded: 8 words
 /// of beh and 2,047 fathas each are refused at once, not judged for a minute.
 #[test]
@@ -1021,6 +1095,9 @@ fn wide_advances_on_a_long_arabic_run_do_not_overflow_advance() {
     let wide = with_table(face.bytes, b"hmtx", hmtx);
     let text = format!("{}ب\u{064e}\u{0651}", "\u{060c}".repeat(35_000));
     assert!(joins_arabic(&wide, face.bytes, &text));
+    let (unplaced, emptied) = without_lookups(tables(face.bytes)[b"GPOS"], &[b"mark", b"mkmk"]);
+    assert!(emptied > 0);
+    assert!(!joins_arabic(&with_table(&wide, b"GPOS", unplaced), face.bytes, &text));
 }
 
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
