@@ -932,13 +932,15 @@ fn quad_boxes(doc: &Document, dict: &Dict) -> Option<Vec<[f64; 4]>> {
     let quads = dict.get(b"QuadPoints").map(|q| doc.resolve(q))?;
     let numbers = quads.as_array().filter(|q| !q.is_empty() && q.len() % 8 == 0)?;
     let numbers: Vec<f64> = numbers.iter().map(|o| doc.resolve(o).as_f64().filter(|v| v.is_finite())).collect::<Option<_>>()?;
-    numbers
-        .chunks_exact(8)
-        .map(|q| {
-            let [x0, y0, x1, y1, x2, y2, x3, y3] = <[f64; 8]>::try_from(q).ok()?;
-            Some([x0.min(x1).min(x2).min(x3), y0.min(y1).min(y2).min(y3), x0.max(x1).max(x2).max(x3), y0.max(y1).max(y2).max(y3)])
-        })
-        .collect()
+    let (quads, _) = numbers.as_chunks::<8>();
+    Some(
+        quads
+            .iter()
+            .map(|&[x0, y0, x1, y1, x2, y2, x3, y3]| {
+                [x0.min(x1).min(x2).min(x3), y0.min(y1).min(y2).min(y3), x0.max(x1).max(x2).max(x3), y0.max(y1).max(y2).max(y3)]
+            })
+            .collect(),
+    )
 }
 
 fn annotation_color(doc: &Document, dict: &Dict, key: &[u8]) -> Option<[f64; 3]> {
