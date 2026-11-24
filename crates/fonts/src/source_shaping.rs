@@ -59,7 +59,8 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// in glyphs other than those it draws the letter and its marks with alone (a joining form or
 /// part of a ligature), the program's must too, each face judged against its own isolated form;
 /// and its GPOS must place every glyph that sits on another ([`places_marks`]) and stack marks
-/// wherever the reference does ([`stacks_marks`]); every combining mark of `text` must follow an
+/// wherever the reference does ([`stacks_marks`]), on the marks the reference puts them on
+/// ([`follows_like`]); every combining mark of `text` must follow an
 /// Arabic letter in its joining run, where those checks reach it. A cmap that maps
 /// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
 /// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
@@ -102,7 +103,10 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let (own_space, reference_space) = (space(&own), space(&reference));
     // Any other character ends a run of joining, so each run of Arabic shapes alone as in place.
     text.split(|c: char| !joins(c)).filter(|run| !run.is_empty()).all(|run| {
-        if !places_marks(&own_shaper, own_space, run) || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run) {
+        if !places_marks(&own_shaper, own_space, run)
+            || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
+            || !follows_like(&own_shaper, &reference_shaper, run)
+        {
             return false;
         }
         let (ours, theirs) = (rtl_clusters(&own_shaper, run), rtl_clusters(&reference_shaper, run));
@@ -168,6 +172,66 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
         }
         _ => false,
     }
+}
+
+/// Whether each mark of `run` that `reference` attaches to an earlier mark, `own` attaches to that
+/// mark too. [`stacks_marks`] shows that `mkmk` moves each stacked mark, not what it puts it on:
+/// a lookup whose flags skip the middle of 3 marks puts the third on the first, through the
+/// second. A mark follows another if its glyphs move when the other alone loses `mark` and
+/// `mkmk`, which moves it; every pair that follows in the reference must follow in `own`. Only a
+/// mark beside another can have one follow it. Each such mark shapes the run again, so a
+/// run (a word) over 4 KiB is refused, which only costs the page's font.
+fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
+    if run.len() > 4096 {
+        return false;
+    }
+    match (followers(own, run), followers(reference, run)) {
+        (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
+        _ => false,
+    }
+}
+
+/// The pairs (a mark's byte offset in `run`, that of a character whose glyphs move when the mark
+/// alone loses `mark` and `mkmk`), shaped right to left a character to a cluster. `None` if that
+/// changes the glyphs.
+fn followers(shaper: &harfrust::Shaper, run: &str) -> Option<std::collections::BTreeSet<(usize, usize)>> {
+    // Each glyph's cluster and where it is drawn.
+    let placed = |features: &[harfrust::Feature]| {
+        let mut buffer = UnicodeBuffer::new();
+        buffer.push_str(run);
+        buffer.set_cluster_level(BufferClusterLevel::Characters);
+        buffer.set_direction(Direction::RightToLeft);
+        buffer.guess_segment_properties();
+        let output = shaper.shape(buffer, ShapeOptions::new().features(features));
+        let mut x = 0;
+        let glyphs: Vec<(u32, u32, [i32; 2])> = output
+            .glyph_infos()
+            .iter()
+            .zip(output.glyph_positions())
+            .map(|(info, p)| {
+                let at = [x + p.x_offset, p.y_offset];
+                x += p.x_advance;
+                (info.cluster, info.glyph_id, at)
+            })
+            .collect();
+        glyphs
+    };
+    let unchanged = placed(&[]);
+    let mut pairs = std::collections::BTreeSet::new();
+    let is_mark = |c: char| unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM;
+    let chars: Vec<(usize, char)> = run.char_indices().collect();
+    // The shaper reorders a letter's marks, so each mark beside another is tried.
+    let stacked = |i: usize| [i.wrapping_sub(1), i + 1].iter().any(|&j| chars.get(j).is_some_and(|&(_, c)| is_mark(c)));
+    for (at, mark) in chars.iter().enumerate().filter(|&(i, &(_, c))| is_mark(c) && stacked(i)).map(|(_, &p)| p) {
+        let alone = at..at + mark.len_utf8();
+        let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
+        let moved = placed(&off);
+        if moved.iter().map(|g| g.1).ne(unchanged.iter().map(|g| g.1)) {
+            return None;
+        }
+        pairs.extend(unchanged.iter().zip(&moved).filter(|(a, b)| a.0 as usize != at && a.2 != b.2).map(|(a, _)| (at, a.0 as usize)));
+    }
+    Some(pairs)
 }
 
 /// Per cluster of `run` (the space glyph a joiner gets aside): its glyphs, and how many of them
