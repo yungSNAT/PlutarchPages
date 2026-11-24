@@ -255,11 +255,14 @@ fn the_form_defaults_a_locked_field_is_drawn_with_are_locked_too() {
     assert_locked(&approval(&restyled, &trust), "the form's /DA for a field drawn from it");
 }
 
-/// An Include lock whose names can't be read locks an unknown set of fields: a later fill leaves
-/// the signature Unknown, never Valid.
+/// An Include lock whose names can't be read locks an unknown set of fields. Fork: signing refuses
+/// it rather than lock less than the author asked (PATCHES.md), so a later fill can't be reached
+/// here; validation reading such a lock as unchecked is `locks::tests::an_unreadable_lock_is_not_no_lock`.
 #[test]
-fn an_unreadable_lock_leaves_a_later_fill_unknown() {
-    let (bytes, trust) = signed("/Lock << /Type /SigFieldLock /Action /Include /Fields (amount) >>");
-    let s = approval(&edit_after(&bytes, fill(AMOUNT, "999999")), &trust);
-    assert_eq!(s.status, Status::Unknown, "{:?}", s.details);
+fn an_unreadable_lock_is_refused_at_signing() {
+    let id = pkcs12::open(&data("rsa-aes.p12"), "test").unwrap();
+    let opts = SignOptions { field: Some("Approval".into()), ..SignOptions::default() };
+    let form = form("/Lock << /Type /SigFieldLock /Action /Include /Fields (amount) >>");
+    let err = pdfcraft_sign::sign(&open(&form), &id, &opts).unwrap_err();
+    assert!(err.to_string().contains("can't read"), "{err}");
 }
