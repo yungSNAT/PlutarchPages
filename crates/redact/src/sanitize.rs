@@ -106,40 +106,35 @@ fn sub(doc: &Document, d: &Dict, key: &[u8]) -> Option<Dict> {
 /// The most name-tree nodes one count reads.
 const NAME_TREE_NODE_BUDGET: usize = 100_000;
 
-/// Entries of a name tree (`/Names` leaves, `/Kids` recursion). Each indirect node is read once,
-/// however many `/Kids` arrays list it, so shared or cyclic kids cost one step per node rather
-/// than one per path. Every `/Kids` entry the walk does not descend into (a repeated reference or
-/// a non-dictionary) costs a step as well, so a long `/Kids` array of repeats cannot outrun the
-/// budget. Depth and a total step budget bound the rest.
+/// Entries of a name tree (`/Names` leaves, `/Kids` iterative traversal). Each indirect node is
+/// read once, however many `/Kids` arrays list it, so shared or cyclic kids cost one step per node
+/// rather than one per path. Direct nesting within one indirect object is bounded by
+/// [`MAX_DIRECT_DEPTH`] whilst indirect `/Kids` chains traverse iteratively up to
+/// [`NAME_TREE_NODE_BUDGET`]; past either cap, at least 1 is returned so removal still runs.
 fn name_tree_len(doc: &Document, node: &Dict) -> usize {
-    let (mut seen, mut visited) = (std::collections::HashSet::new(), 0);
-    name_tree_len_seen(doc, node, 0, &mut seen, &mut visited)
-}
-
-fn name_tree_len_seen(doc: &Document, node: &Dict, depth: usize, seen: &mut std::collections::HashSet<ObjRef>, visited: &mut usize) -> usize {
-    *visited = visited.saturating_add(1);
-    if depth > 32 || *visited > NAME_TREE_NODE_BUDGET {
-        return 0;
-    }
-    let leaves = node.get(b"Names").and_then(|n| doc.resolve(n).as_array().map(|a| a.len() / 2)).unwrap_or(0);
-    let mut n = leaves;
-    let kids = node.get(b"Kids").map(|k| doc.resolve(k));
-    for k in kids.as_deref().and_then(Object::as_array).map_or(&[][..], Vec::as_slice) {
-        if *visited > NAME_TREE_NODE_BUDGET {
-            break;
+    let (mut seen, mut visited, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
+    let mut stack: Vec<(Object, usize)> = vec![(Object::Dict(node.clone()), 0)];
+    while let Some((o, direct_depth)) = stack.pop() {
+        visited = visited.saturating_add(1);
+        if visited > NAME_TREE_NODE_BUDGET || direct_depth > MAX_DIRECT_DEPTH {
+            return n.max(1);
         }
-        let held;
-        let kid = match k {
-            Object::Ref(r) if !seen.insert(*r) => None,
+        let (d, next_depth) = match &o {
             Object::Ref(r) => {
-                held = doc.get(*r);
-                held.as_dict()
+                if !seen.insert(*r) {
+                    continue;
+                }
+                let held = doc.get(*r);
+                let Some(d) = held.as_dict() else { continue };
+                (d.clone(), 0)
             }
-            other => other.as_dict(),
+            Object::Dict(d) => (d.clone(), direct_depth + 1),
+            _ => continue,
         };
-        match kid {
-            Some(kid) => n = n.saturating_add(name_tree_len_seen(doc, kid, depth + 1, seen, visited)),
-            None => *visited = visited.saturating_add(1),
+        n = n.saturating_add(d.get(b"Names").and_then(|v| doc.resolve(v).as_array().map(|a| a.len() / 2)).unwrap_or(0));
+        let kids = d.get(b"Kids").map(|k| doc.resolve(k));
+        for k in kids.as_deref().and_then(Object::as_array).map_or(&[][..], Vec::as_slice).iter().rev() {
+            stack.push((k.clone(), next_depth));
         }
     }
     n
@@ -152,17 +147,18 @@ const OUTLINE_ITEM_BUDGET: usize = 100_000;
 /// already counted, and `counted` every item counted so far, inline ones included, which the total
 /// budget applies to. An item that two others name (as `/First` or `/Next`) is counted where the walk
 /// first reaches it; a hostile outline therefore costs one step per item, not 2^n steps. Direct
-/// nesting without an indirect reference stops at [`MAX_DIRECT_DEPTH`], whilst indirect `/First` and
-/// `/Next` chains traverse iteratively up to [`OUTLINE_ITEM_BUDGET`].
-fn outline_len(doc: &Document, first: Option<&Object>) -> usize {
+/// nesting past [`MAX_DIRECT_DEPTH`] fails closed with [`RedactError::TooDeep`] rather than
+/// returning a partial count, whilst indirect `/First` and `/Next` chains traverse iteratively up to
+/// [`OUTLINE_ITEM_BUDGET`].
+fn outline_len(doc: &Document, first: Option<&Object>) -> Result<usize, RedactError> {
     let (mut seen, mut counted, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
     let mut stack: Vec<(Object, usize)> = first.cloned().into_iter().map(|o| (o, 0)).collect();
     while let Some((o, direct_depth)) = stack.pop() {
-        if counted >= OUTLINE_ITEM_BUDGET || direct_depth > MAX_DIRECT_DEPTH {
-            if counted >= OUTLINE_ITEM_BUDGET {
-                break;
-            }
-            continue;
+        if counted >= OUTLINE_ITEM_BUDGET {
+            break;
+        }
+        if direct_depth > MAX_DIRECT_DEPTH {
+            return Err(RedactError::TooDeep);
         }
         let next_depth = match &o {
             Object::Ref(r) => {
@@ -182,7 +178,7 @@ fn outline_len(doc: &Document, first: Option<&Object>) -> usize {
             }
         }
     }
-    n
+    Ok(n)
 }
 
 /// Strips or simplifies `/A` on a single outline item dictionary, returning `1` if modified.
@@ -986,7 +982,7 @@ pub fn scan_only(doc: &Document, which: &[Hidden]) -> Vec<(Hidden, usize)> {
                     let off = hidden_layers(doc).len();
                     off + content_pass(&mut doc2, false, true, false).map(|(n, _)| n).unwrap_or(0)
                 }
-                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First"))),
+                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First")).unwrap_or(1)),
                 Hidden::LinksActionsScripts => {
                     count_sub(b"Link")
                         + usize::from(cat.get(b"OpenAction").is_some_and(|a| doc.resolve(a).as_dict().is_some()))
@@ -1113,6 +1109,15 @@ fn drop_page_annotations(doc: &mut Document, which: &[Hidden], fields: bool) -> 
     Ok(())
 }
 
+fn check_outline_depth(doc: &Document, root: ObjRef) -> Result<(), RedactError> {
+    if let Some(cat) = doc.get(root).as_dict()
+        && let Some(o) = sub(doc, cat, b"Outlines")
+    {
+        outline_len(doc, o.get(b"First"))?;
+    }
+    Ok(())
+}
+
 /// [`remove_hidden`] with `counts` from a scan of at least the categories in `which`. With
 /// `every_page`, every page's annotation list is rewritten even when no chosen category changes
 /// it, as removal did before it skipped that work; tests compare the two.
@@ -1124,6 +1129,9 @@ pub(crate) fn remove_counted(
 ) -> Result<Vec<(Hidden, usize)>, RedactError> {
     let count = |h: Hidden| counts.iter().find(|c| c.0 == h).map_or(0, |c| c.1);
     let (root, _) = catalog(doc).ok_or(RedactError::NothingToApply)?;
+    if which.contains(&Hidden::Bookmarks) {
+        check_outline_depth(doc, root)?;
+    }
     let mut done = Vec::new();
     // What a full save keeps before anything is removed: an image that leaves, by whatever route
     // below, takes a shared JBIG2 dictionary with it (`unshare_unmarked`, last).
