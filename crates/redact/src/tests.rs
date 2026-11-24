@@ -6643,13 +6643,24 @@ fn a_resource_named_like_an_owned_entry_is_kept() {
     assert!(!page.dict.contains(b"AF"));
 }
 
-/// Owners written in place deeper than the sweep follows are refused, not skipped.
+/// Owners written in place as deep as the parser reads are removed; deeper ones (built in memory,
+/// since no file parses to them) are refused, not skipped.
 #[test]
-fn owners_nested_too_deeply_are_refused() {
+fn owners_nested_deeply_are_removed_and_deeper_ones_refused() {
     use crate::sanitize::{Hidden, remove_hidden};
     let nested = format!("{}<< /AA << /O << /S /JavaScript /JS (LEAK_DEEP) >> >> >>{}", "[".repeat(100), "]".repeat(100));
     let mut doc = one_page(b"BT ET", "", vec![format!("<< /Deep {nested} >>").into_bytes()]);
     doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"PieceInfo".to_vec(), Object::Ref(ObjRef::new(7, 0)))).unwrap();
+    let mut removed = doc.clone();
+    remove_hidden(&mut removed, &[Hidden::LinksActionsScripts]).unwrap();
+    let bytes = write_full(&removed, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+    assert!(!bytes.windows(9).any(|w| w == b"LEAK_DEEP"), "the deep action survived");
+
+    let mut deeper = (*doc.get(ObjRef::new(7, 0))).clone();
+    for _ in 0..300 {
+        deeper = Object::Array(vec![deeper]);
+    }
+    doc.set(ObjRef::new(7, 0), deeper);
     let out = remove_hidden(&mut doc, &[Hidden::LinksActionsScripts]);
     assert!(matches!(out, Err(RedactError::TooDeep)), "{out:?}");
 }
