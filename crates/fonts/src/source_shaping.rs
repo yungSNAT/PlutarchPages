@@ -190,10 +190,11 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
 /// mark beside another can have one follow it ([`stacked_marks`]); a run with none is not shaped
 /// again.
 fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
-    if stacked_marks(run).is_empty() {
+    let marks = stacked_marks(run);
+    if marks.is_empty() {
         return true;
     }
-    match (followers(own, run), followers(reference, run)) {
+    match (followers(own, run, &marks), followers(reference, run, &marks)) {
         (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
         _ => false,
     }
@@ -210,8 +211,8 @@ fn stacked_marks(run: &str) -> Vec<(usize, char)> {
 
 /// The pairs (a mark's byte offset in `run`, that of a character whose glyphs move when the mark
 /// alone loses `mark` and `mkmk`), shaped right to left a character to a cluster. `None` if that
-/// changes the glyphs.
-fn followers(shaper: &harfrust::Shaper, run: &str) -> Option<std::collections::BTreeSet<(usize, usize)>> {
+/// changes the glyphs or overflows glyph positions.
+fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> Option<std::collections::BTreeSet<(usize, usize)>> {
     // Each glyph's cluster and where it is drawn.
     let placed = |features: &[harfrust::Feature]| {
         let mut buffer = UnicodeBuffer::new();
@@ -220,28 +221,27 @@ fn followers(shaper: &harfrust::Shaper, run: &str) -> Option<std::collections::B
         buffer.set_direction(Direction::RightToLeft);
         buffer.guess_segment_properties();
         let output = shaper.shape(buffer, ShapeOptions::new().features(features));
-        let mut x = 0;
-        let glyphs: Vec<(u32, u32, [i32; 2])> = output
+        let mut x = 0i64;
+        output
             .glyph_infos()
             .iter()
             .zip(output.glyph_positions())
             .map(|(info, p)| {
-                let at = [x + p.x_offset, p.y_offset];
-                x += p.x_advance;
-                (info.cluster, info.glyph_id, at)
+                let at = [x.checked_add(i64::from(p.x_offset))?, i64::from(p.y_offset)];
+                x = x.checked_add(i64::from(p.x_advance))?;
+                Some((info.cluster, info.glyph_id, at))
             })
-            .collect();
-        glyphs
+            .collect::<Option<Vec<(u32, u32, [i64; 2])>>>()
     };
-    let unchanged = placed(&[]);
+    let unchanged = placed(&[])?;
     let mut pairs = std::collections::BTreeSet::new();
-    for (at, mark) in stacked_marks(run) {
+    for &(at, mark) in marks {
         // HarfRust stores the range's end less one and tests `cluster < end`, so this covers the
         // mark's first byte alone; that is its cluster, as every combining mark takes 2 bytes or
         // more. An inclusive range would cover nothing.
         let alone = at..at + mark.len_utf8();
         let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
-        let moved = placed(&off);
+        let moved = placed(&off)?;
         if moved.iter().map(|g| g.1).ne(unchanged.iter().map(|g| g.1)) {
             return None;
         }
