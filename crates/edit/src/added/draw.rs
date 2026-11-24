@@ -269,6 +269,7 @@ pub(crate) fn outline_glyph_resources(
         ShapedScript::Arabic => ("PCArabic", arabic_error),
         ShapedScript::Hebrew => ("PCHebrewShaped", hebrew_error),
         ShapedScript::Thai => ("PCThai", thai_error),
+        ShapedScript::Latin => ("PCLatinShaped", |e, s| EditError::Invalid(pdfcraft_fonts::shaped_text::latin_message(e, s))),
     };
     let mut outlines = std::collections::HashMap::new();
     let mut clusters = Vec::new();
