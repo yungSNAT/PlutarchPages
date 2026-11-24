@@ -62,7 +62,7 @@ fn a_signature_fields_lock_is_kept_by_signing_and_checked_by_validation() {
         assert_eq!(approval(&edit_after(&signed, set_value(8, "later"))).modification, Modification::Allowed(vec![kind::FORM_FILL]));
         assert_eq!(
             approval(&edit_after(&signed, set_value(7, "Bob"))).modification,
-            Modification::Disallowed(vec![kind::LOCKED_FORM_FIELDS]),
+            Modification::Disallowed(vec![kind::LOCKED_FIELD]),
             "{certify:?}"
         );
     }
@@ -80,7 +80,7 @@ fn signers_in_order_keep_each_lock_and_a_locked_field_cannot_be_signed() {
     let second = sign_field(&first, "Seller").unwrap();
     let sigs = signatures(&open(&second), &second, &TrustStore::default());
     let modification = |field: &str| sigs.iter().find(|s| s.field == field).unwrap().modification.clone();
-    assert!(matches!(modification("Approval"), Modification::Allowed(k) if !k.contains(&kind::LOCKED_FORM_FIELDS)), "{:?}", modification("Approval"));
+    assert!(matches!(modification("Approval"), Modification::Allowed(k) if !k.contains(&kind::LOCKED_FIELD)), "{:?}", modification("Approval"));
     assert_eq!(modification("Seller"), Modification::None);
     let locks_seller = sign_field(&locking_fixture(&lock_of("(Seller)"), ""), "Approval").unwrap();
     assert!(matches!(sign_field(&locks_seller, "Seller"), Err(SignError::Pdf(m)) if m.contains("read-only")));
@@ -159,7 +159,7 @@ fn what_a_locked_field_is_made_of_is_locked_with_it() {
         let approval = |bytes: &[u8]| signatures(&open(bytes), bytes, &TrustStore::default()).into_iter().find(|s| s.field == "Approval").unwrap();
         let locked = |edit: Box<dyn FnOnce(&mut Document)>| {
             let m = approval(&edit_after(&signed, edit)).modification;
-            matches!(&m, Modification::Disallowed(k) if k.contains(&kind::LOCKED_FORM_FIELDS)).then_some(()).ok_or(m)
+            matches!(&m, Modification::Disallowed(k) if k.contains(&kind::LOCKED_FIELD)).then_some(()).ok_or(m)
         };
         assert_eq!(locked(Box::new(|doc| doc.set(r(11), PdfString::text("Bob")))), Ok(()), "value ({certify:?})");
         assert_eq!(

@@ -118,6 +118,15 @@ impl Type1Font {
         }
     }
 
+    /// Craft patch (flatten): the bare CFF bytes of a `FontFile3/Type1C` font, which the glyph
+    /// ids index. Type 1 and standard fonts have none.
+    pub(crate) fn font_data(&self) -> Option<crate::font::FontData> {
+        match &self.1 {
+            Kind::Cff(c) => Some(c.font.font_data()),
+            Kind::Standard(_) | Kind::Type1(_) => None,
+        }
+    }
+
     /// PdfCraft patch (fork #74): for a standard font, the character named by the encoding used to
     /// select the outline. This deliberately ignores /ToUnicode, a separate source of extracted text.
     pub(crate) fn standard_encoding_char(&self, char_code: u32) -> Option<char> {
