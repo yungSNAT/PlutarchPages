@@ -13,10 +13,13 @@
 //! Before a save (fork, [`survivors`]) the same walks list each place that still holds the text,
 //! so the save can refuse and say where. That search is stricter than the count's: a place holds
 //! the text when a whole removed run of at least 4 letters or digits is in it, beginning and
-//! ending at word edges ("Name: Jane Citizen" counts its parts after the label and between
-//! commas as runs too), or when its whole value, of 2 words or more, is part of a removed run. A
-//! single word of a removed sentence, and a run joined to other letters ("projectBluefin",
-//! "Bluefin2"), are told when applying, never a reason to refuse. Not searched at all: page
+//! ending at word edges ("Name: Jane Citizen" counts its value after the label, and its parts of
+//! 2 or more words between commas, as runs too), or when its whole value, of 2 words or more, is
+//! part of a removed run's value. A form's own wording (field names, tooltips, choice options)
+//! and XFA hold it only by a whole run. Told when applying, never a reason to refuse: a single
+//! word of a removed sentence, a few of its words inside a longer value (the bookmark "Interview
+//! with Jane Citizen" after redacting "Jane Citizen paid $500"), and a run joined to other
+//! letters ("projectBluefin", "Bluefin2"). Not searched at all: page
 //! content (the redaction's own check), appearance streams, form XObjects, images and marked
 //! content (`/ActualText`), and attachment data that isn't text.
 
@@ -287,6 +290,8 @@ const MAX_SWEEP_DEPTH: usize = 32;
 const NOT_TEXT: [&[u8]; 4] = [b"DA", b"DS", b"NM", b"Limits"];
 /// Keys of a signature dictionary that hold binary data rather than text.
 const SIGNATURE_DATA: [&[u8]; 4] = [b"Contents", b"Cert", b"ByteRange", b"Reference"];
+/// A form field's own wording, not what was filled in: its names, tooltip and choice options.
+const FORM_WORDING: [&[u8]; 4] = [b"T", b"TU", b"TM", b"Opt"];
 
 /// Every object a full save would write whose strings (or script, XFA or embedded file data)
 /// hold the text, by place, except what the walks count (outline items, annotations other than
@@ -310,7 +315,7 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
         }
         let mut found = HashSet::new();
         match o {
-            Ok(o) => visit(doc, &o, None, 0, search, &mut found),
+            Ok(o) => visit(doc, &o, None, false, 0, search, &mut found),
             // An object that can't be read may hold it.
             Err(_) => {
                 found.insert(Place::Unread);
@@ -345,8 +350,9 @@ fn page_of(doc: &Document, skip: &mut HashSet<ObjRef>) -> HashMap<ObjRef, usize>
 }
 
 /// Note in `found` the place of each string under `o` that holds the text. `place` is that of the
-/// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text.
-fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, found: &mut HashSet<Place>) {
+/// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text. `wording`:
+/// `o` is a form's own wording ([`FORM_WORDING`], [`Search::wording`]).
+fn visit(doc: &Document, o: &Object, place: Option<Place>, wording: bool, depth: usize, search: &Search, found: &mut HashSet<Place>) {
     if depth > MAX_SWEEP_DEPTH {
         found.insert(Place::Unread);
         return;
@@ -358,12 +364,12 @@ fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search:
                 && !(search.is_whole() && p == Place::Other)
             {
                 let t = crate::metadata::text_string(s);
-                if !t.trim().is_empty() && search.text(&t) {
+                if !t.trim().is_empty() && if wording { search.wording(&t) } else { search.text(&t) } {
                     found.insert(p);
                 }
             }
         }
-        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, search, found)),
+        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, wording, depth + 1, search, found)),
         Object::Dict(d) => visit_dict(doc, d, place, depth, search, found),
         Object::Stream(s) => visit_dict(doc, &s.dict, place, depth, search, found),
         _ => {}
@@ -422,7 +428,8 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
             continue;
         }
         let child = if k == b"PieceInfo" && own.is_some() { Some(Place::PrivateData) } else { own };
-        visit(doc, v, child, depth + 1, search, found);
+        let wording = own == Some(Place::Field) && FORM_WORDING.contains(&k);
+        visit(doc, v, child, wording, depth + 1, search, found);
     }
 }
 
@@ -492,7 +499,7 @@ fn data_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search, xml: bo
     let bytes = doc.with_direct_parms(s).decoded_first_filter_strict(crate::metadata::MAX_XMP_BYTES).ok()?;
     let text = as_text(&bytes)?;
     let text = if xml { crate::metadata::xml_values(&text).join(" ") } else { text };
-    Some(!text.trim().is_empty() && search.data(&text))
+    Some(!text.trim().is_empty() && search.data(&text, xml))
 }
 
 /// Data as text, or `None` when it isn't: UTF-16 or UTF-8 behind a byte order mark, or else
