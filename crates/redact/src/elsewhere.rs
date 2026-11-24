@@ -101,7 +101,8 @@ pub enum Place {
     PrivateData,
     /// Any other object: told when applying, never a reason to refuse a save.
     Other,
-    /// An object that couldn't be read, or lies past a walk's cap, so it may hold the text.
+    /// An object nested deeper than the sweep reads, with no place of its own, so it may hold
+    /// the text. A parsed object never is ([`MAX_SWEEP_DEPTH`]).
     Unread,
 }
 
@@ -261,31 +262,41 @@ fn info(doc: &Document, search: &Search, found: &mut Found) {
     let info_ref = doc.trailer().reference(b"Info");
     let Some(info) = doc.trailer().get(b"Info").and_then(|i| doc.resolve(i).as_dict().cloned()) else { return };
     let hit = |t: &str| !t.trim().is_empty() && search.text(t);
-    for (_, v) in info.iter() {
-        if any_string(doc, v, 0, &hit) {
-            found.add(Place::Info, info_ref, None, None);
+    // One place, however many entries hold it; one walk, so entries sharing objects read them once.
+    if any_string(doc, &Object::Dict(info), &hit) {
+        found.add(Place::Info, info_ref, None, None);
+    }
+}
+
+/// Whether a string in `o` (followed through arrays, dictionaries and references, to
+/// [`MAX_SWEEP_DEPTH`]) satisfies `hit`. Each referenced object is read once, so a cycle or a
+/// shared object can't multiply the work.
+fn any_string(doc: &Document, o: &Object, hit: &dyn Fn(&str) -> bool) -> bool {
+    fn walk(doc: &Document, o: &Object, depth: usize, seen: &mut HashSet<ObjRef>, hit: &dyn Fn(&str) -> bool) -> bool {
+        if depth > MAX_SWEEP_DEPTH {
+            return true;
+        }
+        if let Object::Ref(r) = o
+            && !seen.insert(*r)
+        {
+            return false;
+        }
+        match &*doc.resolve(o) {
+            Object::String(s) => hit(&crate::metadata::text_string(s)),
+            Object::Array(items) => items.iter().any(|i| walk(doc, i, depth + 1, seen, hit)),
+            Object::Dict(d) => d.iter().any(|(_, v)| walk(doc, v, depth + 1, seen, hit)),
+            _ => false,
         }
     }
+    walk(doc, o, 0, &mut HashSet::new(), hit)
 }
 
-/// Whether a string in `o` (followed through direct arrays and dictionaries, and references
-/// from them, to [`MAX_SWEEP_DEPTH`]) satisfies `hit`.
-fn any_string(doc: &Document, o: &Object, depth: usize, hit: &dyn Fn(&str) -> bool) -> bool {
-    if depth > MAX_SWEEP_DEPTH {
-        return true;
-    }
-    match &*doc.resolve(o) {
-        Object::String(s) => hit(&crate::metadata::text_string(s)),
-        Object::Array(items) => items.iter().any(|i| any_string(doc, i, depth + 1, hit)),
-        Object::Dict(d) => d.iter().any(|(_, v)| any_string(doc, v, depth + 1, hit)),
-        _ => false,
-    }
-}
-
-/// The most objects the sweep reads; past it, one more place counts as unread.
+/// The most objects the sweep reads; past it, the rest are told ([`sweep`]).
 const MAX_SWEEP_OBJECTS: usize = 4_000_000;
-/// How deep the sweep follows direct arrays and dictionaries inside one object.
-const MAX_SWEEP_DEPTH: usize = 32;
+/// How deep the sweep follows arrays and dictionaries inside one object: twice the parser's own
+/// nesting limit (128), so a parsed object never reaches it. Only references followed inside a
+/// placed value can, and those keep their place ([`visit`]).
+const MAX_SWEEP_DEPTH: usize = 256;
 
 /// Keys whose strings aren't text anyone reads: a field's or annotation's default appearance and
 /// style, an annotation's name (often a UUID), a name tree node's bounds (copies of its names).
@@ -323,9 +334,11 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
         let mut found = HashSet::new();
         match o {
             Ok(o) => visit(doc, &o, None, 0, search, &mut seen, &mut found),
-            // An object that can't be read may hold it.
+            // An object that can't be read is written as null, so with the reachable objects known
+            // it is skipped above. Here they couldn't be worked out, and a full save fails at the
+            // same step (`write_full` numbers the same objects), so nothing is written: told.
             Err(_) => {
-                found.insert(Place::Unread);
+                found.insert(Place::Other);
             }
         }
         for place in found {
@@ -363,7 +376,8 @@ type Seen = HashSet<(ObjRef, Place)>;
 /// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text.
 fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, seen: &mut Seen, found: &mut HashSet<Place>) {
     if depth > MAX_SWEEP_DEPTH {
-        // Too deep to read: its place's category clears it, if it has one.
+        // Too deep to read: its place's category clears it. Without a place (only an object
+        // built deeper than the parser reads) it may hold the text.
         found.insert(place.unwrap_or(Place::Unread));
         return;
     }
@@ -686,7 +700,7 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
     // Some(true): it holds it; None: its data couldn't be searched.
     let file = |spec: Option<&Object>| -> Option<bool> {
         let Some(d) = spec.and_then(|s| doc.resolve(s).as_dict().cloned()) else { return Some(false) };
-        if [b"F".as_slice(), b"UF", b"Desc"].iter().any(|k| hit(d.get(k))) || d.get(b"CI").is_some_and(|ci| any_string(doc, ci, 0, &text_hit)) {
+        if [b"F".as_slice(), b"UF", b"Desc"].iter().any(|k| hit(d.get(k))) || d.get(b"CI").is_some_and(|ci| any_string(doc, ci, &text_hit)) {
             return Some(true);
         }
         let mut unread = false;
