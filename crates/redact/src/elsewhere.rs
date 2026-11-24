@@ -26,6 +26,7 @@
 //! content (`/ActualText`), and attachment data that isn't text.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use pdfcraft_cos::{Document, ObjRef, Object};
 
@@ -270,32 +271,52 @@ fn info(doc: &Document, search: &Search, found: &mut Found) {
 
 /// Whether a string in `o` (followed through arrays, dictionaries and references, to
 /// [`MAX_SWEEP_DEPTH`]) satisfies `hit`. Each referenced object is read once, so a cycle or a
-/// shared object can't multiply the work.
+/// shared object can't multiply the work, and the walk keeps its own stack, so deep nesting
+/// can't use up the thread's.
 fn any_string(doc: &Document, o: &Object, hit: &dyn Fn(&str) -> bool) -> bool {
-    fn walk(doc: &Document, o: &Object, depth: usize, seen: &mut HashSet<ObjRef>, hit: &dyn Fn(&str) -> bool) -> bool {
-        if depth > MAX_SWEEP_DEPTH {
+    let mut seen = HashSet::new();
+    let mut pending: Vec<(Arc<Object>, usize)> = Vec::new();
+    let mut holds = |o: &Object, depth: usize, pending: &mut Vec<(Arc<Object>, usize)>| {
+        let mut stack = vec![(o, depth)];
+        while let Some((o, depth)) = stack.pop() {
+            if depth > MAX_SWEEP_DEPTH {
+                return true;
+            }
+            match o {
+                Object::Ref(r) => {
+                    if seen.insert(*r) {
+                        pending.push((doc.resolve(o), depth + 1));
+                    }
+                }
+                Object::String(s) => {
+                    if hit(&crate::metadata::text_string(s)) {
+                        return true;
+                    }
+                }
+                Object::Array(items) => stack.extend(items.iter().map(|i| (i, depth + 1))),
+                Object::Dict(d) => stack.extend(d.iter().map(|(_, v)| (v, depth + 1))),
+                _ => {}
+            }
+        }
+        false
+    };
+    if holds(o, 0, &mut pending) {
+        return true;
+    }
+    while let Some((target, depth)) = pending.pop() {
+        if holds(&target, depth, &mut pending) {
             return true;
         }
-        if let Object::Ref(r) = o
-            && !seen.insert(*r)
-        {
-            return false;
-        }
-        match &*doc.resolve(o) {
-            Object::String(s) => hit(&crate::metadata::text_string(s)),
-            Object::Array(items) => items.iter().any(|i| walk(doc, i, depth + 1, seen, hit)),
-            Object::Dict(d) => d.iter().any(|(_, v)| walk(doc, v, depth + 1, seen, hit)),
-            _ => false,
-        }
     }
-    walk(doc, o, 0, &mut HashSet::new(), hit)
+    false
 }
 
 /// The most objects the sweep reads; past it, the rest are told ([`sweep`]).
 const MAX_SWEEP_OBJECTS: usize = 4_000_000;
 /// How deep the sweep follows arrays and dictionaries inside one object: twice the parser's own
 /// nesting limit (128), so a parsed object never reaches it. Only references followed inside a
-/// placed value can, and those keep their place ([`visit`]).
+/// placed value can, and those keep their place ([`visit`]). The walks keep their own stacks,
+/// so the depth costs no thread stack.
 const MAX_SWEEP_DEPTH: usize = 256;
 
 /// Keys whose strings aren't text anyone reads: a field's or annotation's default appearance and
@@ -333,7 +354,7 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
         }
         let mut found = HashSet::new();
         match o {
-            Ok(o) => visit(doc, &o, None, 0, search, &mut seen, &mut found),
+            Ok(o) => visit(doc, &o, search, &mut seen, &mut found),
             // An object that can't be read is written as null, so with the reachable objects known
             // it is skipped above. Here they couldn't be worked out, and a full save fails at the
             // same step (`write_full` numbers the same objects), so nothing is written: told.
@@ -372,132 +393,154 @@ fn page_of(doc: &Document, skip: &mut HashSet<ObjRef>) -> HashMap<ObjRef, usize>
 /// Arrays held by reference already read, with the place they were read in ([`visit`]).
 type Seen = HashSet<(ObjRef, Place)>;
 
-/// Note in `found` the place of each string under `o` that holds the text. `place` is that of the
-/// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text.
-fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, seen: &mut Seen, found: &mut HashSet<Place>) {
-    if depth > MAX_SWEEP_DEPTH {
-        // Too deep to read: its place's category clears it. Without a place (only an object
-        // built deeper than the parser reads) it may hold the text.
-        found.insert(place.unwrap_or(Place::Unread));
-        return;
-    }
-    match o {
-        // A string or array held by reference is part of what refers to it (a field's `/V 7 0 R`):
-        // its object alone says nothing of where it is. A dictionary or stream is swept as an
-        // object of its own.
-        // An array is read once for each place it is in, however many refer to it, so a file
-        // can't make the sweep read one array for each of many references.
-        Object::Ref(r) => {
-            let Some(p) = place else { return };
-            let target = doc.resolve(o);
-            let read = match &*target {
-                Object::String(_) => true,
-                Object::Array(_) => seen.insert((*r, p)),
-                _ => false,
-            };
-            if read {
-                visit(doc, &target, place, depth + 1, search, seen, found);
-            }
-        }
-        Object::String(s) => {
-            // Other places never refuse a save, so a save's search spends nothing on them.
-            if let Some(p) = place
-                && !(search.is_whole() && p == Place::Other)
-            {
-                let t = crate::metadata::text_string(s);
-                if !t.trim().is_empty() && search.text(&t) {
-                    found.insert(p);
-                }
-            }
-        }
-        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, search, seen, found)),
-        Object::Dict(d) => visit_dict(doc, d, place, depth, search, seen, found),
-        Object::Stream(s) => visit_dict(doc, &s.dict, place, depth, search, seen, found),
-        _ => {}
+/// Note in `found` the place of each string in the object `o` that holds the text. A string
+/// takes the place of the dictionary holding it ([`place_of`]): `None` where a walk counts it, or
+/// its strings aren't text. The walk keeps its own stack, so an object nested as deep as the
+/// parser allows can't use up the thread's.
+fn visit(doc: &Document, o: &Object, search: &Search, seen: &mut Seen, found: &mut HashSet<Place>) {
+    let mut walk = Walk { doc, search, seen, found, pending: Vec::new() };
+    walk.object(o, None, 0);
+    while let Some((target, place, depth)) = walk.pending.pop() {
+        walk.object(&target, place, depth);
     }
 }
 
-fn visit_dict(
-    doc: &Document,
-    d: &pdfcraft_cos::Dict,
-    place: Option<Place>,
-    depth: usize,
-    search: &Search,
-    seen: &mut Seen,
-    found: &mut HashSet<Place>,
-) {
-    let own = place_of(d, place, depth);
-    let mut note = |p: Place, holds: Option<bool>| match holds {
-        Some(true) => {
-            found.insert(p);
-        }
-        Some(false) => {}
-        // Data that can't be searched: a script or form data may hold it; an attachment's is
-        // told (Remove hidden information removes it), since most attached files aren't text.
-        None if p == Place::Attachment => {
-            found.insert(Place::Other);
-        }
-        None => {
-            found.insert(p);
-        }
-    };
-    // A script may be a stream of its own, which says nothing of what it is.
-    if own == Some(Place::Link)
-        && let Some(Object::Stream(s)) = d.get(b"JS").map(|js| doc.resolve(js)).as_deref()
-    {
-        note(Place::Link, data_holds(doc, s, search));
-    }
-    // An embedded file's data, by its use under a file specification's `/EF` (its `/Type` is
-    // optional).
-    if own == Some(Place::Attachment)
-        && let Some(ef) = d.get(b"EF").and_then(|ef| doc.resolve(ef).as_dict().cloned())
-    {
-        for (_, f) in ef.iter() {
-            if let Object::Stream(s) = &*doc.resolve(f) {
-                note(Place::Attachment, data_holds(doc, s, search));
+/// One object's sweep ([`visit`]).
+struct Walk<'s> {
+    doc: &'s Document,
+    search: &'s Search,
+    seen: &'s mut Seen,
+    found: &'s mut HashSet<Place>,
+    /// Values held by reference, still to read, with their place and depth.
+    pending: Vec<(Arc<Object>, Option<Place>, usize)>,
+}
+
+impl Walk<'_> {
+    /// Read `o` and what it holds directly; what it refers to goes to `pending`.
+    fn object(&mut self, o: &Object, place: Option<Place>, depth: usize) {
+        let mut stack = vec![(o, place, depth)];
+        while let Some((o, place, depth)) = stack.pop() {
+            if depth > MAX_SWEEP_DEPTH {
+                // Too deep to read: its place's category clears it. Without a place (only an
+                // object built deeper than the parser reads) it may hold the text.
+                self.found.insert(place.unwrap_or(Place::Unread));
+                continue;
+            }
+            match o {
+                // A string or array held by reference is part of what refers to it (a field's
+                // `/V 7 0 R`): its object alone says nothing of where it is. A dictionary or
+                // stream is swept as an object of its own. An array is read once for each place
+                // it is in, however many refer to it, so a file can't make the sweep read one
+                // array for each of many references.
+                Object::Ref(r) => {
+                    let Some(p) = place else { continue };
+                    let target = self.doc.resolve(o);
+                    let read = match &*target {
+                        Object::String(_) => true,
+                        Object::Array(_) => self.seen.insert((*r, p)),
+                        _ => false,
+                    };
+                    if read {
+                        self.pending.push((target, place, depth + 1));
+                    }
+                }
+                Object::String(s) => {
+                    // Other places never refuse a save, so a save's search spends nothing on them.
+                    if let Some(p) = place
+                        && !(self.search.is_whole() && p == Place::Other)
+                    {
+                        let t = crate::metadata::text_string(s);
+                        if !t.trim().is_empty() && self.search.text(&t) {
+                            self.found.insert(p);
+                        }
+                    }
+                }
+                Object::Array(items) => stack.extend(items.iter().map(|i| (i, place, depth + 1))),
+                Object::Dict(d) => self.dict(d, place, depth, &mut stack),
+                Object::Stream(s) => self.dict(&s.dict, place, depth, &mut stack),
+                _ => {}
             }
         }
     }
-    // XFA form data and template: XML, searched by its text.
-    if let Some(xfa) = d.get(b"XFA").map(|x| doc.resolve(x)) {
-        // An array names each packet before it: "datasets" is the filled-in data.
-        let parts: Vec<(Option<bool>, Object)> = match &*xfa {
-            Object::Array(a) => a
-                .chunks(2)
-                .filter_map(|p| {
-                    let name = p.first().map(|n| doc.resolve(n)).and_then(|n| n.as_string().map(crate::metadata::text_string));
-                    Some((Some(name.as_deref() == Some("datasets")), p.get(1)?.clone()))
-                })
-                .collect(),
-            other => vec![(None, other.clone())],
+
+    /// A dictionary's own data (scripts, embedded files, XFA), searched here; its values go on
+    /// `stack` with their places.
+    fn dict<'o>(&mut self, d: &'o pdfcraft_cos::Dict, place: Option<Place>, depth: usize, stack: &mut Vec<(&'o Object, Option<Place>, usize)>) {
+        let (doc, search) = (self.doc, self.search);
+        let own = place_of(d, place, depth);
+        let found = &mut *self.found;
+        let mut note = |p: Place, holds: Option<bool>| match holds {
+            Some(true) => {
+                found.insert(p);
+            }
+            Some(false) => {}
+            // Data that can't be searched: a script or form data may hold it; an attachment's is
+            // told (Remove hidden information removes it), since most attached files aren't text.
+            None if p == Place::Attachment => {
+                found.insert(Place::Other);
+            }
+            None => {
+                found.insert(p);
+            }
         };
-        for (datasets, part) in parts {
-            if let Object::Stream(s) = &*doc.resolve(&part) {
-                match xfa_parts(doc, s, datasets) {
-                    None => note(Place::Field, None),
-                    Some((data, wording)) => {
-                        note(Place::Field, Some(values_hold(&data, search)));
-                        // A form's own wording is told, never refused ([`FORM_WORDING`]).
-                        if !search.is_whole() {
-                            note(Place::Other, Some(values_hold(&wording, search)));
+        // A script may be a stream of its own, which says nothing of what it is.
+        if own == Some(Place::Link)
+            && let Some(Object::Stream(s)) = d.get(b"JS").map(|js| doc.resolve(js)).as_deref()
+        {
+            note(Place::Link, data_holds(doc, s, search));
+        }
+        // An embedded file's data, by its use under a file specification's `/EF` (its `/Type` is
+        // optional).
+        if own == Some(Place::Attachment)
+            && let Some(ef) = d.get(b"EF").and_then(|ef| doc.resolve(ef).as_dict().cloned())
+        {
+            for (_, f) in ef.iter() {
+                if let Object::Stream(s) = &*doc.resolve(f) {
+                    note(Place::Attachment, data_holds(doc, s, search));
+                }
+            }
+        }
+        // XFA form data and template: XML, searched by its text.
+        if let Some(xfa) = d.get(b"XFA").map(|x| doc.resolve(x)) {
+            // An array names each packet before it: "datasets" is the filled-in data.
+            let parts: Vec<(Option<bool>, Object)> = match &*xfa {
+                Object::Array(a) => a
+                    .chunks(2)
+                    .filter_map(|p| {
+                        let name = p.first().map(|n| doc.resolve(n)).and_then(|n| n.as_string().map(crate::metadata::text_string));
+                        Some((Some(name.as_deref() == Some("datasets")), p.get(1)?.clone()))
+                    })
+                    .collect(),
+                other => vec![(None, other.clone())],
+            };
+            for (datasets, part) in parts {
+                if let Object::Stream(s) = &*doc.resolve(&part) {
+                    match xfa_parts(doc, s, datasets) {
+                        None => note(Place::Field, None),
+                        Some((data, wording)) => {
+                            note(Place::Field, Some(values_hold(&data, search)));
+                            // A form's own wording is told, never refused ([`FORM_WORDING`]).
+                            if !search.is_whole() {
+                                note(Place::Other, Some(values_hold(&wording, search)));
+                            }
                         }
                     }
                 }
             }
         }
-    }
-    let signature = is_signature(d);
-    for (k, v) in d.iter() {
-        let k = k.as_slice();
-        if NOT_TEXT.contains(&k) || (signature && SIGNATURE_DATA.contains(&k)) {
-            continue;
+        let signature = is_signature(d);
+        for (k, v) in d.iter() {
+            let k = k.as_slice();
+            if NOT_TEXT.contains(&k) || (signature && SIGNATURE_DATA.contains(&k)) {
+                continue;
+            }
+            let child = match own {
+                Some(_) if k == b"PieceInfo" => Some(Place::PrivateData),
+                Some(Place::Field) if FORM_WORDING.contains(&k) => Some(Place::Other),
+                _ => own,
+            };
+            stack.push((v, child, depth + 1));
         }
-        let child = match own {
-            Some(_) if k == b"PieceInfo" => Some(Place::PrivateData),
-            Some(Place::Field) if FORM_WORDING.contains(&k) => Some(Place::Other),
-            _ => own,
-        };
-        visit(doc, v, child, depth + 1, search, seen, found);
     }
 }
 
