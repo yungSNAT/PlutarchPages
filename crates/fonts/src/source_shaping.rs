@@ -911,4 +911,228 @@ mod tests {
         let mixed: Vec<_> = shape(face.bytes, "ok กิ่").unwrap().glyphs.into_iter().skip(3).map(|g| g.id).collect();
         assert_eq!(mixed, thai_only);
     }
+
+    fn with_table(program: &[u8], tag: &[u8; 4], payload: Vec<u8>) -> Vec<u8> {
+        let count = u16::from_be_bytes([program[4], program[5]]) as usize;
+        let mut tables: Vec<([u8; 4], Vec<u8>)> = program[12..12 + count * 16]
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .filter(|r| &r[..4] != tag)
+            .map(|r| {
+                let off = u32::from_be_bytes(r[8..12].try_into().unwrap()) as usize;
+                let len = u32::from_be_bytes(r[12..16].try_into().unwrap()) as usize;
+                (r[..4].try_into().unwrap(), program[off..off + len].to_vec())
+            })
+            .collect();
+        tables.push((*tag, payload));
+        tables.sort_by_key(|(t, _)| *t);
+        let n = tables.len() as u16;
+        let entry_selector = (u16::BITS - 1 - n.leading_zeros()) as u16;
+        let search_range = (1u16 << entry_selector) * 16;
+        let range_shift = n * 16 - search_range;
+        let mut out = Vec::new();
+        out.extend_from_slice(&program[..4]);
+        for w in [n, search_range, entry_selector, range_shift] {
+            out.extend_from_slice(&w.to_be_bytes());
+        }
+        let dir_start = out.len();
+        out.resize(dir_start + tables.len() * 16, 0);
+        for (i, (t, body)) in tables.into_iter().enumerate() {
+            let off = out.len() as u32;
+            let len = body.len() as u32;
+            out.extend_from_slice(&body);
+            while !out.len().is_multiple_of(4) {
+                out.push(0);
+            }
+            let rec = dir_start + i * 16;
+            out[rec..rec + 4].copy_from_slice(&t);
+            out[rec + 8..rec + 12].copy_from_slice(&off.to_be_bytes());
+            out[rec + 12..rec + 16].copy_from_slice(&len.to_be_bytes());
+        }
+        out
+    }
+
+    fn minimal_liga_gsub(first: u16, second: u16, lig: u16) -> Vec<u8> {
+        let mut gsub = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        for w in [1u16, 0, 10, 30, 44, 1] {
+            push(&mut gsub, w);
+        }
+        gsub.extend_from_slice(b"thai");
+        for w in [8u16, 4, 0, 0, 0xFFFF, 1, 0, 1] {
+            push(&mut gsub, w);
+        }
+        gsub.extend_from_slice(b"liga");
+        for w in [8u16, 0, 1, 0, 1, 4, 4, 0x0008, 1, 8, 1, 8, 1, 14, 1, 1, first, 1, 4, lig, 2, second] {
+            push(&mut gsub, w);
+        }
+        gsub
+    }
+
+    fn minimal_thai_gpos(base: u16, mark1: u16, mark2: u16, base_x: i16, mkmk_flag: u16, mkmk_count: u16) -> Vec<u8> {
+        let mut gpos = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+        let lookup_count = 1 + mkmk_count;
+        let feature_list = 32u16;
+        let lookup_list = feature_list + 14 + 6 + 4 + 2 * mkmk_count;
+        // Header (10) + ScriptList (22) = 32
+        for w in [1u16, 0, 10, feature_list, lookup_list, 1] {
+            push(&mut gpos, w);
+        }
+        gpos.extend_from_slice(b"thai");
+        for w in [8u16, 4, 0, 0, 0xFFFF, 2, 0, 1] {
+            push(&mut gpos, w);
+        }
+        // FeatureList: header (2 + 12) + Feature 0 ("mark", 6) + Feature 1 ("mkmk", 4 + 2*mkmk_count)
+        push(&mut gpos, 2);
+        gpos.extend_from_slice(b"mark");
+        push(&mut gpos, 14);
+        gpos.extend_from_slice(b"mkmk");
+        push(&mut gpos, 20);
+        for w in [0u16, 1, 0, 0, mkmk_count] {
+            push(&mut gpos, w);
+        }
+        for i in 1..=mkmk_count {
+            push(&mut gpos, i);
+        }
+        // LookupList header
+        let l0_off = 2 + 2 * lookup_count;
+        let l0_len = 54u16; // Lookup (8) + Subtable (12) + Covs (12) + MarkArray (12) + BaseArray (10)
+        let l1_off = l0_off + l0_len;
+        push(&mut gpos, lookup_count);
+        push(&mut gpos, l0_off);
+        for _ in 0..mkmk_count {
+            push(&mut gpos, l1_off);
+        }
+        // Lookup 0: MarkToBase (46 bytes subtable)
+        for w in [4u16, 0, 1, 8, 1, 12, 18, 1, 24, 36, 1, 1, mark1, 1, 1, base, 1, 0, 6, 1, 0, 0, 1, 4] {
+            push(&mut gpos, w);
+        }
+        push(&mut gpos, 1);
+        push_i(&mut gpos, base_x);
+        push_i(&mut gpos, 0);
+        // Lookup 1: MarkToMark (46 bytes subtable)
+        for w in [6u16, mkmk_flag, 1, 8, 1, 12, 18, 1, 24, 36, 1, 1, mark2, 1, 1, mark1, 1, 0, 6, 1, 0, 0, 1, 4, 1, 0, 0] {
+            push(&mut gpos, w);
+        }
+        gpos
+    }
+
+    /// Covered marks whose mark or target anchor table fails to parse are rejected by HarfRust, so
+    /// `lookup_attaches` must parse both anchors rather than checking offset nullness alone.
+    #[test]
+    fn thai_mark_lookups_with_corrupt_anchors_are_refused() {
+        let Some(face) = crate::document_thai_font() else { return };
+        assert!(shape(face.bytes, "ดี").is_ok());
+        for corrupt_mark in [true, false] {
+            let mut bytes = face.bytes.to_vec();
+            let gpos_off = gpos(&bytes);
+            let lookups = gpos_off + u16_at(&bytes, gpos_off + 8);
+            for idx in thai_mark_lookup_indices(&bytes) {
+                let lookup = lookups + u16_at(&bytes, lookups + 2 + 2 * idx);
+                let kind = u16_at(&bytes, lookup);
+                let mut sub = lookup + u16_at(&bytes, lookup + 6);
+                let actual_kind = if kind == 9 {
+                    let k = u16_at(&bytes, sub + 2);
+                    sub += u32_at(&bytes, sub + 4);
+                    k
+                } else {
+                    kind
+                };
+                if !matches!(actual_kind, 4 | 6) {
+                    continue;
+                }
+                if corrupt_mark {
+                    let mark_array = sub + u16_at(&bytes, sub + 8);
+                    for r in 0..u16_at(&bytes, mark_array) {
+                        let anchor = mark_array + u16_at(&bytes, mark_array + 4 + 4 * r);
+                        bytes[anchor..anchor + 2].copy_from_slice(&9u16.to_be_bytes());
+                    }
+                } else {
+                    let class_count = u16_at(&bytes, sub + 6);
+                    let base_array = sub + u16_at(&bytes, sub + 10);
+                    let rows = u16_at(&bytes, base_array);
+                    for j in 0..rows * class_count {
+                        let off = u16_at(&bytes, base_array + 2 + 2 * j);
+                        if off != 0 {
+                            let anchor = base_array + off;
+                            bytes[anchor..anchor + 2].copy_from_slice(&9u16.to_be_bytes());
+                        }
+                    }
+                }
+            }
+            let error = shape(&bytes, "ดี").unwrap_err();
+            assert!(error.contains("mark positioning"), "corrupt_mark={corrupt_mark}: {error}");
+        }
+    }
+
+    /// A GSUB ligature merges two marked bases into one cluster whose marks carry distinct
+    /// ligature components; cross-component `mkmk` is rejected by HarfRust and must not pass.
+    #[test]
+    fn thai_ligated_bases_with_cross_component_mkmk_are_refused() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let no_ee = shape(face.bytes, "นี่").unwrap();
+        let [base_no, vowel] = [0, 1].map(|i| u16::try_from(no_ee.glyphs[i].id.to_u32()).unwrap());
+        let ka_ek = shape(face.bytes, "ก\u{0e48}").unwrap();
+        let [ka, wide_tone] = [0, 1].map(|i| u16::try_from(ka_ek.glyphs[i].id.to_u32()).unwrap());
+
+        let base_gpos = with_table(face.bytes, b"GPOS", minimal_thai_gpos(base_no, vowel, wide_tone, 10, 0x0000, 1));
+        let unligated = with_table(&base_gpos, b"GSUB", minimal_liga_gsub(ka, ka, ka));
+        assert!(shape(&unligated, "น\u{0e35}\u{0e48}").is_ok(), "unligated mkmk passes");
+
+        let ligated = with_table(&base_gpos, b"GSUB", minimal_liga_gsub(base_no, ka, base_no));
+        assert_eq!(shape_legacy_thai(&ligated, "น\u{0e35}ก\u{0e48}").unwrap().glyphs.len(), 3, "GSUB ligates across vowel");
+        let error = shape(&ligated, "น\u{0e35}ก\u{0e48}").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+    }
+
+    /// Default-ignorable combiners such as CGJ (`U+034F`) and NFD Latin accents normalized to
+    /// precomposed glyphs inside a mixed run do not fail the Thai mark count.
+    #[test]
+    fn thai_runs_with_cgj_and_precomposed_latin_marks_succeed() {
+        let Some(face) = crate::document_thai_font() else { return };
+        assert!(shape(face.bytes, "กิ\u{034f}").is_ok(), "CGJ in Thai cluster");
+        assert!(shape(face.bytes, "e\u{0301} กิ่").is_ok(), "precomposed Latin mark before Thai");
+    }
+
+    /// Thousands of supported `MarkToBase` marks on one base would trigger quadratic offset
+    /// propagation inside HarfRust and must be refused promptly before shaping.
+    #[test]
+    fn many_supported_marks_in_one_thai_cluster_are_refused_without_quadratic_shaping() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "กิ").unwrap();
+        let [ka, sara_i] = [0, 1].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+        let bytes = with_table(face.bytes, b"GPOS", minimal_thai_gpos(ka, sara_i, sara_i, 10, 0x0008, 0));
+        let text = format!("ก{}", "\u{0e34}".repeat(20_000));
+        let started = std::time::Instant::now();
+        let error = shape(&bytes, &text).unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "{:?}", started.elapsed());
+    }
+
+    /// Thousands of skipped `mkmk` lookups over thousands of Thai clusters must neither retain
+    /// per-cluster × lookup tables nor spend quadratic time checking every cluster.
+    #[test]
+    fn many_thai_clusters_with_skipped_mkmk_lookups_fail_promptly() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "กิ").unwrap();
+        let [ka, sara_i] = [0, 1].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+        let text = "กิ ".repeat(5_000);
+
+        // 1. 8,000 IgnoreMarks mkmk lookups are stripped upfront, so valid MarkToBase runs quickly.
+        let ignored = with_table(face.bytes, b"GPOS", minimal_thai_gpos(ka, sara_i, sara_i, 10, 0x0008, 8_000));
+        let started = std::time::Instant::now();
+        assert!(shape(&ignored, &text).is_ok());
+        assert!(started.elapsed() < std::time::Duration::from_secs(3), "ignored mkmk: {:?}", started.elapsed());
+
+        // 2. 8,000 non-IgnoreMarks MarkAttachmentType=1 mkmk lookups over unmoved marks hit the
+        // work bound cleanly without allocating clusters * lookups state.
+        let skipped = with_table(face.bytes, b"GPOS", minimal_thai_gpos(ka, sara_i, sara_i, 0, 0x0100, 8_000));
+        let started = std::time::Instant::now();
+        let error = shape(&skipped, &text).unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(3), "skipped mkmk: {:?}", started.elapsed());
+    }
 }
