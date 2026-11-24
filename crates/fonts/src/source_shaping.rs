@@ -224,7 +224,7 @@ impl<'a> MarkFilter<'a> {
                 .is_some_and(|cov| cov.get(gid).is_some());
         }
         if let Some(class) = flag.mark_attachment_class() {
-            return self.mark_classes.as_ref().is_some_and(|c| c.get(gid) == class);
+            return self.classes.is_some() && self.mark_classes.as_ref().is_some_and(|c| c.get(gid) == class);
         }
         true
     }
