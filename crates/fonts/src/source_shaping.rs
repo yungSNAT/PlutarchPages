@@ -1545,4 +1545,80 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
     }
+    /// A `MarkToBase` lookup flagged `IgnoreBaseGlyphs` excludes GDEF base glyphs (`class 1`) as
+    /// attachment targets; when anchor coordinates leave net offset unchanged, it must be refused.
+    #[test]
+    fn thai_mark_lookup_with_ignore_base_glyphs_is_refused() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "กิ").unwrap();
+        let [ka, sara_i] = [0, 1].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+        let ka_adv = FontRef::new(face.bytes)
+            .unwrap()
+            .glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default())
+            .advance_width(GlyphId::new(u32::from(ka)))
+            .unwrap_or_default()
+            .round() as i16;
+        let mut gpos = minimal_thai_gpos(ka, sara_i, sara_i, ka_adv, 0, 0);
+        let lookups = u16_at(&gpos, 8);
+        let l0 = lookups + u16_at(&gpos, lookups + 2);
+        gpos[l0 + 2..l0 + 4].copy_from_slice(&0x0002u16.to_be_bytes());
+        let bytes = with_table(face.bytes, b"GPOS", gpos);
+        let error = shape(&bytes, "กิ").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+    }
+
+    /// In a bilingual font with distinct `latn` and `thai` `mark` GPOS lookups, shaping an un-
+    /// normalized NFD Latin accent alongside Thai marks must position both marks using their own
+    /// OpenType scripts.
+    #[test]
+    fn mixed_latin_nfd_accent_and_thai_marks_both_position() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let latin = shape(face.bytes, "q\u{0301}").unwrap();
+        let [q_gid, acute] = [0, 1].map(|i| u16::try_from(latin.glyphs[i].id.to_u32()).unwrap());
+        let thai = shape(face.bytes, "กิ").unwrap();
+        let [ka, sara_i] = [0, 1].map(|i| u16::try_from(thai.glyphs[i].id.to_u32()).unwrap());
+
+        let mut gpos = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+        // Header (10) + ScriptList (38) + FeatureList (26) = 74
+        for w in [1u16, 0, 10, 48, 74, 2] {
+            push(&mut gpos, w);
+        }
+        gpos.extend_from_slice(b"latn");
+        push(&mut gpos, 14);
+        gpos.extend_from_slice(b"thai");
+        push(&mut gpos, 26);
+        for feat in [0u16, 1] {
+            for w in [4u16, 0, 0, 0xFFFF, 1, feat] {
+                push(&mut gpos, w);
+            }
+        }
+        push(&mut gpos, 2);
+        for off in [14u16, 20] {
+            gpos.extend_from_slice(b"mark");
+            push(&mut gpos, off);
+        }
+        for idx in [0u16, 1] {
+            for w in [0u16, 1, idx] {
+                push(&mut gpos, w);
+            }
+        }
+        for w in [2u16, 6, 60] {
+            push(&mut gpos, w);
+        }
+        for (base, mark, base_y) in [(q_gid, acute, 200i16), (ka, sara_i, 150i16)] {
+            for w in [4u16, 0, 1, 8, 1, 12, 18, 1, 24, 36, 1, 1, mark, 1, 1, base, 1, 0, 6, 1, 0, 0, 1, 4, 1, 10] {
+                push(&mut gpos, w);
+            }
+            push_i(&mut gpos, base_y);
+        }
+        let bytes = with_table(face.bytes, b"GPOS", gpos);
+        let shaped = shape(&bytes, "q\u{0301} กิ").unwrap();
+        let acute_glyph = shaped.glyphs.iter().find(|g| g.id.to_u32() == u32::from(acute)).unwrap();
+        let sara_glyph = shaped.glyphs.iter().find(|g| g.id.to_u32() == u32::from(sara_i)).unwrap();
+        assert!(acute_glyph.position[1].abs() > 0.0, "Latin NFD accent lost latn GPOS: {acute_glyph:?}");
+        assert!(sara_glyph.position[1].abs() > 0.0, "Thai mark lost thai GPOS: {sara_glyph:?}");
+    }
 }
