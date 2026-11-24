@@ -1977,4 +1977,73 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
     }
+
+    /// Dropping `GDEF` with CGJ (`U+034F`) between ligature base and mark must not skip `mark_ord`
+    /// onto a later component and fail open on an unpositioned NULL-anchor `MarkToLigature` mark.
+    #[test]
+    fn thai_cgj_does_not_shift_ligature_component_or_fail_open_without_gdef() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let [no_gid, ka_gid, mid_gid, sara_i, mai_ek] = [
+            shape(face.bytes, "น").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ร").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "กิ").unwrap().glyphs[1].id.to_u32(),
+            shape(face.bytes, "ก\u{0e48}").unwrap().glyphs[1].id.to_u32(),
+        ]
+        .map(|g| u16::try_from(g).unwrap());
+        let mid_adv = FontRef::new(face.bytes)
+            .unwrap()
+            .glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default())
+            .advance_width(GlyphId::new(u32::from(mid_gid)))
+            .unwrap_or_default()
+            .round() as i16;
+        let gsub = minimal_transitive_liga_gsub(no_gid, ka_gid, mid_gid, mid_gid, false);
+        let mut gpos = minimal_thai_gpos(mid_gid, sara_i, sara_i, mid_adv, 0, 0);
+        let l0 = u16_at(&gpos, 8) + u16_at(&gpos, u16_at(&gpos, 8) + 2);
+        gpos[l0..l0 + 2].copy_from_slice(&5u16.to_be_bytes());
+        gpos.truncate(l0 + 8);
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+        let marks = if sara_i < mai_ek { [(sara_i, 0i16), (mai_ek, -250i16)] } else { [(mai_ek, -250i16), (sara_i, 0i16)] };
+        for w in [1u16, 12, 20, 1, 26, 48, 1, 2, marks[0].0, marks[1].0, 1, 1, mid_gid, 2, 0, 10, 0, 16] {
+            push(&mut gpos, w);
+        }
+        for (_, y) in marks {
+            push(&mut gpos, 1);
+            push_i(&mut gpos, 0);
+            push_i(&mut gpos, y);
+        }
+        for w in [1u16, 4, 2, 0, 6, 1] {
+            push(&mut gpos, w);
+        }
+        push_i(&mut gpos, mid_adv);
+        push_i(&mut gpos, 0);
+        let with_gpos = with_table(face.bytes, b"GPOS", gpos);
+        let with_gsub = with_table(&with_gpos, b"GSUB", gsub);
+        let no_gdef = with_table(&with_gsub, b"GDEF", Vec::new());
+        assert!(shape(&no_gdef, "น\u{0e34}ก\u{0e48}").unwrap_err().contains("mark positioning"));
+        let error = shape(&no_gdef, "น\u{034f}\u{0e34}ก\u{0e48}").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+    }
+
+    /// Valid Thai clusters with CGJ (`U+034F`) between base and mark (or between marks) still pass
+    /// zero-delta GPOS when `GDEF` maps `' '` as a non-mark base glyph.
+    #[test]
+    fn thai_cgj_between_base_and_zero_delta_mark_is_accepted() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "กิ่").unwrap();
+        let [ka, sara_i, mai_ek] = [0, 1, 2].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+        let ka_adv = FontRef::new(face.bytes)
+            .unwrap()
+            .glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default())
+            .advance_width(GlyphId::new(u32::from(ka)))
+            .unwrap_or_default()
+            .round() as i16;
+        let bytes = with_table(face.bytes, b"GPOS", minimal_thai_gpos(ka, sara_i, mai_ek, ka_adv, 0, 1));
+        assert!(shape(&bytes, "ก\u{0e34}").is_ok(), "baseline zero-delta passes");
+        assert!(shape(&bytes, "ก\u{034f}\u{0e34}").is_ok(), "CGJ before zero-delta mark should pass");
+        assert!(shape(&bytes, "ก\u{0e34}\u{034f}\u{0e48}").is_ok(), "CGJ before mkmk mark should pass");
+    }
 }
