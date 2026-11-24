@@ -7743,8 +7743,9 @@ fn deep_indirect_outline_past_64_levels_is_counted_and_removed_on_a_small_stack(
         let mut inline_doc = outlined_document(vec![b"<< /Title (Target) >>".to_vec()]);
         inline_doc
             .set(ObjRef::new(5, 0), Object::Dict(Dict::from_iter([(b"Type".to_vec(), Object::name("Outlines")), (b"First".to_vec(), deep_inline)])));
+        assert!(matches!(remove_hidden(&mut inline_doc, &[Hidden::Bookmarks]), Err(crate::RedactError::TooDeep)));
         let inline_counts: std::collections::HashMap<Hidden, usize> = scan(&inline_doc).into_iter().collect();
-        assert_eq!(inline_counts.get(&Hidden::Bookmarks), Some(&257));
+        assert_eq!(inline_counts.get(&Hidden::Bookmarks), Some(&1));
     });
 }
 
@@ -7768,5 +7769,26 @@ fn collect_owned_reads_metadata_inside_inline_streams_on_a_small_stack() {
         assert!(kept.iter().any(|(h, n)| *h == Hidden::Metadata && *n >= 2), "{kept:?}");
         let bytes = write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
         assert!(!bytes.windows(15).any(|w| w == b"LEAK_STREAM_XMP"), "stream metadata survived");
+    });
+}
+
+/// Name trees nested past depth 32 (within parser depth 128) are counted by `scan` and cleared
+/// by `remove_hidden(Attachments)` on a 1 MiB stack rather than failing with `NothingToApply`.
+#[test]
+fn deep_indirect_name_tree_is_counted_and_removed_on_a_small_stack() {
+    use crate::sanitize::{Hidden, remove_hidden, scan};
+    on_small_stack(|| {
+        let levels = 40usize;
+        let mut objects: Vec<Vec<u8>> = (0..levels).map(|i| format!("<< /Kids [{} 0 R] >>", 8 + i).into_bytes()).collect();
+        objects.push(b"<< /Names [(secret.txt) << /Type /Filespec /F (secret.txt) >>] >>".to_vec());
+        let mut doc = one_page(b"BT ET", "", objects);
+        doc.update_dict(ObjRef::new(1, 0), |d| {
+            d.set(b"Names".to_vec(), Object::Dict(Dict::from_iter([(b"EmbeddedFiles".to_vec(), Object::Ref(ObjRef::new(7, 0)))])));
+        })
+        .unwrap();
+        let counts: std::collections::HashMap<Hidden, usize> = scan(&doc).into_iter().collect();
+        assert_eq!(counts.get(&Hidden::Attachments), Some(&1));
+        let done = remove_hidden(&mut doc, &[Hidden::Attachments]).unwrap();
+        assert_eq!(done, [(Hidden::Attachments, 1)]);
     });
 }
