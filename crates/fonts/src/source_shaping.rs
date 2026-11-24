@@ -1503,4 +1503,40 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
         assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
     }
+
+    fn aliased_single_gsub(lookups: u16, subs: u16, ka: u16) -> Vec<u8> {
+        let mut gsub = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        for w in [1u16, 0, 10, 12, 14, 0, 0, lookups] {
+            push(&mut gsub, w);
+        }
+        let l0_off = 2 + 2 * lookups;
+        for _ in 0..lookups {
+            push(&mut gsub, l0_off);
+        }
+        let sub_off = 6 + 2 * subs;
+        for w in [1u16, 0, subs] {
+            push(&mut gsub, w);
+        }
+        for _ in 0..subs {
+            push(&mut gsub, sub_off);
+        }
+        for w in [1u16, 6, 0, 1, 1, ka] {
+            push(&mut gsub, w);
+        }
+        gsub
+    }
+
+    /// Aliased `SingleSubst`/`MultipleSubst`/`AlternateSubst` subtables must fail within budget
+    /// even when the GSUB defines zero ligatures.
+    #[test]
+    fn pathological_aliased_gsub_rewrites_fail_promptly() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let ka = u16::try_from(shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32()).unwrap();
+        let bytes = with_table(face.bytes, b"GSUB", aliased_single_gsub(500, 10_000, ka));
+        let started = std::time::Instant::now();
+        let error = shape(&bytes, "กิ").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+    }
 }
