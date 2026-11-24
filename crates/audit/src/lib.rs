@@ -926,8 +926,9 @@ fn subtype(doc: &Document, dict: &Dict) -> Result<Option<Vec<u8>>, AuditError> {
 }
 
 /// The box of each quadrilateral in an annotation's `/QuadPoints` (8 numbers each), or `None` when
-/// it has none, or they aren't a whole number of quadrilaterals of finite numbers. The length is
-/// checked before any number is read.
+/// it has none, or they aren't a whole number of quadrilaterals of finite numbers. That the
+/// length is a multiple of 8 is checked before any number is read; the comparison budget bounds
+/// how many boxes are compared.
 fn quad_boxes(doc: &Document, dict: &Dict) -> Option<Vec<[f64; 4]>> {
     let quads = dict.get(b"QuadPoints").map(|q| doc.resolve(q))?;
     let numbers = quads.as_array().filter(|q| !q.is_empty() && q.len() % 8 == 0)?;

@@ -127,9 +127,9 @@ pub fn export_data(doc: &Document, format: Format) -> String {
         }
         Format::Csv => format!("{}\n{}\n", csv_record(fields.iter().map(|f| &f.0)), csv_record(fields.iter().map(|f| &f.1))),
         _ => {
-            // A formula-like cell gets a leading `'`, as in CSV; `tab_delimited` takes it off.
+            // A formula-like cell gets a leading `'`, as in CSV, and keeps it on import.
             let clean = |s: &str| {
-                let s = if csv_guarded(s) { format!("'{s}") } else { s.to_string() };
+                let s = if runs_as_formula(s) { format!("'{s}") } else { s.to_string() };
                 s.replace(['\t', '\n', '\r'], " ")
             };
             format!(
@@ -372,7 +372,7 @@ fn import_table(doc: &mut Document, text: &str) -> Result<Report, DataError> {
 fn tab_delimited(t: &str) -> Result<Vec<(String, Vec<String>)>, DataError> {
     let mut lines = t.lines();
     let (Some(head), Some(row)) = (lines.next(), lines.next()) else { return Err(DataError::UnknownFormat) };
-    Ok(head.split('\t').map(|k| csv_text(k.to_string())).zip(row.split('\t')).map(|(k, v)| (k, vec![csv_text(v.to_string())])).collect())
+    Ok(head.split('\t').map(str::to_string).zip(row.split('\t')).map(|(k, v)| (k, vec![v.to_string()])).collect())
 }
 
 /// Import comments and/or field values from XFDF, FDF, XML, CSV or tab-delimited text
