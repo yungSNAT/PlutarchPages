@@ -578,8 +578,8 @@ impl Search {
 
     /// The search a save makes ([`crate::survivors`]): only a whole removed run of at least
     /// [`MIN_WHOLE`] letters or digits, at word edges, or a value of 2 or more words part of a
-    /// removed run ([`Whole`]), holds it. A false match there refuses the save, where the metadata scrub's only removes an
-    /// entry.
+    /// removed run ([`Whole`]), holds it. A false match there refuses the save, where the
+    /// metadata scrub's only removes an entry.
     ///
     /// Its cost grows with the length of what is searched alone, not times the removed text, so
     /// a large redaction in a large file stays within the work limit.
