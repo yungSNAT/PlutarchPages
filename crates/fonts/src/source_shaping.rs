@@ -95,9 +95,7 @@ fn collect_rewrites<'a, T, E>(
 ) -> Option<()> {
     for sub in subs {
         charge_gsub_work(work)?;
-        if let Ok(sub) = sub {
-            rewrites.push(map(sub));
-        }
+        rewrites.push(map(sub.ok()?));
     }
     Some(())
 }
@@ -113,35 +111,28 @@ fn step_lig_rewrite(
     charge_gsub_work(work)?;
     match rw {
         LigRewrite::Single(SingleSubst::Format1(s)) => {
-            if s.coverage().is_ok_and(|c| c.get(gid).is_some()) {
+            if s.coverage().ok()?.get(gid).is_some() {
                 let target = u32::from((gid.to_u32() as i32 + i32::from(s.delta_glyph_id())) as u16);
                 push_lig_target(target, work, ligatures, queue)?;
             }
         }
         LigRewrite::Single(SingleSubst::Format2(s)) => {
-            if let Ok(cov) = s.coverage()
-                && let Some(idx) = cov.get(gid)
+            if let Some(idx) = s.coverage().ok()?.get(gid)
                 && let Some(sub) = s.substitute_glyph_ids().get(usize::from(idx))
             {
                 push_lig_target(sub.get().to_u32(), work, ligatures, queue)?;
             }
         }
         LigRewrite::Multiple(s) => {
-            if let Ok(cov) = s.coverage()
-                && let Some(idx) = cov.get(gid)
-                && let Ok(seq) = s.sequences().get(usize::from(idx))
-            {
-                for sub in seq.substitute_glyph_ids() {
+            if let Some(idx) = s.coverage().ok()?.get(gid) {
+                for sub in s.sequences().get(usize::from(idx)).ok()?.substitute_glyph_ids() {
                     push_lig_target(sub.get().to_u32(), work, ligatures, queue)?;
                 }
             }
         }
         LigRewrite::Alternate(s) => {
-            if let Ok(cov) = s.coverage()
-                && let Some(idx) = cov.get(gid)
-                && let Ok(set) = s.alternate_sets().get(usize::from(idx))
-            {
-                for alt in set.alternate_glyph_ids() {
+            if let Some(idx) = s.coverage().ok()?.get(gid) {
+                for alt in s.alternate_sets().get(usize::from(idx)).ok()?.alternate_glyph_ids() {
                     push_lig_target(alt.get().to_u32(), work, ligatures, queue)?;
                 }
             }
@@ -166,27 +157,22 @@ fn ligature_glyphs(face: &FontRef) -> Option<std::collections::HashSet<u32>> {
     let mut rewrites = Vec::new();
     for lookup in list.lookups().iter() {
         charge_gsub_work(&mut work)?;
-        let Ok(lookup) = lookup else { continue };
-        match lookup.subtables() {
-            Ok(SubstitutionSubtables::Ligature(subs)) => {
+        match lookup.ok()?.subtables().ok()? {
+            SubstitutionSubtables::Ligature(subs) => {
                 for sub in subs.iter() {
                     charge_gsub_work(&mut work)?;
-                    let Ok(sub) = sub else { continue };
-                    for set in sub.ligature_sets().iter() {
+                    for set in sub.ok()?.ligature_sets().iter() {
                         charge_gsub_work(&mut work)?;
-                        let Ok(set) = set else { continue };
-                        for lig in set.ligatures().iter() {
+                        for lig in set.ok()?.ligatures().iter() {
                             charge_gsub_work(&mut work)?;
-                            if let Ok(lig) = lig {
-                                ligatures.insert(lig.ligature_glyph().to_u32());
-                            }
+                            ligatures.insert(lig.ok()?.ligature_glyph().to_u32());
                         }
                     }
                 }
             }
-            Ok(SubstitutionSubtables::Single(subs)) => collect_rewrites(subs.iter(), LigRewrite::Single, &mut work, &mut rewrites)?,
-            Ok(SubstitutionSubtables::Multiple(subs)) => collect_rewrites(subs.iter(), LigRewrite::Multiple, &mut work, &mut rewrites)?,
-            Ok(SubstitutionSubtables::Alternate(subs)) => collect_rewrites(subs.iter(), LigRewrite::Alternate, &mut work, &mut rewrites)?,
+            SubstitutionSubtables::Single(subs) => collect_rewrites(subs.iter(), LigRewrite::Single, &mut work, &mut rewrites)?,
+            SubstitutionSubtables::Multiple(subs) => collect_rewrites(subs.iter(), LigRewrite::Multiple, &mut work, &mut rewrites)?,
+            SubstitutionSubtables::Alternate(subs) => collect_rewrites(subs.iter(), LigRewrite::Alternate, &mut work, &mut rewrites)?,
             _ => {}
         }
     }
@@ -266,6 +252,11 @@ impl<'a> MarkFilter<'a> {
     }
 }
 
+fn charge_thai_work(work: &mut usize) -> Option<()> {
+    *work = work.saturating_add(1);
+    (*work <= MAX_THAI_LOOKUP_WORK).then_some(())
+}
+
 fn mark_class_with_valid_anchor(
     marks: &skrifa::raw::tables::layout::CoverageTable<'_>,
     classes: &skrifa::raw::tables::gpos::MarkArray<'_>,
@@ -277,45 +268,110 @@ fn mark_class_with_valid_anchor(
     Some(usize::from(record.mark_class()))
 }
 
+fn lig_attach_ok(
+    att: &skrifa::raw::tables::gpos::LigatureAttach<'_>,
+    class: usize,
+    comp_spec: (usize, Option<usize>),
+    work: &mut usize,
+) -> Option<bool> {
+    let comps = att.component_records();
+    if comps.is_empty() {
+        return Some(false);
+    }
+    let anchor_ok = |idx: usize| comps.get(idx).is_ok_and(|r| r.ligature_anchors(att.offset_data()).get(class).is_some_and(|a| a.is_ok()));
+    match comp_spec {
+        (0, Some(usize::MAX)) => {
+            charge_thai_work(work)?;
+            Some(anchor_ok(comps.len() - 1))
+        }
+        (bases_in_text, Some(idx)) if bases_in_text == comps.len() => {
+            charge_thai_work(work)?;
+            Some(anchor_ok(idx))
+        }
+        _ => {
+            for c in 0..comps.len() {
+                charge_thai_work(work)?;
+                if !anchor_ok(c) {
+                    return Some(false);
+                }
+            }
+            Some(true)
+        }
+    }
+}
+
 /// Whether `lookup` (mark-to-base, mark-to-ligature, or mark-to-mark) covers `mark` and `onto`
-/// with valid parsed anchors for `mark` and its target at `mark`'s class.
-fn lookup_attaches(lookup: &skrifa::raw::tables::gpos::PositionLookup<'_>, mark: GlyphId, onto: GlyphId) -> bool {
+/// with valid parsed anchors for `mark` and its target at `mark`'s class, charging `work` on
+/// each visited subtable and component record.
+fn lookup_attaches(
+    lookup: &skrifa::raw::tables::gpos::PositionLookup<'_>,
+    (mark, onto): (GlyphId, GlyphId),
+    comp_spec: (usize, Option<usize>),
+    work: &mut usize,
+) -> Option<bool> {
     use skrifa::raw::tables::gpos::PositionSubtables;
     match lookup.subtables() {
-        Ok(PositionSubtables::MarkToBase(subtables)) => subtables.iter().flatten().any(|t| {
-            let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark_coverage(), t.base_coverage(), t.mark_array(), t.base_array()) else {
-                return false;
-            };
-            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
-                return false;
-            };
-            anchors.base_records().get(usize::from(b)).is_ok_and(|r| r.base_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
-        }),
-        Ok(PositionSubtables::MarkToLig(subtables)) => subtables.iter().flatten().any(|t| {
-            let (Ok(marks), Ok(ligs), Ok(classes), Ok(ligs_arr)) = (t.mark_coverage(), t.ligature_coverage(), t.mark_array(), t.ligature_array())
-            else {
-                return false;
-            };
-            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), ligs.get(onto)) else {
-                return false;
-            };
-            ligs_arr.ligature_attaches().get(usize::from(b)).is_ok_and(|att| {
-                let comps = att.component_records();
-                !comps.is_empty()
-                    && (0..comps.len())
-                        .all(|c| comps.get(c).is_ok_and(|r| r.ligature_anchors(att.offset_data()).get(class).is_some_and(|a| a.is_ok())))
-            })
-        }),
-        Ok(PositionSubtables::MarkToMark(subtables)) => subtables.iter().flatten().any(|t| {
-            let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark1_coverage(), t.mark2_coverage(), t.mark1_array(), t.mark2_array()) else {
-                return false;
-            };
-            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
-                return false;
-            };
-            anchors.mark2_records().get(usize::from(b)).is_ok_and(|r| r.mark2_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
-        }),
-        _ => false,
+        Ok(PositionSubtables::MarkToBase(subtables)) => {
+            for t in subtables.iter() {
+                charge_thai_work(work)?;
+                let Ok(t) = t else { continue };
+                let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark_coverage(), t.base_coverage(), t.mark_array(), t.base_array()) else {
+                    continue;
+                };
+                let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
+                    continue;
+                };
+                if anchors
+                    .base_records()
+                    .get(usize::from(b))
+                    .is_ok_and(|r| r.base_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
+                {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        Ok(PositionSubtables::MarkToLig(subtables)) => {
+            for t in subtables.iter() {
+                charge_thai_work(work)?;
+                let Ok(t) = t else { continue };
+                let (Ok(marks), Ok(ligs), Ok(classes), Ok(ligs_arr)) = (t.mark_coverage(), t.ligature_coverage(), t.mark_array(), t.ligature_array())
+                else {
+                    continue;
+                };
+                let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), ligs.get(onto)) else {
+                    continue;
+                };
+                if let Ok(att) = ligs_arr.ligature_attaches().get(usize::from(b))
+                    && lig_attach_ok(&att, class, comp_spec, work)?
+                {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        Ok(PositionSubtables::MarkToMark(subtables)) => {
+            for t in subtables.iter() {
+                charge_thai_work(work)?;
+                let Ok(t) = t else { continue };
+                let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark1_coverage(), t.mark2_coverage(), t.mark1_array(), t.mark2_array())
+                else {
+                    continue;
+                };
+                let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
+                    continue;
+                };
+                if anchors
+                    .mark2_records()
+                    .get(usize::from(b))
+                    .is_ok_and(|r| r.mark2_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
+                {
+                    return Some(true);
+                }
+            }
+            Some(false)
+        }
+        _ => Some(false),
     }
 }
 
@@ -409,6 +465,9 @@ struct ThaiCluster {
     in_ligature: bool,
     last_base: Option<u32>,
     last_mark: Vec<Option<u32>>,
+    bases_in_text: usize,
+    mark_comps: Vec<usize>,
+    mark_ord: usize,
 }
 
 impl ThaiCluster {
@@ -418,6 +477,25 @@ impl ThaiCluster {
         self.in_ligature = false;
         self.last_base = None;
         self.last_mark.fill(None);
+        self.bases_in_text = 0;
+        self.mark_comps.clear();
+        self.mark_ord = 0;
+    }
+
+    fn set_text(&mut self, text: &str) {
+        self.bases_in_text = 0;
+        self.mark_comps.clear();
+        self.mark_ord = 0;
+        for c in text.chars() {
+            if default_ignorable(c) {
+                continue;
+            }
+            if c == '\u{0e33}' || unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM {
+                self.mark_comps.push(self.bases_in_text.saturating_sub(1));
+            } else {
+                self.bases_in_text += 1;
+            }
+        }
     }
 }
 
@@ -428,7 +506,7 @@ struct ThaiValidator<'a> {
     filter: MarkFilter<'a>,
     selected: Vec<(u16, Option<usize>, skrifa::raw::tables::gpos::PositionLookup<'a>)>,
     mkmk_slots: usize,
-    cache: std::collections::HashMap<(u16, u32, u32), bool>,
+    cache: std::collections::HashMap<(u16, u32, u32, usize, Option<usize>), bool>,
     work: usize,
 }
 
@@ -440,7 +518,9 @@ impl<'a> ThaiValidator<'a> {
         let list = gpos.lookup_list().ok()?;
         let mut mkmk_slots = 0usize;
         let mut selected = Vec::new();
+        let mut work = 0usize;
         for &i in lookups {
+            charge_thai_work(&mut work)?;
             let Ok(lookup) = list.lookups().get(usize::from(i)) else { continue };
             if lookup.lookup_flag().contains(LookupFlag::IGNORE_MARKS) {
                 continue;
@@ -454,7 +534,7 @@ impl<'a> ThaiValidator<'a> {
                 _ => {}
             }
         }
-        Some(Self { filter: MarkFilter::new(face)?, selected, mkmk_slots, cache: std::collections::HashMap::new(), work: 0 })
+        Some(Self { filter: MarkFilter::new(face)?, selected, mkmk_slots, cache: std::collections::HashMap::new(), work })
     }
 
     fn charge(&mut self, units: usize) -> bool {
@@ -466,19 +546,33 @@ impl<'a> ThaiValidator<'a> {
         if !self.charge(self.selected.len()) {
             return None;
         }
-        let attached = self.selected.iter().any(|&(idx, mkmk_slot, ref lookup)| {
+        let mark_comp = entry.mark_comps.get(entry.mark_ord).copied();
+        for &(idx, mkmk_slot, ref lookup) in &self.selected {
             let flag = lookup.lookup_flag();
             if !self.filter.allows_current(flag, lookup.mark_filtering_set(), mark) {
-                return false;
+                continue;
             }
             let onto = match mkmk_slot {
                 Some(slot) => entry.last_mark.get(slot).copied().flatten(),
                 None => entry.last_base.filter(|&b| self.filter.allows_non_mark(flag, GlyphId::new(b))),
             };
-            let Some(onto) = onto else { return false };
-            *self.cache.entry((idx, mark.to_u32(), onto)).or_insert_with(|| lookup_attaches(lookup, mark, GlyphId::new(onto)))
-        });
-        Some(attached)
+            let Some(onto) = onto else { continue };
+            let comp_spec =
+                if mkmk_slot.is_none() && self.filter.ligatures.contains(&onto) { (entry.bases_in_text, mark_comp) } else { (0, Some(usize::MAX)) };
+            let key = (idx, mark.to_u32(), onto, comp_spec.0, comp_spec.1);
+            let hit = match self.cache.get(&key) {
+                Some(&cached) => cached,
+                None => {
+                    let ok = lookup_attaches(lookup, (mark, GlyphId::new(onto)), comp_spec, &mut self.work)?;
+                    self.cache.insert(key, ok);
+                    ok
+                }
+            };
+            if hit {
+                return Some(true);
+            }
+        }
+        Some(false)
     }
 
     fn update_last_marks(&mut self, entry: &mut ThaiCluster, mark: GlyphId) -> bool {
@@ -517,6 +611,7 @@ impl<'a> ThaiValidator<'a> {
             cluster.last_mark.fill(None);
             true
         } else {
+            cluster.mark_ord += 1;
             self.update_last_marks(cluster, gid)
         }
     }
@@ -613,6 +708,12 @@ fn places_thai_marks(
             cluster.reset();
         }
         cur_start = Some(start);
+        let cluster_end = if rtl {
+            if c_start > 0 { infos[c_start - 1].cluster as usize } else { run.len() }
+        } else {
+            infos.get(c_end).map_or(run.len(), |g| g.cluster as usize)
+        };
+        cluster.set_text(run.get(start..cluster_end).unwrap_or_default());
         for idx in c_start..c_end {
             let (info, on, off) = (&infos[idx], &on_pos[idx], &off_pos[idx]);
             if !validator.step_glyph(&mut cluster, GlyphId::new(info.glyph_id), at(on) != at(off), on.x_advance == 0) {
