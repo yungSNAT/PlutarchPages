@@ -80,11 +80,30 @@ enum LigRewrite<'a> {
     Alternate(skrifa::raw::tables::gsub::AlternateSubstFormat1<'a>),
 }
 
-fn push_lig_target(target: u32, work: &mut usize, ligatures: &mut std::collections::HashSet<u32>, queue: &mut Vec<u32>) -> Option<()> {
+fn charge_gsub_work(work: &mut usize) -> Option<()> {
     *work = work.saturating_add(1);
-    (*work <= MAX_THAI_GSUB_WORK).then_some(())?;
+    (*work <= MAX_THAI_GSUB_WORK).then_some(())
+}
+
+fn push_lig_target(target: u32, work: &mut usize, ligatures: &mut std::collections::HashSet<u32>, queue: &mut Vec<u32>) -> Option<()> {
+    charge_gsub_work(work)?;
     if ligatures.insert(target) {
         queue.push(target);
+    }
+    Some(())
+}
+
+fn collect_rewrites<'a, T, E>(
+    subs: impl Iterator<Item = Result<T, E>>,
+    map: fn(T) -> LigRewrite<'a>,
+    work: &mut usize,
+    rewrites: &mut Vec<LigRewrite<'a>>,
+) -> Option<()> {
+    for sub in subs {
+        charge_gsub_work(work)?;
+        if let Ok(sub) = sub {
+            rewrites.push(map(sub));
+        }
     }
     Some(())
 }
@@ -97,8 +116,7 @@ fn step_lig_rewrite(
     queue: &mut Vec<u32>,
 ) -> Option<()> {
     use skrifa::raw::tables::gsub::SingleSubst;
-    *work = work.saturating_add(1);
-    (*work <= MAX_THAI_GSUB_WORK).then_some(())?;
+    charge_gsub_work(work)?;
     match rw {
         LigRewrite::Single(SingleSubst::Format1(s)) => {
             if s.coverage().is_ok_and(|c| c.get(gid).is_some()) {
@@ -153,40 +171,28 @@ fn ligature_glyphs(face: &FontRef) -> Option<std::collections::HashSet<u32>> {
     let mut ligatures = std::collections::HashSet::new();
     let mut rewrites = Vec::new();
     for lookup in list.lookups().iter() {
-        work = work.saturating_add(1);
-        (work <= MAX_THAI_GSUB_WORK).then_some(())?;
+        charge_gsub_work(&mut work)?;
         let Ok(lookup) = lookup else { continue };
         match lookup.subtables() {
             Ok(SubstitutionSubtables::Ligature(subs)) => {
-                for sub in subs.iter().flatten() {
-                    work = work.saturating_add(1);
-                    (work <= MAX_THAI_GSUB_WORK).then_some(())?;
-                    for set in sub.ligature_sets().iter().flatten() {
-                        work = work.saturating_add(1);
-                        (work <= MAX_THAI_GSUB_WORK).then_some(())?;
-                        for lig in set.ligatures().iter().flatten() {
-                            work = work.saturating_add(1);
-                            (work <= MAX_THAI_GSUB_WORK).then_some(())?;
-                            ligatures.insert(lig.ligature_glyph().to_u32());
+                for sub in subs.iter() {
+                    charge_gsub_work(&mut work)?;
+                    let Ok(sub) = sub else { continue };
+                    for set in sub.ligature_sets().iter() {
+                        charge_gsub_work(&mut work)?;
+                        let Ok(set) = set else { continue };
+                        for lig in set.ligatures().iter() {
+                            charge_gsub_work(&mut work)?;
+                            if let Ok(lig) = lig {
+                                ligatures.insert(lig.ligature_glyph().to_u32());
+                            }
                         }
                     }
                 }
             }
-            Ok(SubstitutionSubtables::Single(subs)) => {
-                for sub in subs.iter().flatten() {
-                    rewrites.push(LigRewrite::Single(sub));
-                }
-            }
-            Ok(SubstitutionSubtables::Multiple(subs)) => {
-                for sub in subs.iter().flatten() {
-                    rewrites.push(LigRewrite::Multiple(sub));
-                }
-            }
-            Ok(SubstitutionSubtables::Alternate(subs)) => {
-                for sub in subs.iter().flatten() {
-                    rewrites.push(LigRewrite::Alternate(sub));
-                }
-            }
+            Ok(SubstitutionSubtables::Single(subs)) => collect_rewrites(subs.iter(), LigRewrite::Single, &mut work, &mut rewrites)?,
+            Ok(SubstitutionSubtables::Multiple(subs)) => collect_rewrites(subs.iter(), LigRewrite::Multiple, &mut work, &mut rewrites)?,
+            Ok(SubstitutionSubtables::Alternate(subs)) => collect_rewrites(subs.iter(), LigRewrite::Alternate, &mut work, &mut rewrites)?,
             _ => {}
         }
     }
