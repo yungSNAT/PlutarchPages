@@ -468,6 +468,8 @@ struct ThaiCluster {
     bases_in_text: usize,
     mark_comps: Vec<usize>,
     mark_ord: usize,
+    hidden_ignorables: usize,
+    has_space: bool,
 }
 
 impl ThaiCluster {
@@ -480,14 +482,19 @@ impl ThaiCluster {
         self.bases_in_text = 0;
         self.mark_comps.clear();
         self.mark_ord = 0;
+        self.hidden_ignorables = 0;
+        self.has_space = false;
     }
 
     fn set_text(&mut self, text: &str) {
         self.bases_in_text = 0;
         self.mark_comps.clear();
         self.mark_ord = 0;
+        self.hidden_ignorables = 0;
+        self.has_space = text.contains(' ');
         for c in text.chars() {
             if default_ignorable(c) {
+                self.hidden_ignorables += 1;
                 continue;
             }
             if c == '\u{0e33}' || unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM {
@@ -504,6 +511,7 @@ const MAX_THAI_LOOKUP_WORK: usize = 1 << 22;
 
 struct ThaiValidator<'a> {
     filter: MarkFilter<'a>,
+    space: Option<u32>,
     selected: Vec<(u16, Option<usize>, skrifa::raw::tables::gpos::PositionLookup<'a>)>,
     mkmk_slots: usize,
     cache: std::collections::HashMap<(u16, u32, u32, usize, Option<usize>), bool>,
@@ -512,6 +520,7 @@ struct ThaiValidator<'a> {
 
 impl<'a> ThaiValidator<'a> {
     fn new(face: &FontRef<'a>, lookups: &[u16]) -> Option<Self> {
+        use skrifa::MetadataProvider as _;
         use skrifa::raw::tables::gpos::PositionSubtables;
         use skrifa::raw::tables::layout::LookupFlag;
         let gpos = face.gpos().ok()?;
@@ -534,7 +543,16 @@ impl<'a> ThaiValidator<'a> {
                 _ => {}
             }
         }
-        Some(Self { filter: MarkFilter::new(face)?, selected, mkmk_slots, cache: std::collections::HashMap::new(), work })
+        let space = face.charmap().map(' ').map(GlyphId::to_u32);
+        Some(Self { filter: MarkFilter::new(face)?, space, selected, mkmk_slots, cache: std::collections::HashMap::new(), work })
+    }
+
+    fn skip_hidden_ignorable(&self, cluster: &mut ThaiCluster, gid: u32, pos: (i32, i32, i32, i32), not_leading_space: bool) -> bool {
+        if cluster.hidden_ignorables > 0 && self.space == Some(gid) && pos == (0, 0, 0, 0) && (!cluster.has_space || not_leading_space) {
+            cluster.hidden_ignorables -= 1;
+            return true;
+        }
+        false
     }
 
     fn charge(&mut self, units: usize) -> bool {
@@ -716,6 +734,10 @@ fn places_thai_marks(
         cluster.set_text(run.get(start..cluster_end).unwrap_or_default());
         for idx in c_start..c_end {
             let (info, on, off) = (&infos[idx], &on_pos[idx], &off_pos[idx]);
+            let not_leading_space = if rtl { idx + 1 < c_end } else { idx > c_start };
+            if validator.skip_hidden_ignorable(&mut cluster, info.glyph_id, at(on), not_leading_space) {
+                continue;
+            }
             if !validator.step_glyph(&mut cluster, GlyphId::new(info.glyph_id), at(on) != at(off), on.x_advance == 0) {
                 return None;
             }
