@@ -15,11 +15,11 @@
 //! the text when a whole removed run of at least 4 letters or digits is in it, beginning and
 //! ending at word edges ("Name: Jane Citizen" counts its value after the label, and its parts of
 //! 2 or more words between commas, as runs too), or when its whole value, of 2 words or more, is
-//! part of a removed run's value. A form's own wording (field names, tooltips, choice options)
-//! and XFA hold it only by a whole run. Told when applying, never a reason to refuse: a single
-//! word of a removed sentence, a few of its words inside a longer value (the bookmark "Interview
-//! with Jane Citizen" after redacting "Jane Citizen paid $500"), and a run joined to other
-//! letters ("projectBluefin", "Bluefin2"). Not searched at all: page
+//! part of a removed run's value. Told when applying, never a reason to refuse: a form's own
+//! wording (field names, tooltips, choice options, the XFA template), a single word of a removed
+//! sentence, a few of its words inside a longer value (the bookmark "Interview with Jane
+//! Citizen" after redacting "Jane Citizen paid $500"), and a run joined to other letters
+//! ("projectBluefin", "Bluefin2"). Not searched at all: page
 //! content (the redaction's own check), appearance streams, form XObjects, images and marked
 //! content (`/ActualText`), and attachment data that isn't text.
 
@@ -291,6 +291,8 @@ const NOT_TEXT: [&[u8]; 4] = [b"DA", b"DS", b"NM", b"Limits"];
 /// Keys of a signature dictionary that hold binary data rather than text.
 const SIGNATURE_DATA: [&[u8]; 4] = [b"Contents", b"Cert", b"ByteRange", b"Reference"];
 /// A form field's own wording, not what was filled in: its names, tooltip and choice options.
+/// Told, never refused: a redacted table cell or address line ("Female", "New Zealand", "Date of
+/// birth") often equals a form's fixed words, and every way to clear them damages the form.
 const FORM_WORDING: [&[u8]; 4] = [b"T", b"TU", b"TM", b"Opt"];
 
 /// Every object a full save would write whose strings (or script, XFA or embedded file data)
@@ -315,7 +317,7 @@ fn sweep(doc: &Document, search: &Search, out: &mut Found) {
         }
         let mut found = HashSet::new();
         match o {
-            Ok(o) => visit(doc, &o, None, false, 0, search, &mut found),
+            Ok(o) => visit(doc, &o, None, 0, search, &mut found),
             // An object that can't be read may hold it.
             Err(_) => {
                 found.insert(Place::Unread);
@@ -350,9 +352,8 @@ fn page_of(doc: &Document, skip: &mut HashSet<ObjRef>) -> HashMap<ObjRef, usize>
 }
 
 /// Note in `found` the place of each string under `o` that holds the text. `place` is that of the
-/// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text. `wording`:
-/// `o` is a form's own wording ([`FORM_WORDING`], [`Search::wording`]).
-fn visit(doc: &Document, o: &Object, place: Option<Place>, wording: bool, depth: usize, search: &Search, found: &mut HashSet<Place>) {
+/// dictionary holding `o`: `None` where a walk counts it, or its strings aren't text.
+fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search: &Search, found: &mut HashSet<Place>) {
     if depth > MAX_SWEEP_DEPTH {
         found.insert(Place::Unread);
         return;
@@ -364,12 +365,12 @@ fn visit(doc: &Document, o: &Object, place: Option<Place>, wording: bool, depth:
                 && !(search.is_whole() && p == Place::Other)
             {
                 let t = crate::metadata::text_string(s);
-                if !t.trim().is_empty() && if wording { search.wording(&t) } else { search.text(&t) } {
+                if !t.trim().is_empty() && search.text(&t) {
                     found.insert(p);
                 }
             }
         }
-        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, wording, depth + 1, search, found)),
+        Object::Array(items) => items.iter().for_each(|i| visit(doc, i, place, depth + 1, search, found)),
         Object::Dict(d) => visit_dict(doc, d, place, depth, search, found),
         Object::Stream(s) => visit_dict(doc, &s.dict, place, depth, search, found),
         _ => {}
@@ -424,7 +425,16 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
         };
         for (datasets, part) in parts {
             if let Object::Stream(s) = &*doc.resolve(&part) {
-                note(Place::Field, xfa_holds(doc, s, search, datasets));
+                match xfa_parts(doc, s, datasets) {
+                    None => note(Place::Field, None),
+                    Some((data, wording)) => {
+                        note(Place::Field, Some(values_hold(&data, search)));
+                        // A form's own wording is told, never refused ([`FORM_WORDING`]).
+                        if !search.is_whole() {
+                            note(Place::Other, Some(values_hold(&wording, search)));
+                        }
+                    }
+                }
             }
         }
     }
@@ -434,9 +444,12 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
         if NOT_TEXT.contains(&k) || (signature && SIGNATURE_DATA.contains(&k)) {
             continue;
         }
-        let child = if k == b"PieceInfo" && own.is_some() { Some(Place::PrivateData) } else { own };
-        let wording = own == Some(Place::Field) && FORM_WORDING.contains(&k);
-        visit(doc, v, child, wording, depth + 1, search, found);
+        let child = match own {
+            Some(_) if k == b"PieceInfo" => Some(Place::PrivateData),
+            Some(Place::Field) if FORM_WORDING.contains(&k) => Some(Place::Other),
+            _ => own,
+        };
+        visit(doc, v, child, depth + 1, search, found);
     }
 }
 
@@ -501,7 +514,7 @@ fn place_of(d: &pdfcraft_cos::Dict, parent: Option<Place>, depth: usize) -> Opti
 /// isn't text, can't be decoded or is too large.
 fn data_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search) -> Option<bool> {
     let text = stream_text(doc, s)?;
-    Some(!text.trim().is_empty() && search.data(&text, false))
+    Some(!text.trim().is_empty() && search.data(&text))
 }
 
 /// A stream's data as text ([`as_text`]), if it can be read.
@@ -513,26 +526,28 @@ fn stream_text(doc: &Document, s: &pdfcraft_cos::Stream) -> Option<String> {
     as_text(&bytes)
 }
 
-/// [`data_holds`] for an XFA packet, by its XML's text values. `datasets`: the packet is the
-/// form's data (each value searched as a value), not its template or other wording (whole runs
-/// only, [`Search::wording`]); `None` for a whole XDP, whose `datasets` element is the data.
-fn xfa_holds(doc: &Document, s: &pdfcraft_cos::Stream, search: &Search, datasets: Option<bool>) -> Option<bool> {
+/// An XFA packet's XML, split into the form's data and the rest (its template and other
+/// wording). `datasets`: whether the packet is the data; `None` for a whole XDP, whose `datasets`
+/// element is the data, and which is all data when none is found (fail-closed).
+fn xfa_parts(doc: &Document, s: &pdfcraft_cos::Stream, datasets: Option<bool>) -> Option<(String, String)> {
     let xml = stream_text(doc, s)?;
-    let holds = |xml: &str, wording: bool| {
-        let values = crate::metadata::xml_values(xml);
-        search.data(&values.join(" "), wording) || values.iter().any(|v| !v.trim().is_empty() && search.data(v, wording))
-    };
     Some(match datasets {
-        Some(data) => holds(&xml, !data),
-        // No datasets element found: all of it is searched as data (fail-closed).
+        Some(true) => (xml, String::new()),
+        Some(false) => (String::new(), xml),
         None => match datasets_range(&xml) {
-            Some(r) => {
-                holds(xml.get(r.clone()).unwrap_or_default(), false)
-                    || holds(&[xml.get(..r.start).unwrap_or_default(), xml.get(r.end..).unwrap_or_default()].join(" "), true)
-            }
-            None => holds(&xml, false),
+            Some(r) => (
+                xml.get(r.clone()).unwrap_or_default().to_string(),
+                [xml.get(..r.start).unwrap_or_default(), xml.get(r.end..).unwrap_or_default()].join(" "),
+            ),
+            None => (xml, String::new()),
         },
     })
+}
+
+/// Whether XML's text values hold it, all together or one by one.
+fn values_hold(xml: &str, search: &Search) -> bool {
+    let values: Vec<String> = crate::metadata::xml_values(xml).into_iter().filter(|v| !v.trim().is_empty()).collect();
+    !values.is_empty() && (search.data(&values.join(" ")) || values.iter().any(|v| search.data(v)))
 }
 
 /// Where a whole XDP's `datasets` element (`<xfa:datasets>`, any prefix or none) lies.
@@ -643,7 +658,7 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
         let mut unread = false;
         for (_, f) in d.get(b"EF").and_then(|ef| doc.resolve(ef).as_dict().cloned()).unwrap_or_default().iter() {
             if let Object::Stream(s) = &*doc.resolve(f) {
-                match data_holds(doc, s, search, false) {
+                match data_holds(doc, s, search) {
                     Some(true) => return Some(true),
                     Some(false) => {}
                     None => unread = true,

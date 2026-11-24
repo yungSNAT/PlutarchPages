@@ -20,7 +20,7 @@
 //! and by their letters and digits alone, so "Blue fin", "BLUE-FIN" and a tracked heading
 //! collected as "B L U E F I N" all match "Bluefin" (#2539 review).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use pdfcraft_cos::{Document, ObjRef, Object};
 use unicode_normalization::UnicodeNormalization;
@@ -203,25 +203,20 @@ const MAX_SEQUENCES: usize = 1_000_000;
 /// "Date of birth: 1 May 1980"): only its value gives sequences.
 pub(crate) struct Whole {
     runs: aho_corasick::AhoCorasick,
-    /// For each of `runs`' patterns: it is only part of a removed run ([`labelled_parts`]).
-    part: Vec<bool>,
+    any_run: bool,
     sequences: HashSet<u64>,
 }
 
 impl Whole {
-    /// `runs` are each removed run with whether it is only part of one. `None` when the automaton
-    /// can't be built (too large) or there are more than [`MAX_SEQUENCES`] sequences.
-    fn new(runs: &[(String, bool)]) -> Option<Self> {
-        let mut letters: HashMap<String, bool> = HashMap::new();
+    /// `None` when the automaton can't be built (too large) or there are more than
+    /// [`MAX_SEQUENCES`] sequences.
+    fn new(runs: &[String]) -> Option<Self> {
+        let mut letters = HashSet::new();
         let mut sequences = HashSet::new();
-        for (r, part) in runs {
+        for r in runs {
             let l = squeeze(r);
             if l.chars().count() >= MIN_WHOLE {
-                letters.entry(l).and_modify(|p| *p &= *part).or_insert(*part);
-            }
-            // A part's sequences are its run's.
-            if *part {
-                continue;
+                letters.insert(l);
             }
             let words = words_of(label_value(r).unwrap_or(r));
             for i in 0..words.len() {
@@ -236,32 +231,26 @@ impl Whole {
                 return None;
             }
         }
-        let (patterns, part): (Vec<String>, Vec<bool>) = letters.into_iter().unzip();
-        let runs = aho_corasick::AhoCorasick::new(&patterns).ok()?;
-        Some(Self { runs, part, sequences })
+        let runs = aho_corasick::AhoCorasick::new(&letters).ok()?;
+        Some(Self { runs, any_run: !letters.is_empty(), sequences })
     }
 
     fn is_empty(&self) -> bool {
-        self.part.is_empty() && self.sequences.is_empty()
+        !self.any_run && self.sequences.is_empty()
     }
 
     /// Does `text` hold a whole run at word edges, or are its first [`MAX_WORDS`] words a
-    /// sequence of a run's words? A value of more words matches by its first ones alone. A
-    /// form's `wording` matches whole removed runs only: not their parts, not by sequence. Too
+    /// sequence of a run's words? A value of more words matches by its first ones alone. Too
     /// much text to search counts as holding it (fail-closed).
-    fn holds(&self, text: &str, work: &Work, wording: bool) -> bool {
+    fn holds(&self, text: &str, work: &Work) -> bool {
         let Some(text) = normalize(text) else { return true };
         if !work.spend(text.len()) {
             return true;
         }
         let hay = Run::new(text);
         let edge = |i: usize| hay.edges.get(i).copied().unwrap_or(false);
-        let counts = |p: aho_corasick::PatternID| !wording || !self.part.get(p.as_usize()).copied().unwrap_or(true);
-        if !self.part.is_empty() && self.runs.find_overlapping_iter(&hay.letters).any(|m| edge(m.start()) && edge(m.end()) && counts(m.pattern())) {
+        if self.any_run && self.runs.find_overlapping_iter(&hay.letters).any(|m| edge(m.start()) && edge(m.end())) {
             return true;
-        }
-        if wording {
-            return false;
         }
         let words = words_of(&hay.text);
         words.len() >= 2 && self.sequences.contains(&hash_words(words.get(..words.len().min(MAX_WORDS)).unwrap_or_default()))
@@ -605,11 +594,9 @@ impl Search {
         let lookup = if complete {
             // "Name: Jane Citizen": the parts after a label, and between commas or semicolons,
             // are runs of their own, so "Jane Citizen" alone is found too.
-            // A form's wording is matched against the removed runs alone ([`Whole::holds`]).
-            let parts = removed.iter().flat_map(|r| labelled_parts(r)).map(|p| (p, true));
+            let parts = removed.iter().flat_map(|r| labelled_parts(r));
             let reversed = removed.iter().filter(|r| r.chars().any(right_to_left)).map(|r| r.chars().rev().collect::<String>());
-            let runs: Option<Vec<(String, bool)>> =
-                removed.iter().cloned().chain(reversed).map(|r| (r, false)).chain(parts).map(|(r, part)| normalize(&r).map(|r| (r, part))).collect();
+            let runs: Option<Vec<String>> = removed.iter().cloned().chain(parts).chain(reversed).map(|r| normalize(&r)).collect();
             match runs.and_then(|r| Whole::new(&r)) {
                 None => Lookup::Everything,
                 Some(w) if w.is_empty() => Lookup::Nothing,
@@ -649,28 +636,19 @@ impl Search {
     /// Does `text` hold the removed text: a term, or wholly part of a removed run? Past the
     /// work limit, yes (fail-closed).
     pub(crate) fn text(&self, text: &str) -> bool {
-        self.text_within(text, &self.work, false)
+        self.text_within(text, &self.work)
     }
 
-    /// [`Search::text`] for a form's own wording (field names, tooltips, choice options): a
-    /// save's search finds only a whole removed run there, not a part of one or a value part of
-    /// one, since a form's fixed words ("New Zealand", "Date of birth") are part of the lines
-    /// people fill.
-    pub(crate) fn wording(&self, text: &str) -> bool {
-        self.text_within(text, &self.work, true)
+    /// [`Search::text`] for stream data, with its own work limit.
+    pub(crate) fn data(&self, text: &str) -> bool {
+        self.text_within(text, &self.data)
     }
 
-    /// [`Search::text`] for stream data, with its own work limit; `wording` as for
-    /// [`Search::wording`] (an XFA template).
-    pub(crate) fn data(&self, text: &str, wording: bool) -> bool {
-        self.text_within(text, &self.data, wording)
-    }
-
-    fn text_within(&self, text: &str, work: &Work, wording: bool) -> bool {
+    fn text_within(&self, text: &str, work: &Work) -> bool {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
-            Lookup::Whole(w) => w.holds(text, work, wording),
+            Lookup::Whole(w) => w.holds(text, work),
             Lookup::Terms(terms, squeezed, runs) => mentions(text, terms, squeezed, work) || within(text, runs, work),
         }
     }
@@ -681,8 +659,9 @@ impl Search {
         match &self.lookup {
             Lookup::Nothing => false,
             Lookup::Everything => true,
-            Lookup::Whole(w) => xmp_values(doc, o)
-                .is_none_or(|values| w.holds(&values.join(" "), &self.work, false) || values.iter().any(|v| w.holds(v, &self.work, false))),
+            Lookup::Whole(w) => {
+                xmp_values(doc, o).is_none_or(|values| w.holds(&values.join(" "), &self.work) || values.iter().any(|v| w.holds(v, &self.work)))
+            }
             Lookup::Terms(terms, squeezed, runs) => xmp_values(doc, o)
                 .is_none_or(|values| mentions(&values.join(" "), terms, squeezed, &self.work) || values.iter().any(|v| within(v, runs, &self.work))),
         }
