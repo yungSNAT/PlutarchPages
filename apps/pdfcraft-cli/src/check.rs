@@ -21,10 +21,10 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
         let render_password = pdfcraft_engine::render_password_for(bytes.clone(), password);
         Some(inspect(bytes, render_password.as_deref()).map_err(|e| format!("{path}: {e}"))?)
     };
-    use pdfcraft_audit::FindingKind::{CoveredText, UnappliedMark};
+    use pdfcraft_audit::FindingKind::{CoveredText, HiddenUnderWhite, UnappliedMark};
     // Text in a stream nothing refers to is still in the file: it fails the audit as covered text does.
     let unreferenced = report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>();
-    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | UnappliedMark)).count() + unreferenced;
+    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | HiddenUnderWhite | UnappliedMark)).count() + unreferenced;
     let items: Vec<serde_json::Value> = report
         .page_findings
         .into_iter()
