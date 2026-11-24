@@ -586,9 +586,18 @@ index 03c427f..a4436f0 100644
  
      /// Whether object `num` is written as it is held, being one of [`Document::encryption_members`],
 diff --git a/src/cos/document/tests.rs b/src/cos/document/tests.rs
-index dadb9fa..b244c4a 100644
+index dadb9fa..8d3ad36 100644
 --- a/src/cos/document/tests.rs
 +++ b/src/cos/document/tests.rs
+@@ -184,7 +184,7 @@ fn the_key_length_comes_from_the_filter_in_use() {
+     let doc = Document::new_empty();
+     let length = |dict: &str| {
+         let (_, o) = crate::cos::parse_indirect(format!("1 0 obj {dict} endobj").as_bytes(), 0, &|_| None).unwrap();
+-        crate::cos::security::encrypt_dict(&doc, o.as_dict().unwrap()).length_bits
++        crate::cos::security::encrypt_dict(&doc, o.as_dict().unwrap()).unwrap().length_bits
+     };
+     let v4 = |top: &str, filters: &str, stm: &str, str_: &str| {
+         length(&format!("<< /Filter /Standard /V 4 /R 4 {top} /CF << {filters} >> /StmF /{stm} /StrF /{str_} >>"))
 @@ -240,7 +240,7 @@ fn encrypt_dictionary_entries_read_the_same_by_reference() {
          d.set(key.as_bytes().to_vec(), value.clone());
      }
