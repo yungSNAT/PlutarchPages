@@ -1662,4 +1662,47 @@ mod tests {
         assert!(acute_glyph.position[1].abs() > 0.0, "Latin NFD accent lost latn GPOS: {acute_glyph:?}");
         assert!(sara_glyph.position[1].abs() > 0.0, "Thai mark lost thai GPOS: {sara_glyph:?}");
     }
+
+    /// Zero-delta `MarkToLigature` (GPOS type 5) lookups with valid component anchors must be
+    /// accepted by `places_thai_marks`, whilst corrupt or NULL component anchors must be refused.
+    #[test]
+    fn thai_mark_to_ligature_zero_delta_accepts_valid_and_refuses_corrupt_anchors() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let shaped = shape(face.bytes, "กิ").unwrap();
+        let [ka, sara_i] = [0, 1].map(|i| u16::try_from(shaped.glyphs[i].id.to_u32()).unwrap());
+        let ka_adv = FontRef::new(face.bytes)
+            .unwrap()
+            .glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default())
+            .advance_width(GlyphId::new(u32::from(ka)))
+            .unwrap_or_default()
+            .round() as i16;
+        let mut gpos = minimal_thai_gpos(ka, sara_i, sara_i, ka_adv, 0, 0);
+        let l0 = u16_at(&gpos, 8) + u16_at(&gpos, u16_at(&gpos, 8) + 2);
+        gpos[l0..l0 + 2].copy_from_slice(&5u16.to_be_bytes());
+        gpos.truncate(l0 + 8 + 36);
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+        for w in [1u16, 4, 2, 6, 12] {
+            push(&mut gpos, w);
+        }
+        let anchor1_off = gpos.len();
+        for _ in 0..2 {
+            push(&mut gpos, 1);
+            push_i(&mut gpos, ka_adv);
+            push_i(&mut gpos, 0);
+        }
+        let valid = with_table(face.bytes, b"GPOS", gpos.clone());
+        assert!(shape(&valid, "กิ").is_ok());
+
+        let mut corrupt_gpos = gpos.clone();
+        corrupt_gpos[anchor1_off + 6..anchor1_off + 8].copy_from_slice(&9u16.to_be_bytes());
+        let corrupt = with_table(face.bytes, b"GPOS", corrupt_gpos);
+        assert!(shape(&corrupt, "กิ").unwrap_err().contains("mark positioning"));
+
+        let mut null_gpos = gpos;
+        null_gpos[anchor1_off - 2..anchor1_off].copy_from_slice(&0u16.to_be_bytes());
+        let null_comp = with_table(face.bytes, b"GPOS", null_gpos);
+        assert!(shape(&null_comp, "กิ").unwrap_err().contains("mark positioning"));
+    }
 }
