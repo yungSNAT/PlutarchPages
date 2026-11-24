@@ -465,6 +465,37 @@ mod tests {
         assert!(error.contains("mark positioning"), "{error}");
     }
 
+    /// Mark positioning features whose lookups place nothing are no positioning: with the
+    /// bundled face's `mark` and `mkmk` lookup lists emptied, the names still select them, but a
+    /// vowel or tone would be drawn at its glyph origin, so the text is refused.
+    #[test]
+    fn thai_mark_features_that_place_nothing_are_refused() {
+        let Some(face) = crate::document_thai_font() else {
+            eprintln!("skipping thai_mark_features_that_place_nothing_are_refused: built without craft-fonts (set CRAFT_FONTS_DIR to run it)");
+            return;
+        };
+        let complete = face.bytes;
+        assert!(shape(complete, "กิ่ น้ำ ปู่").is_ok());
+        let mut bytes = complete.to_vec();
+        let features = gpos(&bytes) + u16_at(&bytes, gpos(&bytes) + 6);
+        let mut emptied = 0;
+        for i in 0..u16_at(&bytes, features) {
+            let record = features + 2 + i * 6;
+            if matches!(&bytes[record..record + 4], b"mark" | b"mkmk") {
+                let feature = features + u16_at(&bytes, record + 4);
+                bytes[feature + 2..feature + 4].copy_from_slice(&[0, 0]);
+                emptied += 1;
+            }
+        }
+        assert!(emptied > 0);
+        assert!(has_thai_layout(&bytes), "the features are still selected by name");
+        for text in ["กิ่", "น้ำ", "ปู่"] {
+            let error = shape(&bytes, text).unwrap_err();
+            assert!(error.contains("mark positioning"), "{text}: {error}");
+        }
+        assert!(shape(&bytes, "๑๒๓กข").is_ok(), "nothing to position");
+    }
+
     #[test]
     fn thai_positioning_does_not_require_optional_gsub() {
         let Some(face) = crate::document_thai_font() else {
