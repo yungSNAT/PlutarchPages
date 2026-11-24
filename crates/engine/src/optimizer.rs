@@ -135,7 +135,7 @@ impl OptimizeJob {
         };
         // Optimizing writes the document: not while redacted text survives in what it discards to.
         if let Some(held) = &held {
-            crate::session::save::refuse_survivors(&cos, held)?;
+            crate::session::refuse_survivors(&cos, held)?;
         }
         let report = optimize::optimize_with_progress(&mut cos, &settings, &mut |s| {
             step(match s {

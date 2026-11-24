@@ -259,23 +259,41 @@ fn hash_words(words: &[&str]) -> u64 {
     h.finish()
 }
 
-/// The parts of a run after a label's colon and between commas or semicolons, each followed by
-/// a space ("Name: Jane Citizen, Sydney"), when there is more than one.
+/// The parts of a run worth finding alone: the value after a label's colon ("Name: Jane Citizen"
+/// gives "Jane Citizen"), and the parts of 2 or more words between commas or semicolons
+/// ("Jane Citizen, Sydney" gives "Jane Citizen"), each mark followed by a space. Not the label
+/// ("Date") or a one-word part ("Yes"): too many lines hold them.
 fn labelled_parts(run: &str) -> Vec<String> {
     let mut parts = Vec::new();
+    let labelled = split_after(run, &[':']);
+    let value = match labelled.first() {
+        Some(label) if labelled.len() > 1 => {
+            let value = run.get(label.len() + 1..).unwrap_or_default();
+            parts.push(value.trim().to_string());
+            value
+        }
+        _ => run,
+    };
+    let listed = split_after(value, &[',', ';']);
+    if listed.len() > 1 {
+        parts.extend(listed.iter().filter(|p| words_of(p).len() >= 2).map(|p| p.trim().to_string()));
+    }
+    parts.retain(|p| significant(p, MIN_WHOLE));
+    parts
+}
+
+/// `s` split at each of `marks` followed by whitespace.
+fn split_after<'a>(s: &'a str, marks: &[char]) -> Vec<&'a str> {
+    let mut parts = Vec::new();
     let mut start = 0;
-    let mut chars = run.char_indices().peekable();
+    let mut chars = s.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
-        if matches!(c, ':' | ',' | ';') && chars.peek().is_some_and(|&(_, n)| n.is_whitespace()) {
-            parts.push(run.get(start..i).unwrap_or_default().trim().to_string());
+        if marks.contains(&c) && chars.peek().is_some_and(|&(_, n)| n.is_whitespace()) {
+            parts.push(s.get(start..i).unwrap_or_default());
             start = i + c.len_utf8();
         }
     }
-    if parts.is_empty() {
-        return parts;
-    }
-    parts.push(run.get(start..).unwrap_or_default().trim().to_string());
-    parts.retain(|p| significant(p, MIN_WHOLE));
+    parts.push(s.get(start..).unwrap_or_default());
     parts
 }
 

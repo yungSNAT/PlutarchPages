@@ -23,6 +23,8 @@ mod files;
 mod save;
 mod view;
 
+pub(crate) use save::refuse_survivors;
+
 #[derive(Default)]
 pub struct Session {
     pub(crate) docs: Vec<Document>,
