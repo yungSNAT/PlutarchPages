@@ -26,13 +26,7 @@ pub fn required(text: &str) -> bool {
 /// Character coverage alone does not show that stacked vowels and tones can be laid out.
 /// OpenType Thai requires `mark`/`mkmk` (GPOS); `ccmp` substitution (GSUB) is optional.
 pub fn has_thai_layout(bytes: &[u8]) -> bool {
-    FontRef::new(bytes).is_ok_and(|f| positions_marks(&f, b"thai"))
-}
-
-/// Whether the GPOS features the shaper uses for `script` include `mark` or `mkmk`
-/// ([`mark_lookups`]).
-fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
-    mark_lookups(face, script).is_some()
+    FontRef::new(bytes).is_ok_and(|f| mark_lookups(&f, b"thai").is_some())
 }
 
 /// The lookups of the `mark` and `mkmk` features the shaper uses for `script`, if it uses either.
@@ -272,8 +266,19 @@ impl<'a> MarkFilter<'a> {
     }
 }
 
-/// Whether `lookup` (mark-to-base or mark-to-mark) covers `mark` and `onto` with valid parsed
-/// anchors for both `mark` and `onto` at `mark`'s class.
+fn mark_class_with_valid_anchor(
+    marks: &skrifa::raw::tables::layout::CoverageTable<'_>,
+    classes: &skrifa::raw::tables::gpos::MarkArray<'_>,
+    mark: GlyphId,
+) -> Option<usize> {
+    let m = marks.get(mark)?;
+    let record = classes.mark_records().get(usize::from(m))?;
+    record.mark_anchor(classes.offset_data()).ok()?;
+    Some(usize::from(record.mark_class()))
+}
+
+/// Whether `lookup` (mark-to-base, mark-to-ligature, or mark-to-mark) covers `mark` and `onto`
+/// with valid parsed anchors for `mark` and its target at `mark`'s class.
 fn lookup_attaches(lookup: &skrifa::raw::tables::gpos::PositionLookup<'_>, mark: GlyphId, onto: GlyphId) -> bool {
     use skrifa::raw::tables::gpos::PositionSubtables;
     match lookup.subtables() {
@@ -281,25 +286,34 @@ fn lookup_attaches(lookup: &skrifa::raw::tables::gpos::PositionLookup<'_>, mark:
             let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark_coverage(), t.base_coverage(), t.mark_array(), t.base_array()) else {
                 return false;
             };
-            let (Some(m), Some(b)) = (marks.get(mark), bases.get(onto)) else { return false };
-            let Some(record) = classes.mark_records().get(usize::from(m)) else { return false };
-            record.mark_anchor(classes.offset_data()).is_ok()
-                && anchors
-                    .base_records()
-                    .get(usize::from(b))
-                    .is_ok_and(|r| r.base_anchors(anchors.offset_data()).get(usize::from(record.mark_class())).is_some_and(|a| a.is_ok()))
+            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
+                return false;
+            };
+            anchors.base_records().get(usize::from(b)).is_ok_and(|r| r.base_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
+        }),
+        Ok(PositionSubtables::MarkToLig(subtables)) => subtables.iter().flatten().any(|t| {
+            let (Ok(marks), Ok(ligs), Ok(classes), Ok(ligs_arr)) = (t.mark_coverage(), t.ligature_coverage(), t.mark_array(), t.ligature_array())
+            else {
+                return false;
+            };
+            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), ligs.get(onto)) else {
+                return false;
+            };
+            ligs_arr.ligature_attaches().get(usize::from(b)).is_ok_and(|att| {
+                let comps = att.component_records();
+                !comps.is_empty()
+                    && (0..comps.len())
+                        .all(|c| comps.get(c).is_ok_and(|r| r.ligature_anchors(att.offset_data()).get(class).is_some_and(|a| a.is_ok())))
+            })
         }),
         Ok(PositionSubtables::MarkToMark(subtables)) => subtables.iter().flatten().any(|t| {
             let (Ok(marks), Ok(bases), Ok(classes), Ok(anchors)) = (t.mark1_coverage(), t.mark2_coverage(), t.mark1_array(), t.mark2_array()) else {
                 return false;
             };
-            let (Some(m), Some(b)) = (marks.get(mark), bases.get(onto)) else { return false };
-            let Some(record) = classes.mark_records().get(usize::from(m)) else { return false };
-            record.mark_anchor(classes.offset_data()).is_ok()
-                && anchors
-                    .mark2_records()
-                    .get(usize::from(b))
-                    .is_ok_and(|r| r.mark2_anchors(anchors.offset_data()).get(usize::from(record.mark_class())).is_some_and(|a| a.is_ok()))
+            let (Some(class), Some(b)) = (mark_class_with_valid_anchor(&marks, &classes, mark), bases.get(onto)) else {
+                return false;
+            };
+            anchors.mark2_records().get(usize::from(b)).is_ok_and(|r| r.mark2_anchors(anchors.offset_data()).get(class).is_some_and(|a| a.is_ok()))
         }),
         _ => false,
     }
@@ -432,7 +446,7 @@ impl<'a> ThaiValidator<'a> {
                 continue;
             }
             match lookup.subtables() {
-                Ok(PositionSubtables::MarkToBase(_)) => selected.push((i, None, lookup)),
+                Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_)) => selected.push((i, None, lookup)),
                 Ok(PositionSubtables::MarkToMark(_)) => {
                     selected.push((i, Some(mkmk_slots), lookup));
                     mkmk_slots += 1;
