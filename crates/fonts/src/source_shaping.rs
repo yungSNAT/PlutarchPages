@@ -105,13 +105,18 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let runs = || text.split(|c: char| !joins(c)).filter(|run| !run.is_empty());
     // [`follows_like`] shapes a run again for each of its stacked marks, so their work, summed over
     // the text, is bounded; past it the text is refused, which only costs the page's font.
-    if runs().map(|run| stacked_marks(run).len().saturating_mul(run.len())).fold(0usize, usize::saturating_add) > 1 << 20 {
+    if runs()
+        .map(|run| stacked_marks(run).len().saturating_mul(run.len()))
+        .try_fold(0usize, |acc, w| acc.checked_add(w).filter(|&n| n <= 1 << 20))
+        .is_none()
+    {
         return false;
     }
+    let mut pure_marks = None;
     runs().all(|run| {
         if !places_marks(&own_shaper, own_space, run)
             || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
-            || !follows_like(&own_shaper, &reference_shaper, run)
+            || !follows_like(&own, &mut pure_marks, &own_shaper, &reference_shaper, run)
         {
             return false;
         }
@@ -180,6 +185,138 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
     }
 }
 
+fn charge_arabic_gpos(work: &mut usize) -> bool {
+    *work = work.saturating_add(1);
+    *work <= 1 << 16
+}
+
+fn push_mark_records(recs: &[skrifa::raw::tables::layout::SequenceLookupRecord], todo: &mut Vec<u16>, work: &mut usize) -> bool {
+    for r in recs {
+        if !charge_arabic_gpos(work) || r.sequence_index() != 0 {
+            return false;
+        }
+        todo.push(r.lookup_list_index());
+    }
+    true
+}
+
+fn check_rule_sets<T, F>(sets: impl Iterator<Item = Option<Result<T, skrifa::raw::ReadError>>>, work: &mut usize, mut f: F) -> bool
+where
+    F: FnMut(T, &mut usize) -> bool,
+{
+    for set in sets {
+        if !charge_arabic_gpos(work) {
+            return false;
+        }
+        match set {
+            None => {}
+            Some(Ok(s)) => {
+                if !f(s, work) {
+                    return false;
+                }
+            }
+            Some(Err(_)) => return false,
+        }
+    }
+    true
+}
+
+fn check_seq_context(
+    sub: Result<skrifa::raw::tables::layout::SequenceContext<'_>, skrifa::raw::ReadError>,
+    todo: &mut Vec<u16>,
+    work: &mut usize,
+) -> bool {
+    use skrifa::raw::tables::layout::SequenceContext;
+    let Ok(sub) = sub else { return false };
+    match sub {
+        SequenceContext::Format1(s) => check_rule_sets(s.seq_rule_sets().iter(), work, |set, work| {
+            set.seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+        }),
+        SequenceContext::Format2(s) => check_rule_sets(s.class_seq_rule_sets().iter(), work, |set, work| {
+            set.class_seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+        }),
+        SequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, work),
+    }
+}
+
+fn check_chain_context(
+    sub: Result<skrifa::raw::tables::layout::ChainedSequenceContext<'_>, skrifa::raw::ReadError>,
+    todo: &mut Vec<u16>,
+    work: &mut usize,
+) -> bool {
+    use skrifa::raw::tables::layout::ChainedSequenceContext;
+    let Ok(sub) = sub else { return false };
+    match sub {
+        ChainedSequenceContext::Format1(s) => check_rule_sets(s.chained_seq_rule_sets().iter(), work, |set, work| {
+            set.chained_seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+        }),
+        ChainedSequenceContext::Format2(s) => check_rule_sets(s.chained_class_seq_rule_sets().iter(), work, |set, work| {
+            set.chained_class_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+        }),
+        ChainedSequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, work),
+    }
+}
+
+/// Whether `face`'s `arab` (or fallback) GPOS `mark` and `mkmk` lookups contain only mark
+/// attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them, so clearing
+/// `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment chain.
+fn mark_lookups_attach_only(face: &FontRef) -> bool {
+    use skrifa::Tag;
+    use skrifa::raw::tables::gpos::PositionSubtables;
+    let Ok(gpos) = face.gpos() else { return false };
+    let (Ok(scripts), Ok(features), Ok(list)) = (gpos.script_list(), gpos.feature_list(), gpos.lookup_list()) else {
+        return false;
+    };
+    let Some(selected) = scripts.select(&[Tag::new(b"arab")]) else { return false };
+    let Ok(script) = scripts.get(selected.index) else { return false };
+    let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
+        Some(index) => script.lang_sys(index).ok().map(|l| l.element),
+        None => script.default_lang_sys().transpose().ok().flatten(),
+    };
+    let Some(language) = language else { return false };
+    let records = features.feature_records();
+    let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
+    let mut todo: Vec<u16> = language
+        .feature_indices()
+        .iter()
+        .map(|i| i.get())
+        .chain(required)
+        .filter_map(|i| records.get(usize::from(i)))
+        .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
+        .filter_map(|r| r.feature(features.offset_data()).ok())
+        .flat_map(|f| f.lookup_list_indices().iter().map(|i| i.get()).collect::<Vec<_>>())
+        .collect();
+    if todo.is_empty() {
+        return false;
+    }
+    let (mut seen, mut work) = (std::collections::BTreeSet::new(), 0usize);
+    while let Some(idx) = todo.pop() {
+        if !seen.insert(idx) {
+            continue;
+        }
+        if !charge_arabic_gpos(&mut work) {
+            return false;
+        }
+        let Ok(lookup) = list.lookups().get(usize::from(idx)) else { return false };
+        let ok = match lookup.subtables() {
+            Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => true,
+            Ok(PositionSubtables::Contextual(subs)) => {
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_seq_context(s, &mut todo, &mut work))
+            }
+            Ok(PositionSubtables::ChainContextual(subs)) => {
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_chain_context(s, &mut todo, &mut work))
+            }
+            _ => false,
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
+}
+
 /// Whether each mark of `run` that `reference` attaches to an earlier mark, `own` attaches to that
 /// mark too. [`stacks_marks`] shows that `mkmk` moves each stacked mark, not what it puts it on:
 /// a lookup whose flags skip the middle of 3 marks puts the third on the first, through the
@@ -189,10 +326,13 @@ fn stacks_marks(own: (&harfrust::Shaper, Option<u32>), reference: (&harfrust::Sh
 /// [`stacks_marks`] accepts more stacked marks: a subset keeps its face's attachments. Only a
 /// mark beside another can have one follow it ([`stacked_marks`]); a run with none is not shaped
 /// again.
-fn follows_like(own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
+fn follows_like(own_face: &FontRef, pure_marks: &mut Option<bool>, own: &harfrust::Shaper, reference: &harfrust::Shaper, run: &str) -> bool {
     let marks = stacked_marks(run);
     if marks.is_empty() {
         return true;
+    }
+    if !*pure_marks.get_or_insert_with(|| mark_lookups_attach_only(own_face)) {
+        return false;
     }
     match (followers(own, run, &marks), followers(reference, run, &marks)) {
         (Some(ours), Some(theirs)) => theirs.is_subset(&ours),
@@ -211,7 +351,7 @@ fn stacked_marks(run: &str) -> Vec<(usize, char)> {
 
 /// The pairs (a mark's byte offset in `run`, that of a character whose glyphs move when the mark
 /// alone loses `mark` and `mkmk`), shaped right to left a character to a cluster. `None` if that
-/// changes the glyphs or overflows glyph positions.
+/// changes the glyphs, changes any `x_advance` or overflows glyph positions.
 fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> Option<std::collections::BTreeSet<(usize, usize)>> {
     // Each glyph's cluster and where it is drawn.
     let placed = |features: &[harfrust::Feature]| {
@@ -229,9 +369,9 @@ fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> O
             .map(|(info, p)| {
                 let at = [x.checked_add(i64::from(p.x_offset))?, i64::from(p.y_offset)];
                 x = x.checked_add(i64::from(p.x_advance))?;
-                Some((info.cluster, info.glyph_id, at))
+                Some((info.cluster, info.glyph_id, at, p.x_advance))
             })
-            .collect::<Option<Vec<(u32, u32, [i64; 2])>>>()
+            .collect::<Option<Vec<(u32, u32, [i64; 2], i32)>>>()
     };
     let unchanged = placed(&[])?;
     let mut pairs = std::collections::BTreeSet::new();
@@ -242,7 +382,7 @@ fn followers(shaper: &harfrust::Shaper, run: &str, marks: &[(usize, char)]) -> O
         let alone = at..at + mark.len_utf8();
         let off = [b"mark", b"mkmk"].map(|tag| harfrust::Feature::new(harfrust::Tag::new(tag), 0, alone.clone()));
         let moved = placed(&off)?;
-        if moved.iter().map(|g| g.1).ne(unchanged.iter().map(|g| g.1)) {
+        if moved.iter().map(|g| (g.1, g.3)).ne(unchanged.iter().map(|g| (g.1, g.3))) {
             return None;
         }
         pairs.extend(unchanged.iter().zip(&moved).filter(|(a, b)| a.0 as usize != at && a.2 != b.2).map(|(a, _)| (at, a.0 as usize)));
