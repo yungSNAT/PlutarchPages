@@ -1022,3 +1022,24 @@ fn a_name_tree_too_deep_to_walk_is_listed_as_an_attachment() {
     assert!(left.refuses());
     assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
 }
+
+/// A place nested deeper than 32 arrays is still read and listed as itself (Alcuin round 3, S3):
+/// the sweep reads past the parser's own nesting limit, so a parsed object never ends in a place
+/// nothing clears.
+#[test]
+fn a_place_nested_deep_in_an_object_keeps_its_place() {
+    let nested = format!("{}<< /S /URI /URI (https://bluefin.example/) >>{}", "[".repeat(40), "]".repeat(40));
+    let doc = doc_with("/Extra 4 0 R", "", &[nested.as_str()], "");
+    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Bluefin".to_string()], true));
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Link), "{:?}", left.items);
+}
+
+/// Document information that refers to itself is read once, not once for each way round the loop.
+#[test]
+fn document_information_that_refers_to_itself_is_read_once() {
+    let looped = ["<< /Keywords 5 0 R >>", "[5 0 R 5 0 R (Project Bluefin)]"];
+    assert!(save_refuses(&doc_with("", "", &looped, "/Info 4 0 R"), &["Project Bluefin"]));
+    let clean = ["<< /Keywords 5 0 R >>", "[5 0 R 5 0 R (Other)]"];
+    assert!(!save_refuses(&doc_with("", "", &clean, "/Info 4 0 R"), &["Project Bluefin"]));
+}
