@@ -1073,7 +1073,7 @@ fn deeply_held_xmp_refuses_a_save_and_metadata_removal_clears_it() {
         .stack_size(1 << 20)
         .spawn(|| {
             let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description>Project Bluefin</dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"#;
-            let nested = format!("{}<< /Metadata 5 0 R >>{}", "[".repeat(100), "]".repeat(100));
+            let nested = format!("{}<< /Metadata 5 0 R >>{}", "[".repeat(126), "]".repeat(126));
             let mut doc = doc_with("/Extra 4 0 R", "", &[nested.as_str(), stream_of("/Type /Metadata /Subtype /XML", xmp).as_str()], "");
             let removed = crate::Removed::new(vec!["Project Bluefin".to_string()], true);
             let left = crate::survivors(&doc, &removed);

@@ -6643,6 +6643,31 @@ fn a_resource_named_like_an_owned_entry_is_kept() {
     assert!(!page.dict.contains(b"AF"));
 }
 
+/// Outline items written in place inside one another as deep as the parser reads are cleaned,
+/// not refused as too deep, on a 1 MiB thread stack (a Windows main thread's).
+#[test]
+fn outline_items_nested_in_place_as_deep_as_a_file_reads_are_cleaned() {
+    use crate::sanitize::{Hidden, remove_hidden};
+    // The outline root's item is a dictionary inside the object, so 126 items nest 126 levels.
+    let levels = 125;
+    let item = format!(
+        "{}<< /Title (z) /A << /S /JavaScript /JS (LEAK_OUTLINE) >> >>{}",
+        "<< /Title (a) /First ".repeat(levels),
+        " >>".repeat(levels)
+    );
+    let bytes = std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(move || {
+            let mut doc = outlined_document(vec![item.into_bytes()]);
+            remove_hidden(&mut doc, &[Hidden::LinksActionsScripts]).unwrap();
+            write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap()
+        })
+        .expect("a thread starts")
+        .join()
+        .expect("no stack overflow");
+    assert!(!bytes.windows(12).any(|w| w == b"LEAK_OUTLINE"), "the deep action survived");
+}
+
 /// Owners written in place as deep as the parser reads are removed; deeper ones (built in memory,
 /// since no file parses to them) are refused, not skipped.
 #[test]
