@@ -900,6 +900,20 @@ fn a_page_font_that_splits_a_stacked_letter_differently_is_refused() {
     assert!(!joins_arabic(&cut, &whole, SHEEN));
 }
 
+/// A combining mark that no Arabic letter carries in its joining run is in no run the checks
+/// shape, so its placement goes unjudged: the span never keeps the page's font, even the
+/// complete face, whose marks after letters it keeps.
+#[test]
+fn a_mark_outside_an_arabic_letters_run_is_refused() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    assert!(joins_arabic(face.bytes, face.bytes, KEPT));
+    assert!(joins_arabic(face.bytes, face.bytes, "عليكم 1 a"));
+    for text in ["عليكم 1\u{0301}", "عليكم a\u{0301}", "ع\u{0301}ليكم", "1\u{064e} عليكم", "\u{064e}عليكم"] {
+        assert!(!joins_arabic(face.bytes, face.bytes, text), "{text:?}");
+    }
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {
