@@ -6656,6 +6656,12 @@ fn outline_items_nested_in_place_as_deep_as_a_file_reads_are_cleaned() {
         .stack_size(1 << 20)
         .spawn(move || {
             let mut doc = outlined_document(vec![item.into_bytes()]);
+            let mut cur = doc.get(ObjRef::new(6, 0)).as_dict().cloned().expect("root outline item");
+            for _ in 0..levels {
+                cur = cur.get(b"First").and_then(Object::as_dict).cloned().expect("nested outline item");
+            }
+            let js = cur.get(b"A").and_then(Object::as_dict).and_then(|a| a.get(b"JS")).and_then(Object::as_string);
+            assert_eq!(js.map(|s| s.bytes.as_slice()), Some(b"LEAK_OUTLINE".as_slice()), "parsed deepest /A /JS missing before removal");
             remove_hidden(&mut doc, &[Hidden::LinksActionsScripts]).unwrap();
             write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap()
         })
@@ -6663,6 +6669,279 @@ fn outline_items_nested_in_place_as_deep_as_a_file_reads_are_cleaned() {
         .join()
         .expect("no stack overflow");
     assert!(!bytes.windows(12).any(|w| w == b"LEAK_OUTLINE"), "the deep action survived");
+}
+
+fn on_small_stack<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R {
+    std::thread::Builder::new().stack_size(1 << 20).spawn(f).expect("a thread starts").join().expect("no stack overflow")
+}
+
+fn wrap_arrays(mut inner: Object, levels: usize) -> Object {
+    for _ in 0..levels {
+        inner = Object::Array(vec![inner]);
+    }
+    inner
+}
+
+fn wrap_dicts(mut inner: Object, levels: usize) -> Object {
+    for _ in 0..levels {
+        inner = Object::Dict(Dict::from_iter([(b"Nest".to_vec(), inner)]));
+    }
+    inner
+}
+
+fn layer_doc(d_dict: Dict, extra_tail: Vec<Vec<u8>>) -> Document {
+    let mut extra = vec![b"<< /Type /OCG /Name (Keep) >>".to_vec(), b"<< /Type /OCG /Name (Drop) >>".to_vec()];
+    extra.extend(extra_tail);
+    let mut doc = one_page(
+        b"/OC /L1 BDC BT /F1 10 Tf 10 80 Td (VISIBLE) Tj ET EMC /OC /L2 BDC BT /F1 10 Tf 10 100 Td (HIDE) Tj ET EMC",
+        "/Properties << /L1 7 0 R /L2 8 0 R >>",
+        extra,
+    );
+    let root = doc.root().unwrap();
+    doc.update_dict(root, |d| {
+        d.set(
+            b"OCProperties".to_vec(),
+            Object::Dict(Dict::from_iter([
+                (b"OCGs".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(7, 0)), Object::Ref(ObjRef::new(8, 0))])),
+                (b"D".to_vec(), Object::Dict(d_dict)),
+            ])),
+        );
+    })
+    .unwrap();
+    doc
+}
+
+/// Indirect `/Order` chains past `MAX_DIRECT_DEPTH` (301 indirect arrays) are cleaned on a 1 MiB
+/// stack without `TooDeep`: retained sub-lists keep their remaining layer, emptied ones vanish.
+#[test]
+fn filtered_indirect_order_chains_clean_on_a_small_stack() {
+    use crate::sanitize::{Hidden, remove_hidden};
+    let links = 300usize;
+    let mut tail = Vec::new();
+    for i in 0..links {
+        tail.push(format!("[{} 0 R]", 10 + i).into_bytes());
+    }
+    tail.push(b"[(KeepChain) 7 0 R 8 0 R]".to_vec());
+    let base_drop = 10 + links;
+    for i in 0..links {
+        tail.push(format!("[{} 0 R]", base_drop + 1 + i).into_bytes());
+    }
+    tail.push(b"[(GoneChain) 8 0 R]".to_vec());
+    let d_dict = Dict::from_iter([
+        (b"OFF".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(8, 0))])),
+        (b"Order".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(9, 0)), Object::Ref(ObjRef::new(base_drop as u32, 0))])),
+    ]);
+    let bytes = on_small_stack(move || {
+        let mut doc = layer_doc(d_dict, tail);
+        remove_hidden(&mut doc, &[Hidden::HiddenLayers]).unwrap();
+        write_full(&doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap()
+    });
+    assert!(!bytes.windows(9).any(|w| w == b"GoneChain"), "emptied indirect /Order chain survived");
+    assert!(!bytes.windows(4).any(|w| w == b"HIDE"), "hidden layer content survived");
+    let saved = Document::open(Arc::new(bytes)).unwrap();
+    let oc = saved.get(saved.root().unwrap()).as_dict().and_then(|d| d.get(b"OCProperties")).map(|o| saved.resolve(o)).unwrap();
+    let d_cfg = oc.as_dict().and_then(|d| d.get(b"D")).map(|o| saved.resolve(o)).unwrap();
+    let order = d_cfg.as_dict().and_then(|d| d.get(b"Order")).and_then(|o| saved.resolve(o).as_array().cloned()).unwrap();
+    let ocgs = oc.as_dict().and_then(|d| d.get(b"OCGs")).and_then(|o| saved.resolve(o).as_array().cloned()).unwrap();
+    assert_eq!(order.len(), 1, "pruned chain still listed in /Order: {order:?}");
+    assert_eq!(ocgs.len(), 1, "removed OCG stayed in /OCGs: {ocgs:?}");
+    let mut cur = saved.resolve(&order[0]).as_array().cloned().unwrap();
+    for _ in 0..links {
+        assert_eq!(cur.len(), 1);
+        cur = saved.resolve(&cur[0]).as_array().cloned().unwrap();
+    }
+    assert_eq!(cur.len(), 2, "kept chain tail should have label + kept OCG only: {cur:?}");
+    assert_eq!(cur[0].as_string().map(|s| s.bytes.as_slice()), Some(b"KeepChain".as_slice()));
+    assert_eq!(cur[1].as_ref(), ocgs[0].as_ref());
+    assert_eq!(
+        saved.resolve(&cur[1]).as_dict().and_then(|d| d.get(b"Name")).and_then(Object::as_string).map(|s| s.bytes.as_slice()),
+        Some(b"Keep".as_slice())
+    );
+}
+
+/// All five depth-limited walkers enforce `MAX_DIRECT_DEPTH` (256) and finish or refuse with
+/// `TooDeep` on a 1 MiB stack across admitted direct, deep indirect and over-limit shapes.
+#[test]
+fn clean_outline_item_small_stack_boundary() {
+    use crate::sanitize::{Hidden, remove_hidden};
+    on_small_stack(|| {
+        let make_inline = |levels: usize, leak: &[u8]| {
+            let mut item = Dict::from_iter([
+                (b"Title".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"z".to_vec()))),
+                (
+                    b"A".to_vec(),
+                    Object::Dict(Dict::from_iter([
+                        (b"S".to_vec(), Object::name("JavaScript")),
+                        (b"JS".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(leak.to_vec()))),
+                    ])),
+                ),
+            ]);
+            for _ in 0..levels {
+                item = Dict::from_iter([
+                    (b"Title".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"a".to_vec()))),
+                    (b"First".to_vec(), Object::Dict(item)),
+                ]);
+            }
+            let mut doc = outlined_document(vec![b"<< /Title (placeholder) >>".to_vec()]);
+            doc.set(ObjRef::new(6, 0), Object::Dict(item));
+            doc
+        };
+        let make_bare_inline = |levels: usize, leak: &[u8]| {
+            let mut item = Dict::from_iter([(
+                b"A".to_vec(),
+                Object::Dict(Dict::from_iter([
+                    (b"S".to_vec(), Object::name("JavaScript")),
+                    (b"JS".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(leak.to_vec()))),
+                ])),
+            )]);
+            for _ in 0..levels {
+                item = Dict::from_iter([
+                    (b"Title".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(b"a".to_vec()))),
+                    (b"First".to_vec(), Object::Dict(item)),
+                ]);
+            }
+            let mut doc = outlined_document(vec![b"<< /Title (placeholder) >>".to_vec()]);
+            doc.set(ObjRef::new(6, 0), Object::Dict(item));
+            doc
+        };
+        let mut ok_doc = make_inline(255, b"LEAK_OUT_256");
+        remove_hidden(&mut ok_doc, &[Hidden::LinksActionsScripts]).unwrap();
+        let bytes = write_full(&ok_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(12).any(|w| w == b"LEAK_OUT_256"));
+
+        let mut bare_256 = make_bare_inline(256, b"LEAK_BARE_256");
+        remove_hidden(&mut bare_256, &[Hidden::LinksActionsScripts]).unwrap();
+        let bytes = write_full(&bare_256, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(13).any(|w| w == b"LEAK_BARE_256"));
+
+        let mut deep_doc = make_inline(400, b"LEAK_OUT_400");
+        assert!(matches!(remove_hidden(&mut deep_doc, &[Hidden::LinksActionsScripts]), Err(RedactError::TooDeep)));
+        let kept = write_full(&deep_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(kept.windows(12).any(|w| w == b"LEAK_OUT_400"), "refused outline removal partially mutated doc");
+
+        let mut indirect_items: Vec<Vec<u8>> = (0..399).map(|i| format!("<< /Title (i) /First {} 0 R >>", 7 + i).into_bytes()).collect();
+        indirect_items.push(b"<< /Title (z) /A << /S /JavaScript /JS (LEAK_OUT_INDIR) >> >>".to_vec());
+        let mut indir_doc = outlined_document(indirect_items);
+        remove_hidden(&mut indir_doc, &[Hidden::LinksActionsScripts]).unwrap();
+        let bytes = write_full(&indir_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(14).any(|w| w == b"LEAK_OUT_INDIR"));
+    });
+}
+
+#[test]
+fn owner_walkers_small_stack_boundaries() {
+    use crate::sanitize::{Hidden, owned_values, remove_hidden};
+    on_small_stack(|| {
+        let xmp = br#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description>Project Boundary</dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+        let xmp_stream = stream("/Type /Metadata /Subtype /XML", xmp);
+        let meta_obj = Object::Dict(Dict::from_iter([(b"Metadata".to_vec(), Object::Ref(ObjRef::new(7, 0)))]));
+        let aa_obj = |leak: &[u8]| {
+            Object::Dict(Dict::from_iter([(
+                b"AA".to_vec(),
+                Object::Dict(Dict::from_iter([(
+                    b"O".to_vec(),
+                    Object::Dict(Dict::from_iter([
+                        (b"S".to_vec(), Object::name("JavaScript")),
+                        (b"JS".to_vec(), Object::String(pdfcraft_cos::PdfString::literal(leak.to_vec()))),
+                    ])),
+                )])),
+            )]))
+        };
+        for wrap in [wrap_arrays as fn(Object, usize) -> Object, wrap_dicts as fn(Object, usize) -> Object] {
+            let mut ok_doc = one_page(b"BT ET", "", vec![xmp_stream.clone(), b"<< >>".to_vec()]);
+            ok_doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"CustomData".to_vec(), Object::Ref(ObjRef::new(8, 0)))).unwrap();
+            ok_doc.set(
+                ObjRef::new(8, 0),
+                Object::Dict(Dict::from_iter([
+                    (b"MetaDeep".to_vec(), wrap(meta_obj.clone(), 254)),
+                    (b"AaDeep".to_vec(), wrap(aa_obj(b"LEAK_OWN_256"), 252)),
+                ])),
+            );
+            let vals = owned_values(&ok_doc, b"Metadata").unwrap();
+            assert!(vals.iter().any(|(r, own, v)| *r == ObjRef::new(8, 0) && !*own && v.as_ref() == Some(ObjRef::new(7, 0))));
+            remove_hidden(&mut ok_doc, &[Hidden::Metadata, Hidden::LinksActionsScripts]).unwrap();
+            assert!(owned_values(&ok_doc, b"Metadata").unwrap().is_empty());
+            let bytes = write_full(&ok_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+            assert!(!bytes.windows(12).any(|w| w == b"LEAK_OWN_256"));
+            assert!(!bytes.windows(16).any(|w| w == b"Project Boundary"));
+
+            let mut deep_doc = one_page(b"BT ET", "", vec![xmp_stream.clone(), b"<< >>".to_vec()]);
+            deep_doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"CustomData".to_vec(), Object::Ref(ObjRef::new(8, 0)))).unwrap();
+            deep_doc.set(
+                ObjRef::new(8, 0),
+                Object::Dict(Dict::from_iter([
+                    (b"Metadata".to_vec(), Object::Ref(ObjRef::new(7, 0))),
+                    (b"TooDeep".to_vec(), wrap(aa_obj(b"LEAK_OWN_400"), 400)),
+                ])),
+            );
+            assert!(matches!(owned_values(&deep_doc, b"Metadata"), Err(RedactError::TooDeep)));
+            assert!(matches!(remove_hidden(&mut deep_doc, &[Hidden::Metadata, Hidden::LinksActionsScripts]), Err(RedactError::TooDeep)));
+            let kept = write_full(&deep_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+            assert!(kept.windows(12).any(|w| w == b"LEAK_OWN_400"));
+            assert!(kept.windows(16).any(|w| w == b"Project Boundary"), "TooDeep partially stripped shallower Metadata");
+        }
+        let mut indir: Vec<Vec<u8>> = vec![xmp_stream];
+        for i in 0..300usize {
+            indir.push(format!("[{} 0 R]", 9 + i).into_bytes());
+        }
+        indir.push(b"<< /Metadata 7 0 R /AA << /O << /S /JavaScript /JS (LEAK_OWN_INDIR) >> >> >>".to_vec());
+        let mut indir_doc = one_page(b"BT ET", "", indir);
+        indir_doc.update_dict(ObjRef::new(3, 0), |d| d.set(b"CustomData".to_vec(), Object::Ref(ObjRef::new(8, 0)))).unwrap();
+        let vals = owned_values(&indir_doc, b"Metadata").unwrap();
+        assert!(vals.iter().any(|(_, own, v)| *own && v.as_ref() == Some(ObjRef::new(7, 0))));
+        remove_hidden(&mut indir_doc, &[Hidden::Metadata, Hidden::LinksActionsScripts]).unwrap();
+        let bytes = write_full(&indir_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(!bytes.windows(14).any(|w| w == b"LEAK_OWN_INDIR"));
+        assert!(!bytes.windows(16).any(|w| w == b"Project Boundary"));
+    });
+}
+
+#[test]
+fn filtered_small_stack_direct_and_dict_boundaries() {
+    use crate::sanitize::{Hidden, remove_hidden};
+    on_small_stack(|| {
+        let kept_leaf = Object::Array(vec![
+            Object::String(pdfcraft_cos::PdfString::literal(b"Keep256".to_vec())),
+            Object::Ref(ObjRef::new(7, 0)),
+            Object::Ref(ObjRef::new(8, 0)),
+        ]);
+        let gone_leaf = Object::Array(vec![Object::String(pdfcraft_cos::PdfString::literal(b"Gone256".to_vec())), Object::Ref(ObjRef::new(8, 0))]);
+        let ok_d = Dict::from_iter([
+            (b"OFF".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(8, 0))])),
+            (b"Order".to_vec(), Object::Array(vec![wrap_arrays(kept_leaf, 254), wrap_arrays(gone_leaf, 254)])),
+            (
+                b"AS".to_vec(),
+                Object::Array(vec![Object::Dict(Dict::from_iter([
+                    (b"Event".to_vec(), Object::name("View")),
+                    (b"OCGs".to_vec(), wrap_arrays(Object::Array(vec![Object::Ref(ObjRef::new(7, 0)), Object::Ref(ObjRef::new(8, 0))]), 255)),
+                ]))]),
+            ),
+        ]);
+        let mut ok_doc = layer_doc(ok_d, Vec::new());
+        remove_hidden(&mut ok_doc, &[Hidden::HiddenLayers]).unwrap();
+        let bytes = write_full(&ok_doc, &SaveOptions { object_streams: false, ..SaveOptions::default() }).unwrap();
+        assert!(bytes.windows(7).any(|w| w == b"Keep256"));
+        assert!(!bytes.windows(7).any(|w| w == b"Gone256"));
+        assert!(!bytes.windows(4).any(|w| w == b"HIDE"));
+
+        for bad_in_as in [false, true] {
+            let deep_arr = wrap_arrays(Object::Array(vec![Object::Ref(ObjRef::new(8, 0))]), 400);
+            let mut entries = vec![(b"OFF".to_vec(), Object::Array(vec![Object::Ref(ObjRef::new(8, 0))]))];
+            if bad_in_as {
+                entries.push((
+                    b"AS".to_vec(),
+                    Object::Array(vec![Object::Dict(Dict::from_iter([(b"Event".to_vec(), Object::name("View")), (b"OCGs".to_vec(), deep_arr)]))]),
+                ));
+            } else {
+                entries.push((b"Order".to_vec(), deep_arr));
+            }
+            let mut deep_doc = layer_doc(Dict::from_iter(entries), Vec::new());
+            assert!(matches!(remove_hidden(&mut deep_doc, &[Hidden::HiddenLayers]), Err(RedactError::TooDeep)));
+            let catalog = deep_doc.get(deep_doc.root().unwrap());
+            let oc = catalog.as_dict().and_then(|d| d.get(b"OCProperties")).and_then(Object::as_dict).unwrap();
+            assert!(oc.get(b"OCGs").and_then(Object::as_array).unwrap().contains(&Object::Ref(ObjRef::new(8, 0))));
+        }
+    });
 }
 
 /// Owners written in place as deep as the parser reads are removed; deeper ones (built in memory,
