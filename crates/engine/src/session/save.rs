@@ -502,13 +502,23 @@ impl Session {
     /// route that writes the edited document runs it: Save, Save As, signing, timestamping,
     /// Optimize, Reduce File Size, Extract and Split.
     pub(crate) fn refuse_redacted(&self, id: DocId, cos: &pdfcraft_cos::Document) -> Result<(), EditError> {
-        let Some(removed) = self.get(id).and_then(|d| d.editor.as_ref()).and_then(held_text) else { return Ok(()) };
-        let left = guard(|| pdfcraft_redact::survivors(cos, &removed)).map_err(EditError::Reopen)?;
-        if left.refuses() {
-            return Err(EditError::RedactedTextSurvives(Box::new(left)));
-        }
-        Ok(())
+        let Some(removed) = self.held_redacted(id) else { return Ok(()) };
+        guard(|| refuse_survivors(cos, &removed)).map_err(EditError::Reopen)?
     }
+
+    /// The text redacted in document `id` since the last save that a write must not keep.
+    pub(crate) fn held_redacted(&self, id: DocId) -> Option<pdfcraft_redact::Removed> {
+        self.get(id).and_then(|d| d.editor.as_ref()).and_then(held_text)
+    }
+}
+
+/// Refuse `cos` while a place in it still holds `removed` ([`Session::refuse_redacted`]).
+pub(crate) fn refuse_survivors(cos: &pdfcraft_cos::Document, removed: &pdfcraft_redact::Removed) -> Result<(), EditError> {
+    let left = pdfcraft_redact::survivors(cos, removed);
+    if left.refuses() {
+        return Err(EditError::RedactedTextSurvives(Box::new(left)));
+    }
+    Ok(())
 }
 
 /// The text removed by every Apply Redactions since the last save that hasn't been undone.

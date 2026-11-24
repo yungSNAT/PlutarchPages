@@ -13,8 +13,10 @@
 //! Before a save (fork, [`survivors`]) the same walks list each place that still holds the text,
 //! so the save can refuse and say where. That search is stricter than the count's: a place holds
 //! the text when a whole removed run of at least 4 letters or digits is in it, beginning and
-//! ending at word edges, or when its whole value is part of a removed run. A single word of a
-//! removed sentence is told when applying, never a reason to refuse. Not searched at all: page
+//! ending at word edges ("Name: Jane Citizen" counts its parts after the label and between
+//! commas as runs too), or when its whole value, of 2 words or more, is part of a removed run. A
+//! single word of a removed sentence, and a run joined to other letters ("projectBluefin",
+//! "Bluefin2"), are told when applying, never a reason to refuse. Not searched at all: page
 //! content (the redaction's own check), appearance streams, form XObjects, images and marked
 //! content (`/ActualText`), and attachment data that isn't text.
 
@@ -94,8 +96,7 @@ pub enum Place {
     PrivateData,
     /// Any other object: told when applying, never a reason to refuse a save.
     Other,
-    /// An object that couldn't be read or searched in full (past a cap or the search's work
-    /// limit), so it may hold the text.
+    /// An object that couldn't be read, or lies past a walk's cap, so it may hold the text.
     Unread,
 }
 
@@ -119,7 +120,8 @@ pub struct Survivors {
     pub items: Vec<Survivor>,
     /// Places past the [`MAX_ITEMS`] listed.
     pub more: usize,
-    /// The removed text couldn't be searched for: every place listed holds some text.
+    /// The removed text couldn't be searched for, or not in full (past the search's work limit):
+    /// places listed may hold only some text.
     pub unsearched: bool,
 }
 
@@ -208,7 +210,9 @@ fn walk(doc: &Document, search: &Search, save: bool) -> Found {
     xmp(doc, search, &mut found);
     info(doc, search, &mut found);
     found.counts.unsearched = search.is_everything();
-    found.survivors.unsearched = search.is_everything();
+    // Past the work limit, places count as holding it without being searched (fail-closed): the
+    // refusal says so, and each keeps its own kind, so it can still be cleared.
+    found.survivors.unsearched = search.is_everything() || search.exhausted();
     found
 }
 
@@ -355,7 +359,7 @@ fn visit(doc: &Document, o: &Object, place: Option<Place>, depth: usize, search:
             {
                 let t = crate::metadata::text_string(s);
                 if !t.trim().is_empty() && search.text(&t) {
-                    found.insert(if search.exhausted() { Place::Unread } else { p });
+                    found.insert(p);
                 }
             }
         }
@@ -370,7 +374,7 @@ fn visit_dict(doc: &Document, d: &pdfcraft_cos::Dict, place: Option<Place>, dept
     let own = place_of(d, place, depth);
     let mut note = |p: Place, holds: Option<bool>| match holds {
         Some(true) => {
-            found.insert(if search.exhausted() { Place::Unread } else { p });
+            found.insert(p);
         }
         Some(false) => {}
         // Data that can't be searched: a script or form data may hold it; an attachment's is
@@ -597,7 +601,7 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
         if unread { None } else { Some(false) }
     };
     let add = |found: &mut Found, holds: Option<bool>, object: Option<ObjRef>, page: Option<usize>, nth: Option<usize>| match holds {
-        Some(true) => found.add(if search.exhausted() { Place::Unread } else { Place::Attachment }, object, page, nth),
+        Some(true) => found.add(Place::Attachment, object, page, nth),
         None => found.add(Place::Other, object, page, nth),
         Some(false) => {}
     };
@@ -663,7 +667,7 @@ fn comments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) -> bo
             // can't be read counts as holding it.
             let rich = d.get(b"RC").is_some_and(|o| rich_text(doc, o).is_none_or(|t| !t.trim().is_empty() && search.text(&t)));
             if rich || [b"Contents".as_slice(), b"T", b"Subj"].iter().any(|k| hit(d.get(k))) {
-                found.add(if search.exhausted() { Place::Unread } else { Place::Comment }, a.as_ref(), Some(i), None);
+                found.add(Place::Comment, a.as_ref(), Some(i), None);
             }
         }
     }

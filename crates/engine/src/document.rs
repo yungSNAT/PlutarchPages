@@ -200,7 +200,7 @@ pub(crate) fn refusal_text(s: &pdfcraft_redact::Survivors) -> String {
         }
     }
     let held = if s.unsearched {
-        "the redacted text couldn't be searched for, so these places, which hold text, may still hold it"
+        "the redacted text couldn't be searched for in full, so these places, which hold text, may still hold it"
     } else {
         "the redacted text is still in"
     };
@@ -234,8 +234,9 @@ fn survivor_text(s: &pdfcraft_redact::Survivor) -> String {
     if let Some(p) = s.page {
         out.push_str(&format!(" on page {}", p.saturating_add(1)));
     }
+    // A full save renumbers the objects it writes: the number is the one before the save.
     if let Some(r) = s.object {
-        out.push_str(&format!(" (object {})", r.num));
+        out.push_str(&format!(" (object {} before saving)", r.num));
     }
     out
 }

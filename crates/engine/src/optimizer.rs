@@ -72,6 +72,9 @@ pub struct OptimizeJob {
     settings: optimize::Settings,
     discard: Vec<Hidden>,
     opts: SaveOptions,
+    /// The text redacted since the last save, which the optimized copy must not keep: checked
+    /// after the copy's own Remove hidden information step, which may clear it.
+    held: Option<pdfcraft_redact::Removed>,
 }
 
 impl Session {
@@ -83,8 +86,6 @@ impl Session {
             return Err(EditError::Signed);
         }
         let editor = doc.editor.as_ref().ok_or_else(|| EditError::ReadOnly(doc.read_only_reason.clone().unwrap_or_default()))?;
-        // Optimizing writes the document as it stands: not while redacted text survives in it.
-        self.refuse_redacted(id, &editor.cos)?;
         Ok(OptimizeJob {
             cos: editor.cos.clone(),
             settings: settings.clone(),
@@ -94,6 +95,7 @@ impl Session {
                 object_streams: settings.effective_object_streams(),
                 ..SaveOptions::default()
             },
+            held: self.held_redacted(id),
         })
     }
 }
@@ -107,7 +109,7 @@ impl OptimizeJob {
     }
 
     fn work(self, progress: &mut dyn FnMut(OptimizeStage) -> bool) -> Result<Optimized, EditError> {
-        let OptimizeJob { mut cos, settings, discard, opts } = self;
+        let OptimizeJob { mut cos, settings, discard, opts, held } = self;
         // Like every file written, without the values of Password-flag fields (#3926, #3944).
         pdfcraft_forms::clear_password_values(&mut cos).map_err(|e| EditError::Write(e.to_string()))?;
         pdfcraft_xfa::clear_password_values(&mut cos).map_err(|e| EditError::Write(e.to_string()))?;
@@ -131,6 +133,10 @@ impl OptimizeJob {
                 r => r?,
             }
         };
+        // Optimizing writes the document: not while redacted text survives in what it discards to.
+        if let Some(held) = &held {
+            crate::session::save::refuse_survivors(&cos, held)?;
+        }
         let report = optimize::optimize_with_progress(&mut cos, &settings, &mut |s| {
             step(match s {
                 optimize::Stage::Reading { done, total } => OptimizeStage::Reading { done, total },
