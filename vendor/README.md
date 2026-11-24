@@ -54,12 +54,18 @@ The `osv-scanner.toml` beside some upstream `Cargo.lock` files is ours. Cargo ne
 lockfiles (every crate resolves from the root `Cargo.lock`), so each file ignores, by ID and with a
 reason, the advisories OSV-Scanner and OpenSSF Scorecard report for versions PdfCraft does not
 build. Recheck them when re-vendoring a crate; the root `osv-scanner.toml` mirrors `deny.toml`.
+The TrueType name lookup patch probes Unicode `(0, *)` and Windows `(3, 10)` cmap records,
+recognizes post-name aliases, and retains known descriptor flags when unknown bits are present.
+`crates/render/tests/truetype_cmap.rs` covers these synthetic cases and verifies that Symbolic
+Encoding/Differences and ToUnicode do not override the existing glyph-selection policy.
+ToUnicode still controls extraction. The CFF fallback is unchanged. No original affected PDF
+from #2159 or #2426 is available, so those reported files remain unverified.
 
 A PdfCraft patch in `hayro-syntax::Page::base_dimensions` expresses the existing one-point floor as a raw reciprocal of `/UserUnit`, rounded upward only when f32 multiplication would fall below one point. Five `pdfcraft-render` regressions with prefix `raster::tests::raw_crop_` cover the observed dimensions, origins and rotations, units 41/47, bounded vector rasters and the nearly-zero fallback, which is US Letter since patch 44. Accepted page-unit policy and licences are unchanged.
 
 In `hayro-interpret`, Type 3 glyph bounding boxes are transformed to device space before intersecting clip and shading bounds; `raster::tests::shaded_type3_glyph_draws_at_multiple_positions` covers translated glyphs (#3178).
 
-In `hayro-interpret`, `OutlineGlyph::standard_encoding_char` (`src/font/mod.rs` and `src/font/type1.rs`) gives a standard Type 1 outline's character from the encoding that selected it, ignoring `/ToUnicode`, for the fork's `font_mapping_differs` signal (#74). `text::tests::fork_tests::integrity_signals_distinguish_each_split_view_family` in `pdfcraft-render` covers it. The rest of both files is upstream's text.
+`vendor/hayro-interpret` is craft-libs' own `vendor/hayro-interpret`, at the revision the root `Cargo.toml` names for the other hayro crates, with the one fork patch this paragraph describes ([hayro-interpret/PATCHES.md](hayro-interpret/PATCHES.md)). In `hayro-interpret`, `OutlineGlyph::standard_encoding_char` (`src/font/mod.rs` and `src/font/type1.rs`) gives a standard Type 1 outline's character from the encoding that selected it, ignoring `/ToUnicode`, for the fork's `font_mapping_differs` signal (#74). `text::tests::fork_tests::integrity_signals_distinguish_each_split_view_family` in `pdfcraft-render` covers it. The rest of both files is upstream's text.
 
 Named form properties use the effective page dictionary when the form omits `/Resources` (#3574).
 `hayro-syntax::Resources` caches the page origin; `hayro-interpret` preserves the form dictionary's absence.

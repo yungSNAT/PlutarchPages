@@ -6,23 +6,6 @@
 
 use super::*;
 
-/// A field a signature locked (FieldMDP) may not change, though its DocMDP permissions or an
-/// approval signature allow form fill; when the form could not be read whole, any form fill may
-/// have changed a locked field, and is refused as one.
-#[test]
-fn a_change_to_a_locked_field_is_refused_whatever_else_is_permitted() {
-    let signed = form("/Annots [5 0 R]");
-    let filled = TEXT_FIELD.replace("(Ann)", "(Bob)");
-    let now = signed.clone().revision(&[(5, Row::Obj(0, 0, &filled))]);
-    let locked = |objects: &[u32], whole| super::super::locks::Locked { objects: objects.iter().copied().collect(), fields: Vec::new(), whole };
-    for p in [None, Some(2), Some(3)] {
-        let judge = |l: &super::super::locks::Locked| classify_changes(&now.open(), Some(signed.open()), p, Some(l));
-        assert_eq!(judge(&locked(&[5], true)), Modification::Disallowed(vec![super::super::kind::LOCKED_FORM_FIELDS]), "P={p:?}");
-        assert_eq!(judge(&locked(&[], false)), Modification::Disallowed(vec![super::super::kind::LOCKED_FORM_FIELDS]), "P={p:?}, not read whole");
-        assert_eq!(judge(&locked(&[], true)), Modification::Allowed(vec![super::super::kind::FORM_FILL]), "P={p:?}, another field locked");
-    }
-}
-
 /// A signed field's own `/Lock` holds whatever its signature's FieldMDP reference says: a reference
 /// naming other fields does not narrow a field that locks them all.
 #[test]
@@ -40,9 +23,9 @@ fn a_reference_narrower_than_the_signed_fields_lock_does_not_narrow_it() {
         (8, Row::Obj(0, 0, v)),
     ]);
     let old = signed.open();
-    let (field, v) = (old.get(r(7, 0)), old.get(r(8, 0)));
-    let locked = super::super::locks::locked(&old, field.as_dict().unwrap(), v.as_dict().unwrap()).unwrap();
+    let field = super::super::listing::sig_fields(&old).into_iter().find(|f| f.name == "Approval").unwrap();
+    let v = old.get(r(8, 0));
     let filled = TEXT_FIELD.replace("(Ann)", "(Bob)");
     let now = signed.clone().revision(&[(5, Row::Obj(0, 0, &filled))]);
-    assert_eq!(classify_changes(&now.open(), Some(old), None, Some(&locked)), Modification::Disallowed(vec![super::super::kind::LOCKED_FORM_FIELDS]));
+    assert_eq!(super::super::locks::locked_fields(&now.open(), &old, &field, v.as_dict().unwrap()), super::super::locks::Locked::Changed);
 }

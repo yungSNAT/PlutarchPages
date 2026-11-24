@@ -1,5 +1,5 @@
-# Cargo run from this folder builds craft-pdf with the workspace's patched hayro-syntax and
-# hayro-jbig2, as PdfCraft ships them (PATCHES.md, 'Its unit tests'). Cargo.lock records them.
+# Cargo run from this folder builds craft-pdf with the workspace's hayro-syntax and hayro-jbig2,
+# as PdfCraft ships them (PATCHES.md, 'Its unit tests'). Cargo.lock records them.
 [patch.crates-io]
-hayro-syntax = { path = "../hayro-syntax" }
-hayro-jbig2 = { path = "../hayro-jbig2" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }

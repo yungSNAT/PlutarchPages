@@ -2,7 +2,7 @@
 //!
 //! Every image is a headless render of the real app (`examples/shot.rs`) showing the showcase
 //! PDF. That PDF is built only from the OFL fonts and generated artwork in ATTRIBUTION.toml, so
-//! the screenshots are contributor-original and policy-compliant (AGENTS.md §1). Afterwards the
+//! the screenshots are contributor-original and policy-compliant (clean-room.md and licences.md). Afterwards the
 //! `docs/images/*.png` entries in ATTRIBUTION.toml are rewritten with fresh hashes, and
 //! ATTRIBUTION.md is regenerated.
 //!
@@ -71,7 +71,7 @@ pub fn run(args: &[String]) -> Result<()> {
             .arg(PDF)
             .args(["--size", "1440x900", "--scale", "2", "--width", "1600"])
             .args(*scene)
-            // Published images show only the embedded, openly licensed fonts (AGENTS.md §1.2).
+            // Published images show only the embedded, openly licensed fonts (licences.md).
             .env("PDFCRAFT_SYSTEM_FONTS", "0")
             .current_dir(&root)
             .status()
