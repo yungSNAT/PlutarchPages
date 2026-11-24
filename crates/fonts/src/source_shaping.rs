@@ -46,20 +46,22 @@ fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
         None => script.default_lang_sys().transpose().ok().flatten(),
     }?;
     let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
-    let marks: Vec<_> = language
+    let mut found = false;
+    let mut indices = Vec::new();
+    for r in language
         .feature_indices()
         .iter()
         .map(|i| i.get())
         .chain(required)
         .filter_map(|i| records.get(usize::from(i)))
         .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
-        .collect();
-    (!marks.is_empty()).then(|| {
-        let mut indices: Vec<u16> = marks
-            .iter()
-            .filter_map(|r| r.feature(features.offset_data()).ok())
-            .flat_map(|f| f.lookup_list_indices().iter().map(|i| i.get()).collect::<Vec<_>>())
-            .collect();
+    {
+        found = true;
+        if let Ok(f) = r.feature(features.offset_data()) {
+            indices.extend(f.lookup_list_indices().iter().map(|i| i.get()));
+        }
+    }
+    found.then(|| {
         indices.sort_unstable();
         indices.dedup();
         indices
@@ -227,24 +229,17 @@ impl<'a> MarkFilter<'a> {
         true
     }
 
-    fn allows_non_mark(&self, flag: skrifa::raw::tables::layout::LookupFlag, gid: GlyphId) -> bool {
-        use skrifa::raw::tables::layout::LookupFlag;
-        let class = self.classes.as_ref().map(|c| c.get(gid));
-        if matches!(class, Some(1)) && flag.contains(LookupFlag::IGNORE_BASE_GLYPHS) {
-            return false;
-        }
-        if (matches!(class, Some(2)) || (class != Some(3) && self.ligatures.contains(&gid.to_u32()))) && flag.contains(LookupFlag::IGNORE_LIGATURES) {
-            return false;
-        }
-        true
-    }
-
     fn allows_current(&self, flag: skrifa::raw::tables::layout::LookupFlag, filtering_set: Option<u16>, gid: GlyphId) -> bool {
         use skrifa::raw::tables::layout::LookupFlag;
-        if flag.contains(LookupFlag::IGNORE_MARKS) || !self.allows_non_mark(flag, gid) {
+        if flag.contains(LookupFlag::IGNORE_MARKS) {
             return false;
         }
         let class = self.classes.as_ref().map(|c| c.get(gid));
+        if matches!(class, Some(1)) && flag.contains(LookupFlag::IGNORE_BASE_GLYPHS)
+            || matches!(class, Some(2)) && flag.contains(LookupFlag::IGNORE_LIGATURES)
+        {
+            return false;
+        }
         if class.is_none_or(|c| c == 3) {
             return self.allows_mark_properties(flag, filtering_set, gid);
         }
@@ -572,7 +567,7 @@ impl<'a> ThaiValidator<'a> {
             }
             let onto = match mkmk_slot {
                 Some(slot) => entry.last_mark.get(slot).copied().flatten(),
-                None => entry.last_base.filter(|&b| self.filter.allows_non_mark(flag, GlyphId::new(b))),
+                None => entry.last_base,
             };
             let Some(onto) = onto else { continue };
             let comp_spec =
