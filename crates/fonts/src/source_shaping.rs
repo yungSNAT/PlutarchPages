@@ -34,20 +34,30 @@ pub fn has_thai_layout(bytes: &[u8]) -> bool {
 /// `DFLT`, `dflt` or `latn` (`ScriptList::select`); then, given no language, a language system
 /// tagged `dflt`, else the script's default one. Marks under a script or language it doesn't
 /// select don't count, nor does a GPOS with only kerning.
-fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
+fn visit_mark_features<'a>(
+    gpos: &skrifa::raw::tables::gpos::Gpos<'a>,
+    script: &[u8; 4],
+    mut visit: impl FnMut(Result<skrifa::raw::tables::layout::Feature<'a>, skrifa::raw::ReadError>) -> bool,
+) -> bool {
     use skrifa::Tag;
-    let gpos = face.gpos().ok()?;
-    let (scripts, features) = (gpos.script_list().ok()?, gpos.feature_list().ok()?);
-    let records = features.feature_records();
-    let selected = scripts.select(&[Tag::new(script)])?;
-    let script = scripts.get(selected.index).ok()?;
+    let (Ok(scripts), Ok(features)) = (gpos.script_list(), gpos.feature_list()) else {
+        return false;
+    };
+    let Some(selected) = scripts.select(&[Tag::new(script)]) else {
+        return false;
+    };
+    let Ok(script) = scripts.get(selected.index) else {
+        return false;
+    };
     let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
         Some(index) => script.lang_sys(index).ok().map(|l| l.element),
         None => script.default_lang_sys().transpose().ok().flatten(),
-    }?;
+    };
+    let Some(language) = language else {
+        return false;
+    };
+    let records = features.feature_records();
     let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
-    let mut found = false;
-    let mut indices = Vec::new();
     for r in language
         .feature_indices()
         .iter()
@@ -56,11 +66,23 @@ fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
         .filter_map(|i| records.get(usize::from(i)))
         .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
     {
-        found = true;
-        if let Ok(f) = r.feature(features.offset_data()) {
-            indices.extend(f.lookup_list_indices().iter().map(|i| i.get()));
+        if !visit(r.feature(features.offset_data())) {
+            return false;
         }
     }
+    true
+}
+
+fn mark_lookups(face: &FontRef, script: &[u8; 4]) -> Option<Vec<u16>> {
+    let gpos = face.gpos().ok()?;
+    let (mut found, mut indices) = (false, Vec::new());
+    visit_mark_features(&gpos, script, |feature| {
+        found = true;
+        if let Ok(f) = feature {
+            indices.extend(f.lookup_list_indices().iter().map(|i| i.get()));
+        }
+        true
+    });
     found.then(|| {
         indices.sort_unstable();
         indices.dedup();
@@ -801,12 +823,41 @@ fn charge_arabic_gpos(work: &mut usize) -> bool {
     *work <= 1 << 16
 }
 
-fn push_mark_records(recs: &[skrifa::raw::tables::layout::SequenceLookupRecord], todo: &mut Vec<u16>, work: &mut usize) -> bool {
+fn push_mark_records(
+    recs: &[skrifa::raw::tables::layout::SequenceLookupRecord],
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
     for r in recs {
         if !charge_arabic_gpos(work) || r.sequence_index() != 0 {
             return false;
         }
-        todo.push(r.lookup_list_index());
+        let idx = r.lookup_list_index();
+        if seen.insert(idx) {
+            todo.push(idx);
+        }
+    }
+    true
+}
+
+fn push_feature_lookups(
+    indices: &[skrifa::raw::types::BigEndian<u16>],
+    todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
+    work: &mut usize,
+) -> bool {
+    if !charge_arabic_gpos(work) {
+        return false;
+    }
+    for idx in indices {
+        if !charge_arabic_gpos(work) {
+            return false;
+        }
+        let idx = idx.get();
+        if seen.insert(idx) {
+            todo.push(idx);
+        }
     }
     true
 }
@@ -835,38 +886,44 @@ where
 fn check_seq_context(
     sub: Result<skrifa::raw::tables::layout::SequenceContext<'_>, skrifa::raw::ReadError>,
     todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
     work: &mut usize,
 ) -> bool {
     use skrifa::raw::tables::layout::SequenceContext;
     let Ok(sub) = sub else { return false };
     match sub {
         SequenceContext::Format1(s) => check_rule_sets(s.seq_rule_sets().iter(), work, |set, work| {
-            set.seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+            set.seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
         }),
         SequenceContext::Format2(s) => check_rule_sets(s.class_seq_rule_sets().iter(), work, |set, work| {
-            set.class_seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+            set.class_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
         }),
-        SequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, work),
+        SequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, seen, work),
     }
 }
 
 fn check_chain_context(
     sub: Result<skrifa::raw::tables::layout::ChainedSequenceContext<'_>, skrifa::raw::ReadError>,
     todo: &mut Vec<u16>,
+    seen: &mut std::collections::BTreeSet<u16>,
     work: &mut usize,
 ) -> bool {
     use skrifa::raw::tables::layout::ChainedSequenceContext;
     let Ok(sub) = sub else { return false };
     match sub {
         ChainedSequenceContext::Format1(s) => check_rule_sets(s.chained_seq_rule_sets().iter(), work, |set, work| {
-            set.chained_seq_rules().iter().all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+            set.chained_seq_rules()
+                .iter()
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
         }),
         ChainedSequenceContext::Format2(s) => check_rule_sets(s.chained_class_seq_rule_sets().iter(), work, |set, work| {
             set.chained_class_seq_rules()
                 .iter()
-                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, work)))
+                .all(|r| charge_arabic_gpos(work) && r.is_ok_and(|r| push_mark_records(r.seq_lookup_records(), todo, seen, work)))
         }),
-        ChainedSequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, work),
+        ChainedSequenceContext::Format3(s) => push_mark_records(s.seq_lookup_records(), todo, seen, work),
     }
 }
 
@@ -874,39 +931,18 @@ fn check_chain_context(
 /// attachment lookups (Types 4, 5, 6) and zero-index contextual wrappers over them, so clearing
 /// `mark`/`mkmk` on an earlier mark can move a later glyph only through its attachment chain.
 fn mark_lookups_attach_only(face: &FontRef) -> bool {
-    use skrifa::Tag;
     use skrifa::raw::tables::gpos::PositionSubtables;
     let Ok(gpos) = face.gpos() else { return false };
-    let (Ok(scripts), Ok(features), Ok(list)) = (gpos.script_list(), gpos.feature_list(), gpos.lookup_list()) else {
-        return false;
-    };
-    let Some(selected) = scripts.select(&[Tag::new(b"arab")]) else { return false };
-    let Ok(script) = scripts.get(selected.index) else { return false };
-    let language = match script.lang_sys_index_for_tag(Tag::new(b"dflt")) {
-        Some(index) => script.lang_sys(index).ok().map(|l| l.element),
-        None => script.default_lang_sys().transpose().ok().flatten(),
-    };
-    let Some(language) = language else { return false };
-    let records = features.feature_records();
-    let required = Some(language.required_feature_index()).filter(|&i| i != 0xFFFF);
-    let mut todo: Vec<u16> = language
-        .feature_indices()
-        .iter()
-        .map(|i| i.get())
-        .chain(required)
-        .filter_map(|i| records.get(usize::from(i)))
-        .filter(|r| r.feature_tag() == *b"mark" || r.feature_tag() == *b"mkmk")
-        .filter_map(|r| r.feature(features.offset_data()).ok())
-        .flat_map(|f| f.lookup_list_indices().iter().map(|i| i.get()).collect::<Vec<_>>())
-        .collect();
-    if todo.is_empty() {
+    let Ok(list) = gpos.lookup_list() else { return false };
+    let (mut seen, mut todo, mut work) = (std::collections::BTreeSet::new(), Vec::new(), 0usize);
+    let collected = visit_mark_features(&gpos, b"arab", |feature| {
+        let Ok(f) = feature else { return false };
+        push_feature_lookups(f.lookup_list_indices(), &mut todo, &mut seen, &mut work)
+    });
+    if !collected || todo.is_empty() {
         return false;
     }
-    let (mut seen, mut work) = (std::collections::BTreeSet::new(), 0usize);
     while let Some(idx) = todo.pop() {
-        if !seen.insert(idx) {
-            continue;
-        }
         if !charge_arabic_gpos(&mut work) {
             return false;
         }
@@ -914,10 +950,10 @@ fn mark_lookups_attach_only(face: &FontRef) -> bool {
         let ok = match lookup.subtables() {
             Ok(PositionSubtables::MarkToBase(_) | PositionSubtables::MarkToLig(_) | PositionSubtables::MarkToMark(_)) => true,
             Ok(PositionSubtables::Contextual(subs)) => {
-                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_seq_context(s, &mut todo, &mut work))
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_seq_context(s, &mut todo, &mut seen, &mut work))
             }
             Ok(PositionSubtables::ChainContextual(subs)) => {
-                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_chain_context(s, &mut todo, &mut work))
+                subs.iter().all(|s| charge_arabic_gpos(&mut work) && check_chain_context(s, &mut todo, &mut seen, &mut work))
             }
             _ => false,
         };
