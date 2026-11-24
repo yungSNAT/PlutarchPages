@@ -991,3 +991,34 @@ fn a_labels_one_word_value_refuses_only_with_a_digit_or_at() {
     assert!(!save_refuses(&doc("https://australia.gov.au/"), &["Country: Australia"]));
     assert!(save_refuses(&doc("https://example.com/tfn/123456789"), &["TFN: 123456789"]));
 }
+
+/// A string held by reference keeps the place of what refers to it (Alcuin round 2, S1): a
+/// field's `/V 5 0 R`, a link's `/URI 5 0 R`, a list box's indirect array of values. An array
+/// that refers to itself is read once.
+#[test]
+fn an_indirect_string_keeps_its_place() {
+    let fields = "/AcroForm << /Fields [4 0 R] >>";
+    let field = ["<< /FT /Tx /T (code) /V 5 0 R >>", "(Project Bluefin)"];
+    assert!(save_refuses(&doc_with(fields, "", &field, ""), &["Project Bluefin"]));
+    let list = ["<< /FT /Ch /T (code) /V 5 0 R >>", "[6 0 R (Other)]", "(Project Bluefin)"];
+    assert!(save_refuses(&doc_with(fields, "", &list, ""), &["Project Bluefin"]));
+    let link = ["<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /A << /S /URI /URI 5 0 R >> >>", "(https://bluefin.example/)"];
+    assert!(save_refuses(&doc_with("", "/Annots [4 0 R]", &link, ""), &["Bluefin"]));
+    let looped = ["<< /FT /Ch /T (code) /V 5 0 R >>", "[5 0 R 5 0 R (Other)]"];
+    assert!(!save_refuses(&doc_with(fields, "", &looped, ""), &["Project Bluefin"]));
+}
+
+/// A walk cut short at its cap is listed as its own place, which its category clears, not as
+/// an object nothing clears (Alcuin round 2, S2).
+#[test]
+fn a_name_tree_too_deep_to_walk_is_listed_as_an_attachment() {
+    // Past the walk's depth cap (`MAX_NAME_TREE_DEPTH`, 32).
+    let levels = 36;
+    let mut extra: Vec<String> = (0..levels).map(|i| format!("<< /Kids [{} 0 R] >>", i + 5)).collect();
+    extra.push("<< /Names [(a.txt) << /Type /Filespec /F (a.txt) >>] >>".to_string());
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let doc = doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "");
+    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
+}
