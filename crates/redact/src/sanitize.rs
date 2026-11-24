@@ -5,7 +5,7 @@
 //! rewrite, so the earlier revision (which still holds the data) leaves the file.
 
 use pdfcraft_content::Matrix;
-use pdfcraft_cos::{Dict, Document, ObjRef, Object};
+use pdfcraft_cos::{Dict, Document, ObjRef, Object, Stream};
 
 use crate::interp::{Mode, Scope, process};
 use crate::{RedactError, Report, annots_of, listed_annotations, page_streams, page_streams_within};
@@ -148,43 +148,37 @@ fn name_tree_len_seen(doc: &Document, node: &Dict, depth: usize, seen: &mut std:
 /// The most distinct outline items one count reads, over all levels together.
 const OUTLINE_ITEM_BUDGET: usize = 100_000;
 
-fn outline_len(doc: &Document, first: Option<&Object>, depth: usize) -> usize {
-    let (mut seen, mut counted) = (std::collections::HashSet::new(), 0);
-    outline_len_seen(doc, first, depth, &mut seen, &mut counted)
-}
-
 /// Counts an outline level and everything below it, each item once. `seen` holds the indirect items
 /// already counted, and `counted` every item counted so far, inline ones included, which the total
 /// budget applies to. An item that two others name (as `/First` or `/Next`) is counted where the walk
-/// first reaches it, and a level stops at an item already seen, because the walk that reached that
-/// item counts the rest of its level. A hostile outline therefore costs one step per item, not 2^n
-/// steps for n levels of shared children. The depth limit of 64 only matters for outlines nested that
-/// deep: an item first reached through a deeper path is not visited again from a shallower one, so
-/// items nested beyond the limit may stay uncounted.
-fn outline_len_seen(
-    doc: &Document,
-    first: Option<&Object>,
-    depth: usize,
-    seen: &mut std::collections::HashSet<ObjRef>,
-    counted: &mut usize,
-) -> usize {
-    let mut n = 0;
-    let mut cur = first.cloned();
-    let mut guard = 0;
-    while let Some(o) = cur {
-        guard += 1;
-        if guard > 100_000 || depth > 64 || *counted >= OUTLINE_ITEM_BUDGET {
+/// first reaches it; a hostile outline therefore costs one step per item, not 2^n steps. Direct
+/// nesting without an indirect reference stops at [`MAX_DIRECT_DEPTH`], whilst indirect `/First` and
+/// `/Next` chains traverse iteratively up to [`OUTLINE_ITEM_BUDGET`].
+fn outline_len(doc: &Document, first: Option<&Object>) -> usize {
+    let (mut seen, mut counted, mut n) = (std::collections::HashSet::new(), 0usize, 0usize);
+    let mut stack: Vec<(Object, usize)> = first.cloned().into_iter().map(|o| (o, 0)).collect();
+    while let Some((o, direct_depth)) = stack.pop() {
+        if counted >= OUTLINE_ITEM_BUDGET {
             break;
         }
-        if let Object::Ref(r) = &o
-            && !seen.insert(*r)
-        {
-            break;
+        let next_depth = match &o {
+            Object::Ref(r) => {
+                if !seen.insert(*r) {
+                    continue;
+                }
+                0
+            }
+            _ if direct_depth > MAX_DIRECT_DEPTH => continue,
+            _ => direct_depth + 1,
+        };
+        let Some(d) = doc.resolve(&o).as_dict().cloned() else { continue };
+        counted += 1;
+        n += 1;
+        for key in [b"Next".as_slice(), b"First".as_slice()] {
+            if let Some(child) = d.get(key).cloned() {
+                stack.push((child, next_depth));
+            }
         }
-        let Some(d) = doc.resolve(&o).as_dict().cloned() else { break };
-        *counted += 1;
-        n += 1 + outline_len_seen(doc, d.get(b"First"), depth + 1, seen, counted);
-        cur = d.get(b"Next").cloned();
     }
     n
 }
@@ -436,52 +430,49 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
         node: Node,
         idx: usize,
         depth: usize,
-        wrap_stream: bool,
+        stream: Option<Stream>,
     }
-    let open = |obj: Object, parent: Option<Parent>, role: Held, depth: usize, wrap_stream: bool| -> Option<Frame> {
-        let node = match obj {
-            Object::Array(a) => Node::Array(a),
-            Object::Dict(mut d) => {
-                if role != Held::Map {
-                    for k in keys {
-                        d.remove(k);
-                    }
-                }
-                let children = d.iter().filter(|(_, v)| matches!(v, Object::Array(_) | Object::Dict(_))).map(|(k, _)| k.clone()).collect();
-                Node::Dict { d, children, role }
+    let container = |v: &Object| matches!(v, Object::Array(_) | Object::Dict(_) | Object::Stream(_));
+    let open_dict = |mut d: Dict, r: Held| -> Node {
+        if r != Held::Map {
+            for k in keys {
+                d.remove(k);
             }
+        }
+        let children = d.iter().filter(|(_, v)| container(v)).map(|(k, _)| k.clone()).collect();
+        Node::Dict { d, children, role: r }
+    };
+    let open = |obj: Object, parent: Option<Parent>, role: Held, depth: usize| -> Option<Frame> {
+        let (node, stream) = match obj {
+            Object::Array(a) => (Node::Array(a), None),
+            Object::Dict(d) => (open_dict(d, role), None),
+            Object::Stream(mut s) => (open_dict(std::mem::take(&mut s.dict), Held::Owner), Some(s)),
             _ => return None,
         };
-        Some(Frame { parent, node, idx: 0, depth, wrap_stream })
+        Some(Frame { parent, node, idx: 0, depth, stream })
     };
-    let first = match o {
-        Object::Stream(s) => open(Object::Dict(std::mem::take(&mut s.dict)), None, Held::Owner, 0, true),
-        Object::Array(_) | Object::Dict(_) => open(std::mem::replace(o, Object::Null), None, role, 0, false),
-        _ => return,
-    };
-    let mut stack: Vec<Frame> = first.into_iter().collect();
+    if !container(o) {
+        return;
+    }
+    let Some(first) = open(std::mem::replace(o, Object::Null), None, role, 0) else { return };
+    let mut stack = vec![first];
     while let Some(top) = stack.last_mut() {
-        let next = if top.depth >= MAX_DIRECT_DEPTH {
-            None
-        } else {
-            match &mut top.node {
+        let next = (top.depth < MAX_DIRECT_DEPTH)
+            .then(|| match &mut top.node {
                 Node::Array(a) => (top.idx..a.len()).find_map(|i| {
                     top.idx = i + 1;
-                    matches!(a[i], Object::Array(_) | Object::Dict(_))
-                        .then(|| (std::mem::replace(&mut a[i], Object::Null), Parent::Index(i), Held::Owner))
+                    container(&a[i]).then(|| (std::mem::replace(&mut a[i], Object::Null), Parent::Index(i), Held::Owner))
                 }),
                 Node::Dict { d, children, role } => (top.idx..children.len()).find_map(|i| {
                     top.idx = i + 1;
                     let k = children[i].clone();
                     let cr = role.child(&k);
-                    d.get_mut(&k)
-                        .filter(|v| matches!(v, Object::Array(_) | Object::Dict(_)))
-                        .map(|v| (std::mem::replace(v, Object::Null), Parent::Key(k), cr))
+                    d.get_mut(&k).filter(|v| container(v)).map(|v| (std::mem::replace(v, Object::Null), Parent::Key(k), cr))
                 }),
-            }
-        };
+            })
+            .flatten();
         if let Some((child, parent, child_role)) = next
-            && let Some(frame) = open(child, Some(parent), child_role, top.depth + 1, false)
+            && let Some(frame) = open(child, Some(parent), child_role, top.depth + 1)
         {
             stack.push(frame);
             continue;
@@ -489,7 +480,13 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
         let Some(done) = stack.pop() else { break };
         let val = match done.node {
             Node::Array(a) => Object::Array(a),
-            Node::Dict { d, .. } => Object::Dict(d),
+            Node::Dict { d, .. } => match done.stream {
+                Some(mut s) => {
+                    s.dict = d;
+                    Object::Stream(s)
+                }
+                None => Object::Dict(d),
+            },
         };
         match (done.parent, stack.last_mut()) {
             (Some(Parent::Index(i)), Some(Frame { node: Node::Array(a), .. })) => a[i] = val,
@@ -499,14 +496,7 @@ fn strip_owned(o: &mut Object, role: Held, keys: &[&[u8]]) {
                 }
             }
             _ => {
-                if done.wrap_stream
-                    && let Object::Stream(s) = o
-                    && let Object::Dict(d) = val
-                {
-                    s.dict = d;
-                } else {
-                    *o = val;
-                }
+                *o = val;
                 return;
             }
         }
@@ -991,7 +981,7 @@ pub fn scan_only(doc: &Document, which: &[Hidden]) -> Vec<(Hidden, usize)> {
                     let off = hidden_layers(doc).len();
                     off + content_pass(&mut doc2, false, true, false).map(|(n, _)| n).unwrap_or(0)
                 }
-                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First"), 0)),
+                Hidden::Bookmarks => sub(doc, &cat, b"Outlines").map_or(0, |o| outline_len(doc, o.get(b"First"))),
                 Hidden::LinksActionsScripts => {
                     count_sub(b"Link")
                         + usize::from(cat.get(b"OpenAction").is_some_and(|a| doc.resolve(a).as_dict().is_some()))
