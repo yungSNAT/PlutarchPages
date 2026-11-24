@@ -931,10 +931,10 @@ fn the_parts_of_a_labelled_line_refuse_on_their_own() {
     assert!(save_refuses(&doc, &["Name: Jane Citizen"]));
 }
 
-/// A form's own wording (choice options, tooltip, names) refuses only for a whole removed run, not
-/// for words of one (delta 3 review NB2); a filled-in value still does.
+/// A form's own wording (choice options, tooltip, names) is told, never refused (delta 3 review
+/// NB2, delta 4 NB3, delta 5 NB4); a filled-in value still refuses.
 #[test]
-fn a_forms_own_wording_refuses_only_for_a_whole_run() {
+fn a_forms_own_wording_is_told_not_refused() {
     let fields = "/AcroForm << /Fields [4 0 R] >>";
     let state = ["<< /FT /Ch /T (state) /Opt [(New South Wales) (Victoria)] >>"];
     assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["Address: 1 Smith St, Sydney, New South Wales 2000"]));
@@ -943,8 +943,11 @@ fn a_forms_own_wording_refuses_only_for_a_whole_run() {
     let filled = ["<< /FT /Tx /T (dob) /TU (Date of birth) /V (01/02/1980) >>"];
     assert!(save_refuses(&doc_with(fields, "", &filled, ""), &["Date of birth: 01/02/1980"]));
     let named = ["<< /FT /Ch /T (project) /Opt [(Project Bluefin) (Other)] >>"];
-    assert!(save_refuses(&doc_with(fields, "", &named, ""), &["Project Bluefin"]));
-    // A label's value and a line's parts are not whole runs to a form's wording (delta 4 NB3).
+    assert!(!save_refuses(&doc_with(fields, "", &named, ""), &["Project Bluefin"]));
+    // A redacted table cell or line that is the whole of a form's wording.
+    let sex = ["<< /FT /Ch /T (sex) /Opt [(Male) (Female)] >>"];
+    assert!(!save_refuses(&doc_with(fields, "", &sex, ""), &["Female"]));
+    assert!(!save_refuses(&doc_with(fields, "", &birth, ""), &["Date of birth"]));
     assert!(!save_refuses(&doc_with(fields, "", &state, ""), &["State: New South Wales"]));
     let country = ["<< /FT /Ch /T (country) /Opt [(Australia) (New Zealand)] >>"];
     assert!(!save_refuses(&doc_with(fields, "", &country, ""), &["Address: 1 Queen St, Auckland, New Zealand"]));
