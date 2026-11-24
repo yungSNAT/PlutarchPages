@@ -877,6 +877,78 @@ fn kept_arabic_with_a_mark_stack_the_subset_cuts_short_falls_back_for_the_run() 
     falls_back_for_the_run(face, page(true), STACKED);
 }
 
+/// Overwrites the coverage table at `at` with a format 1 list of `glyphs` (sorted), where the
+/// table has room for it.
+fn write_coverage(table: &mut [u8], at: usize, glyphs: &[u16]) {
+    let room = match be16(table, at) {
+        1 => 4 + 2 * be16(table, at + 2),
+        2 => 4 + 6 * be16(table, at + 2),
+        format => panic!("coverage format {format}"),
+    };
+    assert!(room >= 4 + 2 * glyphs.len(), "room for {} glyphs", glyphs.len());
+    let words = [1, u16::try_from(glyphs.len()).unwrap()].into_iter().chain(glyphs.iter().copied());
+    for (i, word) in words.enumerate() {
+        table[at + 2 * i..at + 2 * i + 2].copy_from_slice(&word.to_be_bytes());
+    }
+}
+
+/// `program` (the bundled face or a subset keeping its glyph ids) with its last `mkmk` lookup, a
+/// mark-to-mark lookup with a mark filtering set, made to put sukun on shadda, its filtering set
+/// holding only those 2. It runs after the lookup that stacks fatha on shadda and sukun on fatha,
+/// so with shadda, fatha and sukun on a letter the sukun skips the fatha and lands on the shadda,
+/// through the fatha, still moved by `mkmk`, as are the other marks.
+fn sukun_on_shadda(program: &[u8], shadda: u16, sukun: u16) -> Vec<u8> {
+    let mut gpos = tables(program)[b"GPOS"].to_vec();
+    let (features, lookups) = (be16(&gpos, 6), be16(&gpos, 8));
+    let record = (0..be16(&gpos, features)).map(|i| features + 2 + 6 * i).find(|&r| &gpos[r..r + 4] == b"mkmk").unwrap();
+    let feature = features + be16(&gpos, record + 4);
+    let last = be16(&gpos, feature + 4 + 2 * (be16(&gpos, feature + 2) - 1));
+    let lookup = lookups + be16(&gpos, lookups + 2 + 2 * last);
+    let (kind, flag, count) = (be16(&gpos, lookup), be16(&gpos, lookup + 2), be16(&gpos, lookup + 4));
+    assert_eq!((flag & 0x10, count), (0x10, 1), "one subtable and a mark filtering set");
+    let mut subtable = lookup + be16(&gpos, lookup + 6);
+    if kind == 9 {
+        subtable += be32(&gpos, subtable + 4);
+    }
+    assert_eq!((be16(&gpos, subtable), be16(&gpos, subtable + 6)), (1, 1), "mark-to-mark, one class");
+    let (mark1, mark2) = (subtable + be16(&gpos, subtable + 2), subtable + be16(&gpos, subtable + 4));
+    let (mark1_array, mark2_array) = (subtable + be16(&gpos, subtable + 8), subtable + be16(&gpos, subtable + 10));
+    assert_eq!(be16(&gpos, mark1_array + 2), 0, "the first mark's class");
+    assert_ne!(be16(&gpos, mark2_array + 2), 0, "the first earlier mark's anchor");
+    write_coverage(&mut gpos, mark1, &[sukun]);
+    write_coverage(&mut gpos, mark2, &[shadda]);
+    let mut gdef = tables(program)[b"GDEF"].to_vec();
+    assert!(be32(&gdef, 0) >= 0x0001_0002, "GDEF with mark glyph sets");
+    let sets = be16(&gdef, 12);
+    let set = be16(&gpos, lookup + 6 + 2 * count);
+    let coverage = sets + be32(&gdef, sets + 4 + 4 * set);
+    write_coverage(&mut gdef, coverage, &[shadda.min(sukun), shadda.max(sukun)]);
+    with_table(&with_table(program, b"GPOS", gpos), b"GDEF", gdef)
+}
+
+/// A page's font whose mark-to-mark lookup puts the third of 3 stacked marks on the first, skipping
+/// the second (its flags allow that): every mark is still moved by `mkmk`, so the count of stacked
+/// marks matches the bundled face's, but the sukun is drawn through the fatha. The run is drawn in
+/// the bundled face, which keeps its own marks; the same subset without the change keeps the run.
+#[test]
+fn a_page_font_that_stacks_a_mark_on_the_wrong_mark_falls_back_for_the_run() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let (shadda, sukun) = (nominal(face.bytes, '\u{0651}'), nominal(face.bytes, '\u{0652}'));
+    let skipping = sukun_on_shadda(face.bytes, shadda, sukun);
+    assert!(joins_arabic(face.bytes, face.bytes, STACKED));
+    assert!(!joins_arabic(&skipping, face.bytes, STACKED));
+    let page = |skip: bool| {
+        producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+            let program = subset(face.bytes, &keep.iter().copied().chain([usize::from(sukun)]).collect(), true);
+            if skip { sukun_on_shadda(&program, shadda, sukun) } else { program }
+        })
+    };
+    let mut intact = page(false);
+    assert_eq!(replace_block(&mut intact, 0, 0, STACKED).unwrap().substituted, None, "the intact subset stacks the 3 marks itself");
+    falls_back_for_the_run(face, page(true), STACKED);
+}
+
 /// A page's font that splits a letter into more glyphs than the bundled face can meet the count of
 /// stacked marks with a glyph the bundled face has no counterpart for. Here the bundled face's
 /// stand-in, without `ccmp`, draws sheen whole and stacks fatha on shadda (1 glyph moved by
