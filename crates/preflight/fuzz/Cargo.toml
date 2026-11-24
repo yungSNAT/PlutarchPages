@@ -12,11 +12,15 @@ cargo-fuzz = true
 # from crates/preflight/.
 [workspace]
 
-# A detached workspace skips the root [patch.crates-io], so repeat the vendored
-# crates this target reaches: the fuzzer then runs the code PdfCraft ships.
+# A detached workspace skips the root [patch.crates-io], so repeat its hayro entries: the
+# fuzzer then runs the code PdfCraft ships.
 [patch.crates-io]
-hayro-jbig2 = { path = "../../../vendor/hayro-jbig2" }
-hayro-syntax = { path = "../../../vendor/hayro-syntax" }
+hayro-interpret = { path = "../../../vendor/hayro-interpret" }
+hayro = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-syntax = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-cmap = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
+hayro-postscript = { git = "https://github.com/storytold/craft-libs", rev = "e7873217287876f76a045550369c90a541693c33" }
+hayro-jbig2 = { git = "https://github.com/storytold/craft-libs", rev = "9eb02be84f21898e247daeb2af5827c9fe85a3a0" }
 
 # The root [patch] that swaps in the vendored, patched craft-pdf does not reach a detached
 # workspace either (vendor/craft-pdf/PATCHES.md).

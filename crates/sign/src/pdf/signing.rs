@@ -1,5 +1,5 @@
+use super::field_lock;
 use super::listing::{mk_rotation, nums, sig_fields, text, walk_sig_fields};
-use super::locks;
 use super::{Certificate, Dict, DigestAlg, DigitalId, Document, HashSet, Object, PdfString, SaveOptions, SignError, SignedData, Stream};
 
 // ── signing ─────────────────────────────────────────────────────────────────────────────────
@@ -244,12 +244,12 @@ fn sign_inner(
                 return Err(SignError::Pdf(format!("the value of the field {:?} is not a signature", f.name)));
             }
             let fr = f.r.ok_or_else(|| SignError::Pdf("the field is not an indirect object".into()))?;
-            locks::check_signable(&doc, &f, opts.reason.as_deref())?;
+            field_lock::check_signable(&doc, &f, opts.reason.as_deref())?;
             // What the field locks becomes read-only in the signed revision, and the signature
             // records it (FieldMDP), with any DocMDP reference kept first.
-            if let Some(lock) = locks::field_lock(&doc, &f)? {
-                locks::lock_fields(&mut doc, &lock)?;
-                let reference = locks::reference(&lock, root);
+            if let Some(lock) = field_lock::field_lock(&doc, &f)? {
+                field_lock::lock_fields(&mut doc, &lock)?;
+                let reference = field_lock::reference(&lock, root);
                 doc.update_dict(sig, |v| match v.get_mut(b"Reference") {
                     Some(Object::Array(r)) => r.push(reference),
                     _ => v.set(b"Reference".to_vec(), Object::Array(vec![reference])),
