@@ -110,7 +110,7 @@ jobs:
       !cancelled()
       && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/gate.yml@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@82f995029cffa611fea46e4dddb0ba2627190003 # main, 31 October 2026
     with:
       # Windows on main (unless the push is docs-only), manual runs and pull requests labelled
       # `full-ci`. No macOS on PRs or main: the org's 5 macOS slots are kept for release builds,
@@ -175,14 +175,14 @@ jobs:
       # The gate builds with the translations at craft-i18n.rev (and requires them); without them
       # the tests that read a translated label have only English.
       - name: Check out craft-i18n
-        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
+        uses: storytold/craft-common-actions/actions/checkout-craft-i18n@82f995029cffa611fea46e4dddb0ba2627190003 # main, 31 October 2026
       # The instrumented workspace build overflows the free space on a stock runner.
       - name: Free disk space
         run: |
           nohup sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
             /opt/hostedtoolcache/CodeQL </dev/null >/dev/null 2>&1 &
       - name: Install Linux build dependencies
-        uses: storytold/craft-common-actions/actions/install-apt-packages@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
+        uses: storytold/craft-common-actions/actions/install-apt-packages@82f995029cffa611fea46e4dddb0ba2627190003 # main, 31 October 2026
         with:
           packages: *linux-packages
       # The gate's toolchain: stable, as no rust-toolchain.toml names a channel.
@@ -191,7 +191,7 @@ jobs:
           rustup toolchain install stable --profile minimal --no-self-update --component llvm-tools
           rustup default stable
       - name: Install cargo-llvm-cov and cargo-nextest
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-llvm-cov@0.9.1,cargo-nextest@0.9.150
           fallback: none
