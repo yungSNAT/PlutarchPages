@@ -2096,7 +2096,7 @@ mod tests {
         let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
         let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
 
-        let build_gdef = |cls: &[(u16, u16)], mcls: &[(u16, u16)], fset_gid: Option<u16>| -> Vec<u8> {
+        let build_gdef = |cls: &[(u16, u16)], mcls: &[(u16, u16)], fset_gids: &[u16]| -> Vec<u8> {
             let mut out = Vec::new();
             for _ in 0..7 {
                 push(&mut out, 0);
@@ -2121,13 +2121,21 @@ mod tests {
             };
             let cls_off = write_cls(&mut out, cls);
             let mcls_off = write_cls(&mut out, mcls);
-            let msets_off = fset_gid.map_or(0, |fg| {
+            let msets_off = if fset_gids.is_empty() {
+                0
+            } else {
+                let mut sorted = fset_gids.to_vec();
+                sorted.sort_unstable();
+                sorted.dedup();
                 let off = out.len() as u16;
-                for w in [1u16, 1, 6, 1, 1, fg] {
+                for w in [1u16, 1, 0, 8, 1, sorted.len() as u16] {
                     push(&mut out, w);
                 }
+                for g in sorted {
+                    push(&mut out, g);
+                }
                 off
-            });
+            };
             out[4..6].copy_from_slice(&cls_off.to_be_bytes());
             out[10..12].copy_from_slice(&mcls_off.to_be_bytes());
             out[12..14].copy_from_slice(&msets_off.to_be_bytes());
@@ -2177,13 +2185,23 @@ mod tests {
                 AnchorKind::CorruptTarget => gpos[l0 + 48..l0 + 50].copy_from_slice(&9u16.to_be_bytes()),
                 AnchorKind::CorruptMark => gpos[l0 + 38..l0 + 40].copy_from_slice(&9u16.to_be_bytes()),
             }
+            if flag & 0x0010 != 0 {
+                gpos[l0 + 6..l0 + 8].copy_from_slice(&10u16.to_be_bytes());
+                gpos.splice(l0 + 8..l0 + 8, 0u16.to_be_bytes());
+            }
             with_table(face.bytes, b"GPOS", gpos)
         };
         let empty_gdef = Vec::new();
-        let gdef_match = build_gdef(&[(ka_gid, 1), (sara_i, 3)], &[(sara_i, 1)], Some(sara_i));
-        let gdef_mismatch = build_gdef(&[(ka_gid, 0), (sara_i, 3)], &[(sara_i, 2)], Some(unrelated));
-        let gdefs_mtb: [(&str, Option<&Vec<u8>>); 4] =
-            [("keep", None), ("drop", Some(&empty_gdef)), ("match", Some(&gdef_match)), ("mismatch", Some(&gdef_mismatch))];
+        let gdef_match = build_gdef(&[(ka_gid, 1), (sara_i, 3)], &[(sara_i, 1)], &[sara_i]);
+        let gdef_nocls_match = build_gdef(&[], &[(sara_i, 1)], &[sara_i]);
+        let gdef_mismatch = build_gdef(&[(ka_gid, 0), (sara_i, 3)], &[(sara_i, 2)], &[unrelated]);
+        let gdefs_mtb: [(&str, Option<&Vec<u8>>); 5] = [
+            ("keep", None),
+            ("drop", Some(&empty_gdef)),
+            ("match", Some(&gdef_match)),
+            ("nocls_match", Some(&gdef_nocls_match)),
+            ("mismatch", Some(&gdef_mismatch)),
+        ];
         for flag in [0x0000u16, 0x0002, 0x0004, 0x0008, 0x0100, 0x0010] {
             for (gname, gdef) in gdefs_mtb {
                 let z = apply_gdef(&build_mtb(flag, AnchorKind::Valid, 0), gdef);
@@ -2219,9 +2237,9 @@ mod tests {
             let gp = with_table(face.bytes, b"GPOS", gpos);
             with_table(&gp, b"GSUB", liga_gsub.clone())
         };
-        let gdef_lig1 = build_gdef(&[(mid_gid, 1), (sara_i, 3)], &[], None);
-        let gdef_lig2 = build_gdef(&[(mid_gid, 2), (sara_i, 3)], &[], None);
-        let gdef_lig0 = build_gdef(&[(mid_gid, 0), (sara_i, 3)], &[], None);
+        let gdef_lig1 = build_gdef(&[(mid_gid, 1), (sara_i, 3)], &[], &[]);
+        let gdef_lig2 = build_gdef(&[(mid_gid, 2), (sara_i, 3)], &[], &[]);
+        let gdef_lig0 = build_gdef(&[(mid_gid, 0), (sara_i, 3)], &[], &[]);
         for (c0, c1, fmt) in [(true, true, 1), (true, false, 1), (false, true, 1), (false, false, 1), (true, true, 9)] {
             for text in ["น\u{0e34}ก", "นก\u{0e34}", "น\u{034f}\u{0e34}ก"] {
                 let z = build_mtl(mid_gid, mid_adv, 0, c0, c1, fmt, 0);
@@ -2258,19 +2276,27 @@ mod tests {
                     gpos[l1 + 46..l1 + 48].copy_from_slice(&0u16.to_be_bytes());
                 }
             }
+            if flag & 0x0010 != 0 {
+                gpos[l1 + 6..l1 + 8].copy_from_slice(&10u16.to_be_bytes());
+                gpos.splice(l1 + 8..l1 + 8, 0u16.to_be_bytes());
+            }
             let gp = with_table(face.bytes, b"GPOS", gpos);
             with_table(&gp, b"GSUB", liga_gsub.clone())
         };
-        let gdef_mk_match = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 1)], Some(mai_ek));
-        let gdef_mk_miss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 2)], Some(unrelated));
-        let gdef_mk_tmiss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 2), (mai_ek, 1)], Some(mai_ek));
+        let gdef_mk_match = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 1)], &[sara_i, mai_ek]);
+        let gdef_mk_nocls_match = build_gdef(&[], &[(sara_i, 1), (mai_ek, 1)], &[sara_i, mai_ek]);
+        let gdef_mk_miss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 1), (mai_ek, 2)], &[unrelated]);
+        let gdef_mk_tmiss = build_gdef(&[(ka_gid, 1), (sara_i, 3), (mai_ek, 3)], &[(sara_i, 2), (mai_ek, 1)], &[mai_ek]);
+        let gdef_mk_nocls_tmiss = build_gdef(&[], &[(sara_i, 2), (mai_ek, 1)], &[mai_ek]);
         for flag in [0x0000u16, 0x0008, 0x0100, 0x0010] {
             for (gname, gdef) in [
                 ("keep", None),
                 ("drop", Some(&empty_gdef)),
                 ("match", Some(&gdef_mk_match)),
+                ("nocls_match", Some(&gdef_mk_nocls_match)),
                 ("miss", Some(&gdef_mk_miss)),
                 ("target_miss", Some(&gdef_mk_tmiss)),
+                ("nocls_tmiss", Some(&gdef_mk_nocls_tmiss)),
             ] {
                 let z = apply_gdef(&build_mkmk(ka_gid, ka_adv, sara_i, flag, None, 0), gdef);
                 let s = apply_gdef(&build_mkmk(ka_gid, ka_adv, sara_i, flag, None, 200), gdef);
