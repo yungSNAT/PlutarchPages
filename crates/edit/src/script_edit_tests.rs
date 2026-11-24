@@ -1066,6 +1066,134 @@ fn a_page_font_that_spoofs_stacked_mark_dependency_via_pair_pos_is_refused() {
     assert!(!joins_arabic(&spoofed, face.bytes, STACKED));
 }
 
+/// Rebuilds `gpos` with `mark_feats` `"arab"` `mark` features aliasing one `Feature` table of 250
+/// `mark` lookup references plus an `"mkmk"` feature preserving `mkmk` lookups, keeping the
+/// original `LookupList` so HarfRust still places and stacks marks normally.
+fn aliased_mark_gpos(gpos: &[u8], mark_feats: usize) -> Vec<u8> {
+    let (feat_base, look_off) = (be16(gpos, 6), be16(gpos, 8));
+    let mut mark_lookups = Vec::new();
+    let mut mkmk_lookups = Vec::new();
+    for i in 0..be16(gpos, feat_base) {
+        let rec = feat_base + 2 + 6 * i;
+        let tag = &gpos[rec..rec + 4];
+        let target = if tag == b"mark" {
+            &mut mark_lookups
+        } else if tag == b"mkmk" {
+            &mut mkmk_lookups
+        } else {
+            continue;
+        };
+        let f = feat_base + be16(gpos, rec + 4);
+        for j in 0..be16(gpos, f + 2) {
+            let idx = be16(gpos, f + 4 + 2 * j) as u16;
+            if !target.contains(&idx) {
+                target.push(idx);
+            }
+        }
+    }
+    assert!(!mark_lookups.is_empty() && !mkmk_lookups.is_empty());
+    let words = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_be_bytes()).collect() };
+    let (list_len, total_feats) = (250usize, mark_feats + 1);
+    let script_len = 12 + 6 + 2 * total_feats;
+    let feat_off = 10 + script_len;
+    let mark_tbl_rel = 2 + 6 * total_feats;
+    let mkmk_tbl_rel = mark_tbl_rel + 4 + 2 * list_len;
+    let new_look_off = feat_off + mkmk_tbl_rel + 4 + 2 * mkmk_lookups.len();
+    let mut out = words(&[1, 0, 10, u16::try_from(feat_off).unwrap(), u16::try_from(new_look_off).unwrap()]);
+    out.extend(words(&[1]));
+    out.extend_from_slice(b"arab");
+    out.extend(words(&[8, 4, 0, 0, 0xFFFF, u16::try_from(total_feats).unwrap()]));
+    for i in 0..total_feats {
+        out.extend(words(&[u16::try_from(i).unwrap()]));
+    }
+    out.extend(words(&[u16::try_from(total_feats).unwrap()]));
+    for _ in 0..mark_feats {
+        out.extend_from_slice(b"mark");
+        out.extend(words(&[u16::try_from(mark_tbl_rel).unwrap()]));
+    }
+    out.extend_from_slice(b"mkmk");
+    out.extend(words(&[u16::try_from(mkmk_tbl_rel).unwrap()]));
+    out.extend(words(&[0, u16::try_from(list_len).unwrap()]));
+    for i in 0..list_len {
+        out.extend(words(&[mark_lookups[i % mark_lookups.len()]]));
+    }
+    out.extend(words(&[0, u16::try_from(mkmk_lookups.len()).unwrap()]));
+    out.extend(words(&mkmk_lookups));
+    assert_eq!(out.len(), new_look_off);
+    out.extend_from_slice(&gpos[look_off..]);
+    out
+}
+
+/// An embedded font whose `arab` language system aliases `mark` features into more than `1 << 16`
+/// initial lookup references (`300 * 250 = 75,000`) must be refused cleanly inside
+/// `mark_lookups_attach_only`, whilst the identical table layout with one `mark` feature (`250`
+/// lookup references) passes.
+#[test]
+fn aliased_mark_features_exceeding_gpos_budget_are_refused() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let gpos = tables(face.bytes)[b"GPOS"];
+    let under_budget = with_table(face.bytes, b"GPOS", aliased_mark_gpos(gpos, 1));
+    assert!(joins_arabic(&under_budget, face.bytes, STACKED));
+    let over_budget = with_table(face.bytes, b"GPOS", aliased_mark_gpos(gpos, 300));
+    assert!(!joins_arabic(&over_budget, face.bytes, STACKED));
+}
+
+/// Canonical mark reordering (non-CCC input order `"ب\u{0651}\u{064e}\u{0652}"`) still preserves
+/// cluster-level dependency checking under `BufferClusterLevel::Characters`, and wrapping a
+/// `PairPos` lookup inside a `SequenceContextFormat3` (`seq_index = 0`) lookup in `mark` is still
+/// traced and refused.
+#[test]
+fn arabic_reordered_stacked_marks_and_contextual_pair_pos_are_checked() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let (fatha, shadda, sukun) = (nominal(face.bytes, '\u{064e}'), nominal(face.bytes, '\u{0651}'), nominal(face.bytes, '\u{0652}'));
+    let reordered = "ب\u{0651}\u{064e}\u{0652}";
+    assert!(joins_arabic(face.bytes, face.bytes, reordered));
+    let wrong_parent = sukun_on_shadda(face.bytes, shadda, sukun);
+    assert!(!joins_arabic(&wrong_parent, face.bytes, reordered));
+    let pair_gpos = add_mark_pair_pos(tables(&wrong_parent)[b"GPOS"], fatha, sukun);
+    let (script_off, feat_off, look_off) = (be16(&pair_gpos, 4), be16(&pair_gpos, 6), be16(&pair_gpos, 8));
+    let lcount = be16(&pair_gpos, look_off);
+    let insert_at = look_off + 2 + 2 * lcount;
+    let mut ctx = Vec::with_capacity(pair_gpos.len() + 64);
+    ctx.extend_from_slice(&pair_gpos[..insert_at]);
+    ctx.extend_from_slice(&[0, 0]);
+    ctx.extend_from_slice(&pair_gpos[insert_at..]);
+    let write16 = |buf: &mut [u8], at: usize, val: usize| buf[at..at + 2].copy_from_slice(&u16::try_from(val).unwrap().to_be_bytes());
+    write16(&mut ctx, look_off, lcount + 1);
+    if script_off >= insert_at {
+        write16(&mut ctx, 4, script_off + 2);
+    }
+    if feat_off >= insert_at {
+        write16(&mut ctx, 6, feat_off + 2);
+    }
+    for i in 0..lcount {
+        let off = be16(&ctx, look_off + 2 + 2 * i);
+        if look_off + off >= insert_at {
+            write16(&mut ctx, look_off + 2 + 2 * i, off + 2);
+        }
+    }
+    let ctx_lookup_abs = ctx.len();
+    write16(&mut ctx, look_off + 2 + 2 * lcount, ctx_lookup_abs - look_off);
+    let pair_idx = u16::try_from(lcount - 1).unwrap();
+    // Lookup type 7 (ContextPos), format 3 (1 glyph coverage at +12, 1 SequenceLookupRecord at (0, pair_idx)), Coverage format 1 [fatha].
+    for w in [7u16, 0, 1, 8, 3, 1, 1, 12, 0, pair_idx, 1, 1, fatha] {
+        ctx.extend_from_slice(&w.to_be_bytes());
+    }
+    let feat_base = be16(&ctx, 6);
+    for i in 0..be16(&ctx, feat_base) {
+        let rec = feat_base + 2 + 6 * i;
+        if &ctx[rec..rec + 4] == b"mark" {
+            let f = feat_base + be16(&ctx, rec + 4);
+            let n = be16(&ctx, f + 2);
+            write16(&mut ctx, f + 4 + 2 * (n - 1), lcount);
+        }
+    }
+    let wrapped = with_table(&wrong_parent, b"GPOS", ctx);
+    assert!(!joins_arabic(&wrapped, face.bytes, STACKED));
+}
+
 /// Each stacked mark shapes its word again, so their work over the whole text is bounded: 8 words
 /// of beh and 2,047 fathas each are refused at once, not judged for a minute.
 #[test]
