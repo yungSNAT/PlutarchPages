@@ -1719,4 +1719,161 @@ mod tests {
         let null_comp = with_table(face.bytes, b"GPOS", null_gpos);
         assert!(shape(&null_comp, "กิ").unwrap_err().contains("mark positioning"));
     }
+
+    /// Component-specific `MarkToLigature` anchors: a 2-component GSUB ligature with an anchor only
+    /// on the targeted component is accepted, whilst attaching a mark to a NULL component fails.
+    #[test]
+    fn thai_mark_to_ligature_component_specific_anchor_follows_mark_component() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let [no_gid, ka_gid, mid_gid, sara_i] = [
+            shape(face.bytes, "น").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "ร").unwrap().glyphs[0].id.to_u32(),
+            shape(face.bytes, "กิ").unwrap().glyphs[1].id.to_u32(),
+        ]
+        .map(|g| u16::try_from(g).unwrap());
+        let mid_adv = FontRef::new(face.bytes)
+            .unwrap()
+            .glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default())
+            .advance_width(GlyphId::new(u32::from(mid_gid)))
+            .unwrap_or_default()
+            .round() as i16;
+        let gsub = minimal_transitive_liga_gsub(no_gid, ka_gid, mid_gid, mid_gid, false);
+        let build_lig_gpos = |comp0_on: bool, comp1_on: bool| {
+            let mut gpos = minimal_thai_gpos(mid_gid, sara_i, sara_i, mid_adv, 0, 0);
+            let l0 = u16_at(&gpos, 8) + u16_at(&gpos, u16_at(&gpos, 8) + 2);
+            gpos[l0..l0 + 2].copy_from_slice(&5u16.to_be_bytes());
+            gpos.truncate(l0 + 8 + 36);
+            let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+            let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+            for w in [1u16, 4, 2, if comp0_on { 6 } else { 0 }, if comp1_on { 6 } else { 0 }] {
+                push(&mut gpos, w);
+            }
+            push(&mut gpos, 1);
+            push_i(&mut gpos, mid_adv);
+            push_i(&mut gpos, 0);
+            let with_gpos = with_table(face.bytes, b"GPOS", gpos);
+            with_table(&with_gpos, b"GSUB", gsub.clone())
+        };
+        assert!(shape(&build_lig_gpos(true, false), "น\u{0e34}ก").is_ok(), "comp 0 anchor should pass");
+        assert!(shape(&build_lig_gpos(false, true), "นก\u{0e34}").is_ok(), "comp 1 anchor should pass");
+        assert!(shape(&build_lig_gpos(false, true), "น\u{0e34}ก").unwrap_err().contains("mark positioning"));
+        assert!(shape(&build_lig_gpos(true, false), "น\u{0e34}ก\u{0e34}").unwrap_err().contains("mark positioning"));
+    }
+
+    /// Corrupt GSUB records in `ligature_glyphs` fail closed rather than silently skipping errors.
+    #[test]
+    fn corrupt_gsub_ligature_record_fails_closed() {
+        let Some(face) = crate::document_thai_font() else { return };
+        let ka = u16::try_from(shape(face.bytes, "ก").unwrap().glyphs[0].id.to_u32()).unwrap();
+        let mut gsub = aliased_liga_gsub(1, 1, 1, ka, ka);
+        gsub.truncate(gsub.len() - 2);
+        let bytes = with_table(face.bytes, b"GSUB", gsub);
+        let error = shape(&bytes, "กิ").unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+    }
+
+    /// Aliased GPOS subtable offsets past `MAX_THAI_LOOKUP_WORK` fail closed promptly.
+    #[test]
+    fn pathological_aliased_gpos_subtables_fail_promptly() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::document_thai_font() else { return };
+        let font = FontRef::new(face.bytes).unwrap();
+        let cmap = font.charmap();
+        let metrics = font.glyph_metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
+        let mut bases: Vec<(char, u16, i16)> = ('\u{0e01}'..='\u{0e2e}')
+            .filter_map(|c| {
+                let g = cmap.map(c)?;
+                let id = u16::try_from(g.to_u32()).ok()?;
+                let adv = metrics.advance_width(g).unwrap_or_default().round() as i16;
+                Some((c, id, adv))
+            })
+            .collect();
+        bases.sort_by_key(|x| x.1);
+        bases.dedup_by_key(|x| x.1);
+        let mut marks: Vec<(char, u16)> = ['\u{0e34}', '\u{0e35}', '\u{0e38}', '\u{0e39}', '\u{0e48}']
+            .into_iter()
+            .filter_map(|c| Some((c, u16::try_from(cmap.map(c)?.to_u32()).ok()?)))
+            .collect();
+        marks.sort_by_key(|x| x.1);
+        let unrelated = bases.pop().unwrap().1;
+
+        let mut gpos = Vec::new();
+        let push = |v: &mut Vec<u8>, w: u16| v.extend_from_slice(&w.to_be_bytes());
+        let push_i = |v: &mut Vec<u8>, w: i16| v.extend_from_slice(&w.to_be_bytes());
+        // Header (10) + ScriptList (20) + FeatureList (14) = 44
+        for w in [1u16, 0, 10, 30, 44, 1] {
+            push(&mut gpos, w);
+        }
+        gpos.extend_from_slice(b"thai");
+        for w in [8u16, 4, 0, 0, 0xFFFF, 1, 0, 1] {
+            push(&mut gpos, w);
+        }
+        gpos.extend_from_slice(b"mark");
+        for w in [8u16, 0, 1, 0, 1, 4] {
+            push(&mut gpos, w);
+        }
+        let l0_abs = gpos.len();
+        let subs: u16 = 25_000;
+        let miss_off = 6 + 2 * subs;
+        let hit_off = miss_off + 46;
+        for w in [4u16, 0, subs] {
+            push(&mut gpos, w);
+        }
+        for _ in 0..subs - 1 {
+            push(&mut gpos, miss_off);
+        }
+        push(&mut gpos, hit_off);
+        assert_eq!(gpos.len() - l0_abs, usize::from(miss_off));
+        for w in [1u16, 12, 18, 1, 24, 36, 1, 1, unrelated, 1, 1, unrelated, 1, 0, 6, 1, 0, 0, 1, 4, 1, 0, 0] {
+            push(&mut gpos, w);
+        }
+        assert_eq!(gpos.len() - l0_abs, usize::from(hit_off));
+        let mark_cov_off = 12u16;
+        let mark_cov_len = 4 + 2 * marks.len() as u16;
+        let base_cov_off = mark_cov_off + mark_cov_len;
+        let base_cov_len = 4 + 2 * bases.len() as u16;
+        let mark_arr_off = base_cov_off + base_cov_len;
+        let mark_arr_len = 2 + 4 * marks.len() as u16 + 6;
+        let base_arr_off = mark_arr_off + mark_arr_len;
+        for w in [1u16, mark_cov_off, base_cov_off, 1, mark_arr_off, base_arr_off, 1, marks.len() as u16] {
+            push(&mut gpos, w);
+        }
+        for &(_, m) in &marks {
+            push(&mut gpos, m);
+        }
+        for w in [1u16, bases.len() as u16] {
+            push(&mut gpos, w);
+        }
+        for &(_, b, _) in &bases {
+            push(&mut gpos, b);
+        }
+        let anchor0 = 2 + 4 * marks.len() as u16;
+        push(&mut gpos, marks.len() as u16);
+        for _ in &marks {
+            push(&mut gpos, 0);
+            push(&mut gpos, anchor0);
+        }
+        for w in [1u16, 0, 0] {
+            push(&mut gpos, w);
+        }
+        let first_base_anchor = 2 + 2 * bases.len() as u16;
+        push(&mut gpos, bases.len() as u16);
+        for idx in 0..bases.len() {
+            push(&mut gpos, first_base_anchor + 6 * idx as u16);
+        }
+        for &(_, _, adv) in &bases {
+            push(&mut gpos, 1);
+            push_i(&mut gpos, adv);
+            push_i(&mut gpos, 0);
+        }
+        let gpos_bytes = with_table(face.bytes, b"GPOS", gpos);
+        let bytes = with_table(&gpos_bytes, b"GSUB", minimal_liga_gsub(unrelated, unrelated, unrelated));
+        let text: String = marks.iter().flat_map(|&(m, _)| bases.iter().map(move |&(b, _, _)| format!("{b}{m} "))).collect();
+        let started = std::time::Instant::now();
+        let error = shape(&bytes, &text).unwrap_err();
+        assert!(error.contains("mark positioning"), "{error}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1), "{:?}", started.elapsed());
+    }
 }
