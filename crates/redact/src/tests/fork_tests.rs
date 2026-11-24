@@ -787,10 +787,14 @@ fn a_signers_name_holding_the_text_refuses() {
     assert!(save_refuses(&doc_with("/AcroForm << /Fields [4 0 R] >>", "", &[field, sig], ""), &["BLUEFIN"]));
 }
 
-/// An object that can't be read may hold the text (review S6): it refuses, where it was told.
+/// An object that can't be read is written as null by the full save a redaction needs
+/// (`write_full` treats it as a dangling reference), so it holds nothing back and doesn't refuse:
+/// refusing would leave no way to save (review S6, settled by reading the writer).
 #[test]
-fn an_object_that_cant_be_read_refuses() {
-    assert!(save_refuses(&doc_with("/Extra 4 0 R", "", &["<< /Title (Report) /Author ) >>"], ""), &["BLUEFIN"]));
+fn an_object_that_cant_be_read_holds_nothing_back() {
+    let doc = doc_with("/Extra 4 0 R", "", &["<< /Title (Report) /Author ) >>"], "");
+    assert!(pdfcraft_cos::reachable_objects(&doc).is_ok_and(|r| !r.contains(&4)), "the full save leaves it out");
+    assert!(!save_refuses(&doc, &["BLUEFIN"]));
 }
 
 /// An object nothing refers to isn't written by the full save a redaction needs, so it holds
