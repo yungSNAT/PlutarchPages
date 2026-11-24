@@ -597,3 +597,28 @@ fn optimizing_with_the_category_that_clears_the_place_goes_ahead() {
     s.optimized_bytes(id, &optimize::Settings::default(), &[crate::Hidden::LinksActionsScripts]).expect("the copy discards the link's action");
     assert!(s.optimized_bytes(id, &optimize::Settings::default(), &[crate::Hidden::Comments]).is_err(), "comments don't clear a link");
 }
+
+/// A redacted file holding objects nested about as deep as the parser reads, one under the
+/// page's `/Annots` and one a form field's value, saves, and refuses while the field's deep value
+/// holds the redacted word: the whole save path, the check included, runs on a 1 MiB thread stack
+/// (a Windows main thread's).
+#[test]
+fn a_deeply_nested_file_saves_and_is_checked_on_a_small_stack() {
+    let nested = |levels: usize, bottom: &str| format!("{}{bottom}{}", "[".repeat(levels), "]".repeat(levels));
+    for (bottom, refuses) in [("(other)", false), ("(BLUEFIN)", true)] {
+        let annot = format!("<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /Deep {} >>", nested(120, "(x)"));
+        let deep = nested(124, bottom);
+        let field = "<< /FT /Tx /T (code) /V 8 0 R >>";
+        let pdf = leaky_page("/AcroForm << /Fields [7 0 R] >>", "/Annots [6 0 R]", &[annot.as_str(), field, deep.as_str()]);
+        let saved = std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(move || redact_then_save(pdf, |_, _| {}).2.map(|_| ()).map_err(|e| e.to_string()))
+            .expect("a thread starts")
+            .join()
+            .expect("no stack overflow");
+        match saved {
+            Err(said) => assert!(refuses && said.contains("a form field"), "{bottom}: {said}"),
+            Ok(()) => assert!(!refuses, "{bottom}: the save went ahead"),
+        }
+    }
+}

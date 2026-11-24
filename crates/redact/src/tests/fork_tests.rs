@@ -1064,3 +1064,24 @@ fn a_deep_object_is_swept_on_a_small_stack() {
         .expect("the sweep doesn't overflow the stack");
     assert!(refuses);
 }
+
+/// XMP held deeper than the owner sweep used to follow (64 levels) refuses a save, and Remove
+/// hidden information's Metadata clears it, so the refusal has its remedy. Run on a 1 MiB stack.
+#[test]
+fn deeply_held_xmp_refuses_a_save_and_metadata_removal_clears_it() {
+    std::thread::Builder::new()
+        .stack_size(1 << 20)
+        .spawn(|| {
+            let xmp = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:description>Project Bluefin</dc:description></rdf:Description></rdf:RDF></x:xmpmeta>"#;
+            let nested = format!("{}<< /Metadata 5 0 R >>{}", "[".repeat(126), "]".repeat(126));
+            let mut doc = doc_with("/Extra 4 0 R", "", &[nested.as_str(), stream_of("/Type /Metadata /Subtype /XML", xmp).as_str()], "");
+            let removed = crate::Removed::new(vec!["Project Bluefin".to_string()], true);
+            let left = crate::survivors(&doc, &removed);
+            assert!(left.refuses() && left.items.iter().any(|s| s.place == crate::Place::Xmp), "{:?}", left.items);
+            crate::sanitize::remove_hidden(&mut doc, &[crate::sanitize::Hidden::Metadata]).unwrap();
+            assert!(!crate::survivors(&doc, &removed).refuses(), "Metadata removal left it");
+        })
+        .expect("a thread starts")
+        .join()
+        .expect("no stack overflow");
+}
