@@ -59,7 +59,8 @@ fn positions_marks(face: &FontRef, script: &[u8; 4]) -> bool {
 /// in glyphs other than those it draws the letter and its marks with alone (a joining form or
 /// part of a ligature), the program's must too, each face judged against its own isolated form;
 /// and its GPOS must place every glyph that sits on another ([`places_marks`]) and stack marks
-/// wherever the reference does ([`stacks_marks`]). A cmap that maps
+/// wherever the reference does ([`stacks_marks`]); every combining mark of `text` must follow an
+/// Arabic letter in its joining run, where those checks reach it. A cmap that maps
 /// a letter to one of its positional forms (rebuilt from ToUnicode, or written from the glyphs a
 /// page showed) leaves the GSUB with nothing to substitute, or substitutes the wrong form; a GSUB without the joining features, pruned to the forms a page
 /// showed, or pointing past its lookups leaves letters isolated. Either way every glyph may have
@@ -79,6 +80,20 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let letter = |c: char| {
         !mark(c) && matches!(u32::from(c), 0x0620..=0x064a | 0x066e..=0x06d5 | 0x06ee..=0x06ef | 0x06fa..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff)
     };
+    // Every combining mark must follow an Arabic letter (or marks on one) in its joining run: the
+    // runs below are all that is shaped, so a mark outside them (U+0301 after a digit or a Latin
+    // letter, or after an Arabic letter) or opening one would be placed unjudged, at the glyph
+    // origin if the GPOS doesn't place it. Refusing such text costs only the page's font.
+    let mut on_letter = false;
+    for c in text.chars() {
+        if unicode_bidi::bidi_class(c) == unicode_bidi::BidiClass::NSM {
+            if !(joins(c) && on_letter) {
+                return false;
+            }
+        } else {
+            on_letter = letter(c);
+        }
+    }
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
     if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
         return false;
