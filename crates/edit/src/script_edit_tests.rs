@@ -1426,6 +1426,79 @@ fn zero_displacement_reference_mark_cannot_hide_wrong_parent() {
     assert!(!joins_arabic(&nonzero_ref, &zero_fatha_ref, run));
 }
 
+/// Rebuilds `face`'s `GPOS` with `extra_lookups` matching `MarkToBase` lookups added to `arab`'s
+/// `mark` feature, each exposing `subtables_per_lookup` aliased subtable offsets pointing to one
+/// shared `(beh, fatha)` `MarkToBaseFormat1` subtable.
+fn matching_mark_gpos(face: &[u8], extra_lookups: usize, subtables_per_lookup: usize) -> Vec<u8> {
+    let (beh, fatha) = (nominal(face, 'ب'), nominal(face, '\u{064e}'));
+    let orig_gpos = tables(face)[b"GPOS"];
+    let (orig_feat_base, orig_look_off) = (be16(orig_gpos, 6), be16(orig_gpos, 8));
+    let orig_lcount = be16(orig_gpos, orig_look_off);
+    let orig_bodies = &orig_gpos[orig_look_off + 2 + 2 * orig_lcount..];
+    let words = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_be_bytes()).collect() };
+    let mut mark_ls = Vec::new();
+    let mut mkmk_ls = Vec::new();
+    for i in 0..be16(orig_gpos, orig_feat_base) {
+        let rec = orig_feat_base + 2 + 6 * i;
+        let f = orig_feat_base + be16(orig_gpos, rec + 4);
+        let dst = if &orig_gpos[rec..rec + 4] == b"mark" {
+            &mut mark_ls
+        } else if &orig_gpos[rec..rec + 4] == b"mkmk" {
+            &mut mkmk_ls
+        } else {
+            continue;
+        };
+        for j in 0..be16(orig_gpos, f + 2) {
+            let idx = be16(orig_gpos, f + 4 + 2 * j) as u16;
+            if !dst.contains(&idx) {
+                dst.push(idx);
+            }
+        }
+    }
+    let new_lcount = orig_lcount + extra_lookups;
+    let feat_off = 10 + 12 + 6 + 4;
+    let mark_rel = 2 + 12;
+    let mkmk_rel = mark_rel + 4 + 2 * (mark_ls.len() + extra_lookups);
+    let look_off = feat_off + mkmk_rel + 4 + 2 * mkmk_ls.len();
+    let mut out = words(&[1, 0, 10, u16::try_from(feat_off).unwrap(), u16::try_from(look_off).unwrap()]);
+    out.extend(words(&[1]));
+    out.extend_from_slice(b"arab");
+    out.extend(words(&[8, 4, 0, 0, 0xFFFF, 2, 0, 1]));
+    out.extend(words(&[2]));
+    out.extend_from_slice(b"mark");
+    out.extend(words(&[u16::try_from(mark_rel).unwrap()]));
+    out.extend_from_slice(b"mkmk");
+    out.extend(words(&[u16::try_from(mkmk_rel).unwrap()]));
+    out.extend(words(&[0, u16::try_from(mark_ls.len() + extra_lookups).unwrap()]));
+    for i in 0..extra_lookups {
+        out.extend(words(&[u16::try_from(orig_lcount + i).unwrap()]));
+    }
+    out.extend(words(&mark_ls));
+    out.extend(words(&[0, u16::try_from(mkmk_ls.len()).unwrap()]));
+    out.extend(words(&mkmk_ls));
+    let orig_hdr = 2 + 2 * orig_lcount;
+    let new_hdr = 2 + 2 * new_lcount;
+    let fan_hdr = 6 + 2 * subtables_per_lookup;
+    let mut fan_lookup = words(&[4, 0, u16::try_from(subtables_per_lookup).unwrap()]);
+    for _ in 0..subtables_per_lookup {
+        fan_lookup.extend(words(&[u16::try_from(fan_hdr).unwrap()]));
+    }
+    fan_lookup.extend(words(&[1, 12, 18, 1, 24, 36, 1, 1, fatha, 1, 1, beh, 1, 0, 6, 1, 0, 200, 1, 4, 1, 0, 500]));
+    let fan_off = new_hdr + orig_bodies.len();
+    let mut llist = words(&[u16::try_from(new_lcount).unwrap()]);
+    for i in 0..orig_lcount {
+        let old_off = be16(orig_gpos, orig_look_off + 2 + 2 * i);
+        llist.extend(words(&[u16::try_from(old_off - orig_hdr + new_hdr).unwrap()]));
+    }
+    for _ in 0..extra_lookups {
+        llist.extend(words(&[u16::try_from(fan_off).unwrap()]));
+    }
+    out.extend_from_slice(&llist);
+    out.extend_from_slice(orig_bodies);
+    out.extend_from_slice(&fan_lookup);
+    out
+}
+
 /// Matching `MarkToBase` lookups (`extra`) combined with a stacked Arabic run stay bounded in time:
 /// `1,000` lookups with `720` stacked marks fails closed promptly rather than multiplying `1 << 16`
 /// GPOS lookups by `1 << 20` perturbation steps, while a near-budget `(200, 120)` pair finishes in
@@ -1434,79 +1507,44 @@ fn zero_displacement_reference_mark_cannot_hide_wrong_parent() {
 fn near_budget_gpos_and_stacked_run_stay_within_time_bound() {
     use pdfcraft_fonts::source_shaping::joins_arabic;
     let Some(face) = arabic_face() else { return };
-    let (beh, fatha) = (nominal(face.bytes, 'ب'), nominal(face.bytes, '\u{064e}'));
-    let orig_gpos = tables(face.bytes)[b"GPOS"];
-    let (orig_feat_base, orig_look_off) = (be16(orig_gpos, 6), be16(orig_gpos, 8));
-    let orig_lcount = be16(orig_gpos, orig_look_off);
-    let orig_bodies = &orig_gpos[orig_look_off + 2 + 2 * orig_lcount..];
-    let words = |v: &[u16]| -> Vec<u8> { v.iter().flat_map(|x| x.to_be_bytes()).collect() };
-    let build_matching_gpos = |extra_lookups: usize| -> Vec<u8> {
-        let mut mark_ls = Vec::new();
-        let mut mkmk_ls = Vec::new();
-        for i in 0..be16(orig_gpos, orig_feat_base) {
-            let rec = orig_feat_base + 2 + 6 * i;
-            let f = orig_feat_base + be16(orig_gpos, rec + 4);
-            let dst = if &orig_gpos[rec..rec + 4] == b"mark" {
-                &mut mark_ls
-            } else if &orig_gpos[rec..rec + 4] == b"mkmk" {
-                &mut mkmk_ls
-            } else {
-                continue;
-            };
-            for j in 0..be16(orig_gpos, f + 2) {
-                let idx = be16(orig_gpos, f + 4 + 2 * j) as u16;
-                if !dst.contains(&idx) {
-                    dst.push(idx);
-                }
-            }
-        }
-        let new_lcount = orig_lcount + extra_lookups;
-        let feat_off = 10 + 12 + 6 + 4;
-        let mark_rel = 2 + 12;
-        let mkmk_rel = mark_rel + 4 + 2 * (mark_ls.len() + extra_lookups);
-        let look_off = feat_off + mkmk_rel + 4 + 2 * mkmk_ls.len();
-        let mut out = words(&[1, 0, 10, u16::try_from(feat_off).unwrap(), u16::try_from(look_off).unwrap()]);
-        out.extend(words(&[1]));
-        out.extend_from_slice(b"arab");
-        out.extend(words(&[8, 4, 0, 0, 0xFFFF, 2, 0, 1]));
-        out.extend(words(&[2]));
-        out.extend_from_slice(b"mark");
-        out.extend(words(&[u16::try_from(mark_rel).unwrap()]));
-        out.extend_from_slice(b"mkmk");
-        out.extend(words(&[u16::try_from(mkmk_rel).unwrap()]));
-        out.extend(words(&[0, u16::try_from(mark_ls.len() + extra_lookups).unwrap()]));
-        for i in 0..extra_lookups {
-            out.extend(words(&[u16::try_from(orig_lcount + i).unwrap()]));
-        }
-        out.extend(words(&mark_ls));
-        out.extend(words(&[0, u16::try_from(mkmk_ls.len()).unwrap()]));
-        out.extend(words(&mkmk_ls));
-        let orig_hdr = 2 + 2 * orig_lcount;
-        let new_hdr = 2 + 2 * new_lcount;
-        let mtb_bytes = words(&[4, 0, 1, 8, 1, 12, 18, 1, 24, 36, 1, 1, fatha, 1, 1, beh, 1, 0, 6, 1, 0, 200, 1, 4, 1, 0, 500]);
-        let bodies_shift = new_hdr + mtb_bytes.len();
-        let mut llist = words(&[u16::try_from(new_lcount).unwrap()]);
-        for i in 0..orig_lcount {
-            let old_off = be16(orig_gpos, orig_look_off + 2 + 2 * i);
-            llist.extend(words(&[u16::try_from(old_off - orig_hdr + bodies_shift).unwrap()]));
-        }
-        for _ in 0..extra_lookups {
-            llist.extend(words(&[u16::try_from(new_hdr).unwrap()]));
-        }
-        out.extend_from_slice(&llist);
-        out.extend_from_slice(&mtb_bytes);
-        out.extend_from_slice(orig_bodies);
-        out
-    };
-    let in_budget = with_table(face.bytes, b"GPOS", build_matching_gpos(200));
+    let in_budget = with_table(face.bytes, b"GPOS", matching_mark_gpos(face.bytes, 200, 1));
     let in_run = format!("ب{}", "\u{064e}".repeat(120));
     let t_in = std::time::Instant::now();
     assert!(joins_arabic(&in_budget, face.bytes, &in_run));
     assert!(t_in.elapsed() < std::time::Duration::from_secs(2), "in-budget {:?}", t_in.elapsed());
 
-    let over_budget = with_table(face.bytes, b"GPOS", build_matching_gpos(1_000));
+    let over_budget = with_table(face.bytes, b"GPOS", matching_mark_gpos(face.bytes, 1_000, 1));
     let over_run = format!("ب{}", "\u{064e}".repeat(720));
     let t_over = std::time::Instant::now();
     assert!(!joins_arabic(&over_budget, face.bytes, &over_run));
     assert!(t_over.elapsed() < std::time::Duration::from_secs(2), "over-budget {:?}", t_over.elapsed());
+}
+
+/// A single `MarkToBase` lookup containing thousands of aliased subtable references must fail
+/// closed promptly before shaper construction whilst a small multi-subtable lookup stays accepted.
+#[test]
+fn aliased_mark_subtable_fanout_fails_closed_within_time_bound() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let small_subtables = with_table(face.bytes, b"GPOS", matching_mark_gpos(face.bytes, 1, 8));
+    let mod_run = format!("ب{}", "\u{064e}".repeat(60));
+    let t_small = std::time::Instant::now();
+    assert!(joins_arabic(&small_subtables, face.bytes, &mod_run));
+    assert!(t_small.elapsed() < std::time::Duration::from_secs(2), "small-subtables {:?}", t_small.elapsed());
+
+    let fanout_5k = with_table(face.bytes, b"GPOS", matching_mark_gpos(face.bytes, 1, 5_000));
+    let t_5k = std::time::Instant::now();
+    assert!(!joins_arabic(&fanout_5k, face.bytes, &mod_run));
+    assert!(t_5k.elapsed() < std::time::Duration::from_secs(2), "fanout-5k {:?}", t_5k.elapsed());
+
+    let fanout_2k = with_table(face.bytes, b"GPOS", matching_mark_gpos(face.bytes, 1, 2_000));
+    let long_run = format!("ب{}", "\u{064e}".repeat(120));
+    let t_2k = std::time::Instant::now();
+    assert!(!joins_arabic(&fanout_2k, face.bytes, &long_run));
+    assert!(t_2k.elapsed() < std::time::Duration::from_secs(2), "fanout-2k {:?}", t_2k.elapsed());
+
+    let short_stacked = "ب\u{064e}\u{0651}";
+    let t_short = std::time::Instant::now();
+    assert!(!joins_arabic(&fanout_5k, face.bytes, short_stacked));
+    assert!(t_short.elapsed() < std::time::Duration::from_secs(2), "fanout-short {:?}", t_short.elapsed());
 }
