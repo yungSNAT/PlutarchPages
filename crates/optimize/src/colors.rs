@@ -1,8 +1,7 @@
 // Copyright 2026 Ryan Duguid
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Convert Colors to grayscale (PDF-XChange's Color Converter; Acrobat Print Production ▸ Convert
-//! Colors). Fill and stroke colours set in DeviceRGB, DeviceCMYK, CalRGB, CalGray or ICC-based
+//! Convert Colors to grayscale (the colour converter of print-production tools). Fill and stroke colours set in DeviceRGB, DeviceCMYK, CalRGB, CalGray or ICC-based
 //! spaces become DeviceGray by luminance (RGB: 0.30 R, 0.59 G and 0.11 B summed; CMYK: one minus
 //! the same weighted sum plus K, at most one), in page content and the forms it draws. RGB images
 //! PdfCraft decodes (8 bits, Flate or JPEG, default decode, no colour-key mask) become 8-bit gray
