@@ -17,9 +17,11 @@ pdfcraft-organize = { workspace = true }
 pdfcraft-platform = { workspace = true }
 craft-prc = { workspace = true }
 pdfcraft-prc-render = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.11"
 tempfile = "3.27"
+unicode-normalization = "0.1"
 base64 = { version = "0.23", optional = true }
 craft-jsonrpc = { workspace = true, optional = true }
 craft-mcp-server = { workspace = true, optional = true }

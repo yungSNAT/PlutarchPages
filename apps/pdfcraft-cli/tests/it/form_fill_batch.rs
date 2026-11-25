@@ -40,10 +40,29 @@ fn cli_form_fill_batch_writes_a_pdf_per_row_and_fails_when_a_row_does() {
     assert!(dir.path().join("out/form-1.pdf").exists() && !dir.path().join("out/form-2.pdf").exists());
 
     std::fs::write(dir.path().join("named.json"), r#"[{"File": "cy", "Name": "Cy"}]"#).unwrap();
-    let out = cli(dir.path(), &["form-fill-batch", "form.pdf", "--data", "named.json", "--out-dir", "out", "--name-column", "File", "--flatten"]);
+    let out = cli(
+        dir.path(),
+        &["form-fill-batch", "form.pdf", "--data", "named.json", "--out-dir", "out", "--name-column", "File", "--flatten", "--verbose"],
+    );
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let text = cli(dir.path(), &["text", "out/cy.pdf"]);
     assert!(String::from_utf8_lossy(&text.stdout).contains("Cy"), "the flattened value is page text");
+}
+
+/// The tool through `run --script`, as an agent's script calls it.
+#[test]
+fn run_script_fills_a_form_per_row() {
+    let dir = tempfile::tempdir().unwrap();
+    form(dir.path());
+    std::fs::write(dir.path().join("rows.csv"), "File,Name,Choice\nada,Ada,A\nbo,Bo,B\n").unwrap();
+    let steps = json!([
+        { "tool": "doc_open", "args": { "path": "form.pdf" } },
+        { "tool": "form_fill_batch", "args": { "doc": 1, "data": "rows.csv", "out_dir": "out", "name_column": "File" } }
+    ]);
+    std::fs::write(dir.path().join("fill.json"), steps.to_string()).unwrap();
+    let out = cli(dir.path(), &["run", "--script", "fill.json", "--root", "."]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(dir.path().join("out/ada.pdf").exists() && dir.path().join("out/bo.pdf").exists());
 }
 
 #[test]

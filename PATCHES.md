@@ -300,8 +300,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   (`crates/automation/src/form_fill_batch.rs`, `apps/pdfcraft-cli/src/form_fill.rs`,
   `docs/cli-form-fill-batch.md`; tests in `crates/automation/tests/it/form_fill_batch.rs` and
   `apps/pdfcraft-cli/tests/it/form_fill_batch.rs`). `table_records` in `crates/xfdf/src/lib.rs`
-  reads every record, and `import_table` shares its CSV reader (`csv_records`) and still takes the
-  first row (`crates/xfdf/src/tests/fork_tests.rs`). When upstream changes `import_table`'s CSV
+  reads records up to a limit, and `import_table` shares its CSV reader (`csv_records`), now
+  stopping after the names and first row it takes (`crates/xfdf/src/tests/fork_tests.rs`). When upstream changes `import_table`'s CSV
   reading, make the change in `csv_records`.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and

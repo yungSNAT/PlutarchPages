@@ -154,6 +154,40 @@ fn a_refused_value_fails_its_row_and_publishes_nothing_for_it() {
     assert_eq!(files_in(&dir.path().join("out")), vec!["form-1.pdf"]);
 }
 
+/// A value the row gives a calculated field must survive the calculation, or the row fails.
+#[test]
+fn a_calculated_field_the_form_overrides_fails_its_row() {
+    let dir = workdir();
+    let (mut a, doc) = form(dir.path());
+    // An empty cell gives the calculation nothing to disagree with.
+    std::fs::write(dir.path().join("rows.csv"), "Total,Price,Qty\n999,2,3\n,4,5\n").unwrap();
+    let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "out" }));
+    assert_eq!((report["completed"].as_u64(), report["failed"].as_u64()), (Some(1), Some(1)), "{report}");
+    let error = report["rows"][0]["error"].as_str().unwrap();
+    assert!(error.contains("Total") && error.contains("calculates") && !error.contains("999"), "{error}");
+    assert_eq!(files_in(&dir.path().join("out")), vec!["form-2.pdf"]);
+    assert!(filled(&mut a, &dir.path().join("out/form-2.pdf"))["Total"].as_str().is_some_and(|t| t.starts_with("20")));
+    let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "verbose", "verbose": true }));
+    assert!(report["rows"][0]["error"].as_str().unwrap().contains("999"), "{report}");
+}
+
+/// Rows may hold personal data: an error names the row and field, and quotes a value only when
+/// the caller asks for verbose.
+#[test]
+fn errors_quote_no_cell_unless_verbose() {
+    let dir = workdir();
+    let (mut a, doc) = form(dir.path());
+    let csv = "File,Name,Choice,Agree\nSecret-1,Ada,Secret-2,\nok,Bo,A,Secret-3\nSecret/4,Cy,A,\nSecret-5,Dee,A,\nsecret-5,Eve,A,\n";
+    std::fs::write(dir.path().join("rows.csv"), csv).unwrap();
+    let quiet = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "out", "name_column": "File" }));
+    let loud = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "out", "name_column": "File", "verbose": true }));
+    for (row, field) in [(0, "Choice"), (1, "Agree"), (2, "file name"), (3, "row 5"), (4, "row 4")] {
+        let (quiet, loud) = (quiet["rows"][row]["error"].as_str().unwrap(), loud["rows"][row]["error"].as_str().unwrap());
+        assert!(quiet.contains(field) && !quiet.contains("ecret"), "row {}: {quiet}", row + 1);
+        assert!(loud.contains(field) && loud.contains("ecret"), "row {}: {loud}", row + 1);
+    }
+}
+
 #[test]
 fn a_column_that_names_no_field_fails_every_row() {
     let dir = workdir();
@@ -187,6 +221,53 @@ fn output_names_stay_in_the_folder_and_never_overwrite() {
     assert_eq!(filled(&mut a, &dir.path().join("out/fine.pdf"))["Name"], "7");
 }
 
+/// Each name some file system cannot hold, or that would display as another name, fails its row.
+#[test]
+fn unsafe_or_misleading_names_fail_their_rows() {
+    let dir = workdir();
+    let (mut a, doc) = form(dir.path());
+    let long = "n".repeat(201);
+    let refused = [
+        "C:x",
+        "a.",
+        "a ",
+        " lead",
+        "tab\there",
+        "bell\u{7}",
+        long.as_str(),
+        "CON.txt",
+        "con",
+        "COM0",
+        "LPT\u{b9}",
+        "CONIN$",
+        "conout$.pdf",
+        "report\u{202e}fdp.exe",
+        "zero\u{200b}width",
+        "bom\u{feff}",
+        "star*",
+        "pipe|",
+        "quote\"",
+    ];
+    let mut rows: Vec<Value> = refused.iter().map(|name| json!({ "Name": "x", "file": name })).collect();
+    // The same name composed and decomposed, as macOS holds one of them, and in another case.
+    rows.extend([
+        json!({ "Name": "x", "file": "caf\u{e9}" }),
+        json!({ "Name": "x", "file": "CAFE\u{301}" }),
+        json!({ "Name": "x", "file": "COM10" }),
+    ]);
+    std::fs::write(dir.path().join("rows.json"), Value::Array(rows).to_string()).unwrap();
+    let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.json", "out_dir": "out", "name_column": "file" }));
+    let rows = report["rows"].as_array().unwrap();
+    for (row, name) in rows.iter().zip(refused) {
+        assert_eq!(row["status"], "error", "{name:?}: {row}");
+    }
+    let n = refused.len();
+    assert!(rows[n]["error"].as_str().unwrap().contains(&format!("row {}", n + 2)), "{report}");
+    assert!(rows[n + 1]["error"].as_str().unwrap().contains(&format!("row {}", n + 1)), "{report}");
+    assert_eq!((rows[n + 2]["status"].as_str(), report["completed"].as_u64()), (Some("ok"), Some(1)), "COM10 is no device: {report}");
+    assert_eq!(files_in(&dir.path().join("out")), vec!["COM10.pdf"]);
+}
+
 #[test]
 fn json_rows_take_typed_values() {
     let dir = workdir();
@@ -196,14 +277,16 @@ fn json_rows_take_typed_values() {
         { "Name": "Bo", "Agree": false, "file": "bo" },
         { "Name": { "nested": 1 }, "file": "nested" },
         "not an object",
-        { "Name": "Cy", "file": 7 }
+        { "Name": "Cy", "file": 7 },
+        { "Name": "Dee" }
     ]);
     std::fs::write(dir.path().join("rows.json"), rows.to_string()).unwrap();
     let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.json", "out_dir": "out", "name_column": "file" }));
-    assert_eq!((report["completed"].as_u64(), report["failed"].as_u64()), (Some(3), Some(2)), "{report}");
+    assert_eq!((report["completed"].as_u64(), report["failed"].as_u64()), (Some(3), Some(3)), "{report}");
     let statuses: Vec<&str> = report["rows"].as_array().unwrap().iter().map(|r| r["status"].as_str().unwrap()).collect();
-    assert_eq!(statuses, vec!["ok", "ok", "error", "error", "ok"], "{report}");
+    assert_eq!(statuses, vec!["ok", "ok", "error", "error", "ok", "error"], "{report}");
     assert!(report["rows"][3]["error"].as_str().unwrap().contains("object"), "{report}");
+    assert!(report["rows"][5]["error"].as_str().unwrap().contains("file"), "a row without its name key fails alone: {report}");
     let ada = filled(&mut a, &dir.path().join("out/ada.pdf"));
     assert_eq!((ada["Qty"].clone(), ada["Total"].clone(), ada["Agree"].clone()), (json!("3"), json!("59.97"), json!(true)));
     assert_eq!(ada["Tags"], json!(["x", "z"]));
@@ -232,10 +315,21 @@ fn empty_or_unusable_data_says_so_before_writing_anything() {
     std::fs::write(dir.path().join("rows.csv"), "Name\nAda\n").unwrap();
     let error = fail(&mut a, json!({ "doc": doc, "data": "rows.csv", "out_dir": "out", "name_column": "File" }));
     assert!(error.contains("File"), "{error}");
-    let many = format!("Name\n{}", "Ada\n".repeat(10_001));
-    std::fs::write(dir.path().join("many.csv"), many).unwrap();
-    let error = fail(&mut a, json!({ "doc": doc, "data": "many.csv", "out_dir": "out" }));
-    assert!(error.contains("10000"), "{error}");
+    // Past the row limit, as a table and as JSON; parsing stops one row past it.
+    std::fs::write(dir.path().join("many.csv"), format!("Name\n{}", "Ada\n".repeat(10_001))).unwrap();
+    std::fs::write(dir.path().join("many.txt"), format!("Name\tQty\n{}", "Ada\t1\n".repeat(10_001))).unwrap();
+    std::fs::write(dir.path().join("many.json"), format!("[{}{{}}]", "{},".repeat(10_000))).unwrap();
+    for file in ["many.csv", "many.txt", "many.json"] {
+        let error = fail(&mut a, json!({ "doc": doc, "data": file, "out_dir": "out" }));
+        assert!(error.contains("10000"), "{file}: {error}");
+    }
+    // A file over the size cap is refused before it is read.
+    let big = std::fs::File::create(dir.path().join("big.csv")).unwrap();
+    big.set_len(32 * 1024 * 1024 + 1).unwrap();
+    let error = fail(&mut a, json!({ "doc": doc, "data": "big.csv", "out_dir": "out" }));
+    assert!(error.contains("32 MiB"), "{error}");
+    std::fs::write(dir.path().join("latin1.csv"), b"Name\nRen\xe9\n").unwrap();
+    assert!(fail(&mut a, json!({ "doc": doc, "data": "latin1.csv", "out_dir": "out" })).contains("UTF-8"));
     assert!(!dir.path().join("out").exists(), "nothing was written");
 }
 

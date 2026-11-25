@@ -156,23 +156,31 @@ fn owned(rows: &[&[&str]]) -> Vec<Vec<String>> {
 #[test]
 fn table_records_reads_every_csv_record() {
     let csv = "\u{feff}Name,Notes\r\nAda,\"likes, commas\"\n\"Bo \"\"B\"\"\",\"two\nlines\"\n\n\"\",\n";
-    assert_eq!(table_records(csv), owned(&[&["Name", "Notes"], &["Ada", "likes, commas"], &["Bo \"B\"", "two\nlines"], &["", ""]]));
+    assert_eq!(table_records(csv, usize::MAX), owned(&[&["Name", "Notes"], &["Ada", "likes, commas"], &["Bo \"B\"", "two\nlines"], &["", ""]]));
     // A comma outside quotes in the header keeps it CSV even when a value holds a bare tab.
-    assert_eq!(table_records("\"First\tName\",Agree\r\nAda\tMary,Yes\r\n"), owned(&[&["First\tName", "Agree"], &["Ada\tMary", "Yes"]]));
+    assert_eq!(table_records("\"First\tName\",Agree\r\nAda\tMary,Yes\r\n", usize::MAX), owned(&[&["First\tName", "Agree"], &["Ada\tMary", "Yes"]]));
 }
 
 #[test]
 fn table_records_reads_every_tab_delimited_record() {
-    assert_eq!(table_records("Name\tAge\r\nAda\t36\n\nBo\t41\n"), owned(&[&["Name", "Age"], &["Ada", "36"], &["Bo", "41"]]));
+    assert_eq!(table_records("Name\tAge\r\nAda\t36\n\nBo\t41\n", usize::MAX), owned(&[&["Name", "Age"], &["Ada", "36"], &["Bo", "41"]]));
     // One field's text has no tab to show for it (#1321), even when a value holds commas.
-    assert_eq!(table_records("Name\nSmith, Ada\nBo\n"), owned(&[&["Name"], &["Smith, Ada"], &["Bo"]]));
-    assert_eq!(table_records("Name\nAda\nBo"), owned(&[&["Name"], &["Ada"], &["Bo"]]));
+    assert_eq!(table_records("Name\nSmith, Ada\nBo\n", usize::MAX), owned(&[&["Name"], &["Smith, Ada"], &["Bo"]]));
+    assert_eq!(table_records("Name\nAda\nBo", usize::MAX), owned(&[&["Name"], &["Ada"], &["Bo"]]));
 }
 
 #[test]
 fn table_records_of_nothing_is_empty() {
-    assert!(table_records("").is_empty());
-    assert!(table_records("\u{feff}\r\n\n").is_empty());
+    assert!(table_records("", usize::MAX).is_empty());
+    assert!(table_records("\u{feff}\r\n\n", usize::MAX).is_empty());
+}
+
+/// Reading stops at the limit; blank lines do not count towards it.
+#[test]
+fn table_records_stop_at_the_limit() {
+    assert_eq!(table_records("Name,Age\n\nAda,36\nBo,41\nCy,9\n", 2), owned(&[&["Name", "Age"], &["Ada", "36"]]));
+    assert_eq!(table_records("Name\tAge\n\nAda\t36\nBo\t41\n", 2), owned(&[&["Name", "Age"], &["Ada", "36"]]));
+    assert_eq!(table_records("Name,Age\nAda,36", 5).len(), 2);
 }
 
 /// Sharing the record reader leaves a single import as it was: the first row after the names.

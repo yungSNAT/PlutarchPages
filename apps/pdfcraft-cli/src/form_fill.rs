@@ -12,6 +12,7 @@ pub(crate) const OPTIONS: &[OptionSpec] = &[
     OptionSpec { name: "--out-dir", takes_value: true },
     OptionSpec { name: "--name-column", takes_value: true },
     OptionSpec { name: "--flatten", takes_value: false },
+    OptionSpec { name: "--verbose", takes_value: false },
     OptionSpec { name: "--password", takes_value: true },
     OptionSpec { name: "--root", takes_value: true },
 ];
@@ -55,7 +56,8 @@ pub(super) fn run(args: &[String]) -> Result<(), CliError> {
             _ => None,
         })
         .ok_or("form-fill-batch: the form did not open")?;
-    let mut params = json!({ "doc": doc, "data": data, "out_dir": out, "flatten": seen.contains("--flatten") });
+    let mut params =
+        json!({ "doc": doc, "data": data, "out_dir": out, "flatten": seen.contains("--flatten"), "verbose": seen.contains("--verbose") });
     if let Some(column) = flag(args, "--name-column") {
         params["name_column"] = json!(column);
     }

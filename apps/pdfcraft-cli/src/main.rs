@@ -88,7 +88,7 @@ pdfcraft-cli batch <files or dirs...> --steps convert,ocr,optimize --out-dir DIR
                       [--recursive] [--root DIR] [--stop-on-error]
                       [--ppi 150] [--quality 60] [--dpi 300] [--language en] [--ocr-all-pages]
 pdfcraft-cli form-fill-batch <form.pdf> --data rows.csv|rows.json --out-dir DIR
-                      [--name-column COL] [--flatten] [--password PW] [--root DIR]
+                      [--name-column COL] [--flatten] [--verbose] [--password PW] [--root DIR]
                       one filled PDF per data row; fails if any row failed (JSON report on stdout)
 pdfcraft-cli tools                                       automation tools and their JSON Schemas
 pdfcraft-cli run    <tool> [key=value …] [--root DIR] [--out image.png]

@@ -327,7 +327,7 @@ fn import_table(doc: &mut Document, text: &str) -> Result<Report, DataError> {
     } else if has_tab_delimiter(t) {
         tab_delimited(t)?
     } else {
-        let mut records = csv_records(t).into_iter();
+        let mut records = csv_records(t, 2).into_iter();
         let (Some(head), Some(row)) = (records.next(), records.next()) else { return Err(DataError::UnknownFormat) };
         // Text exported from a one-field form has no tab to show for it (#1321). CSV quotes a
         // value with a comma, so one name over several unquoted cells is that text, not CSV.
@@ -337,9 +337,18 @@ fn import_table(doc: &mut Document, text: &str) -> Result<Report, DataError> {
     Ok(report)
 }
 
-/// The records of CSV with quotes: a quoted value may hold commas, doubled quotes and line breaks.
-fn csv_records(t: &str) -> Vec<Vec<String>> {
-    let mut records: Vec<(Vec<String>, bool)> = Vec::new();
+/// The first `limit` records of CSV with quotes: a quoted value may hold commas, doubled quotes and
+/// line breaks. Reading stops at the limit, so a long file costs no more than its first records.
+fn csv_records(t: &str, limit: usize) -> Vec<Vec<String>> {
+    let mut records: Vec<Vec<String>> = Vec::new();
+    // Blank lines (such as the one a trailing line break leaves) are not records, but a
+    // quoted empty value is a record that clears a field.
+    let mut keep = |record: Vec<String>, has_quotes: bool| {
+        if has_quotes || !matches!(record.as_slice(), [only] if only.is_empty()) {
+            records.push(record);
+        }
+        records.len() >= limit
+    };
     let mut record = Vec::new();
     let mut cur = String::new();
     let mut quoted = false;
@@ -359,29 +368,30 @@ fn csv_records(t: &str) -> Vec<Vec<String>> {
             '\r' if !quoted && chars.peek() == Some(&'\n') => {}
             '\n' if !quoted => {
                 record.push(std::mem::take(&mut cur));
-                records.push((std::mem::take(&mut record), std::mem::take(&mut has_quotes)));
+                if keep(std::mem::take(&mut record), std::mem::take(&mut has_quotes)) {
+                    return records;
+                }
             }
             c => cur.push(c),
         }
     }
     record.push(cur);
-    records.push((record, has_quotes));
-    // Blank lines (such as the one a trailing line break leaves) are not records, but a
-    // quoted empty value is a record that clears a field.
-    records.into_iter().filter(|(r, has_quotes)| *has_quotes || !matches!(r.as_slice(), [only] if only.is_empty())).map(|(r, _)| r).collect()
+    keep(record, has_quotes);
+    records
 }
 
-/// Every record of CSV or tab-delimited form data, the field names first, for filling a form
-/// once per row (a single import takes only the first row). The format is told apart as a single
-/// import tells it; blank lines are not records.
-pub fn table_records(text: &str) -> Vec<Vec<String>> {
+/// The first `limit` records of CSV or tab-delimited form data, the field names first, for filling
+/// a form once per row (a single import takes only the first row). The format is told apart as a
+/// single import tells it; blank lines are not records.
+pub fn table_records(text: &str, limit: usize) -> Vec<Vec<String>> {
     let t = text.trim_start_matches('\u{feff}');
-    let tsv =
-        || -> Vec<Vec<String>> { t.lines().filter(|line| !line.is_empty()).map(|line| line.split('\t').map(str::to_string).collect()).collect() };
+    let tsv = || -> Vec<Vec<String>> {
+        t.lines().filter(|line| !line.is_empty()).take(limit).map(|line| line.split('\t').map(str::to_string).collect()).collect()
+    };
     if has_tab_delimiter(t) {
         return tsv();
     }
-    let records = csv_records(t);
+    let records = csv_records(t, limit);
     // Text exported from a one-field form has no tab to show for it (#1321), as in `import_table`.
     if matches!(records.as_slice(), [head, row, ..] if head.len() == 1 && row.len() > 1) { tsv() } else { records }
 }
