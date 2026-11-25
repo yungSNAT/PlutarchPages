@@ -72,6 +72,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `cargo xtask fork-check` fails when the revision `Cargo.toml` names isn't the vendored base. The
   detached fuzz workspaces of the facades repeat the patch, and the PRC fuzz target moved to
   `crates/prc-render/fuzz` when the PRC reader became craft-prc.
+- Search & Redact has 2 more patterns, `tfn` (Australian tax file numbers) and `abn` (Australian
+  Business Numbers), matched by format alone, in `crates/redact/src/patterns.rs`; tests in
+  `crates/redact/src/patterns/tests/fork_tests.rs`. Keep both variants when a merge changes `Pattern`.
 - Redaction audit checks text and covers in nested Form XObjects and annotation appearance streams
   in paint order. Keep this path when merging upstream. Text in a tiling pattern or a Type3 glyph
   procedure fails the audit, which does not read it. Both text readings (`glyph_text` and the
