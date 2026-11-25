@@ -27,7 +27,11 @@ function Invoke-CraftWinChecks([string[]] $Arguments) {
     }
   }
   & $exe @Arguments
-  if ($LASTEXITCODE -ne 0) { throw "win_checks $($Arguments[0]) failed with exit code $LASTEXITCODE" }
+  $code = $LASTEXITCODE
+  if ($code -ne 0) {
+    $global:LASTEXITCODE = 0
+    throw "win_checks $($Arguments[0]) failed with exit code $code"
+  }
 }
 
 # Validate every declared native font notice before either Windows package is created.

@@ -208,6 +208,7 @@ fn run_cli(args: &[String]) -> Result {
 }
 
 fn main() {
+    // nosemgrep: rust.lang.security.args.args -- CLI subcommand dispatcher for build tooling
     let args: Vec<String> = env::args().skip(1).collect();
     if let Err(err) = run_cli(&args) {
         eprintln!("{err}");
