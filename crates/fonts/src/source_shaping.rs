@@ -554,7 +554,9 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
     // Each cluster of `run` as `program` draws it: its characters and the reference's glyphs for
     // them there (the form), with the program's glyphs, sorted, in drawing order. `None` where the
     // two faces cluster `run` differently, as a cluster's form is then not the reference's alone.
-    let clusters = |run: &str| -> Option<Vec<((String, Vec<u32>), Vec<u32>)>> {
+    // A cluster: (its characters, the reference's glyphs for them) and the program's glyphs.
+    type Cluster = ((String, Vec<u32>), Vec<u32>);
+    let clusters = |run: &str| -> Option<Vec<Cluster>> {
         let ours = rtl_clusters(&own_shaper, run);
         let theirs = rtl_clusters(&reference_shaper, run);
         let starts_of = |glyphs: &[(usize, u32)]| {
@@ -575,7 +577,7 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
         for glyphs in forms.values_mut() {
             glyphs.sort_unstable();
         }
-        let mut out: Vec<((String, Vec<u32>), Vec<u32>)> = Vec::new();
+        let mut out: Vec<Cluster> = Vec::new();
         let mut last = None;
         for &(start, glyph) in &ours {
             if last != Some(start) {
