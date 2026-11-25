@@ -94,6 +94,11 @@ fn csv_rows_each_become_a_filled_pdf_and_the_open_form_is_untouched() {
     let rows = report["rows"].as_array().unwrap();
     assert_eq!(rows.iter().map(|r| r["row"].as_u64().unwrap()).collect::<Vec<_>>(), vec![1, 2, 3], "{report}");
     assert!(rows.iter().all(|r| r["status"] == "ok"), "{report}");
+    // Each row's receipt is the SHA-256 of the file written.
+    use sha2::Digest as _;
+    let written = std::fs::read(dir.path().join("out/form-1.pdf")).unwrap();
+    let hash: String = sha2::Sha256::digest(&written).iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!((rows[0]["sha256"].as_str(), rows[0]["bytes"].as_u64()), (Some(hash.as_str()), Some(written.len() as u64)), "{report}");
     assert_eq!(files_in(&dir.path().join("out")), vec!["form-1.pdf", "form-2.pdf", "form-3.pdf"]);
 
     let first = filled(&mut a, &dir.path().join("out/form-1.pdf"));

@@ -54,12 +54,15 @@ DIR.
   "completed": 2,
   "failed": 1,
   "rows": [
-    { "row": 1, "status": "ok", "output": "filled/form-1.pdf", "bytes": 18234 },
+    { "row": 1, "status": "ok", "output": "filled/form-1.pdf", "bytes": 18234, "sha256": "9f2c…" },
     { "row": 2, "status": "error", "error": "Choice: ..." },
-    { "row": 3, "status": "ok", "output": "filled/form-3.pdf", "bytes": 18240 }
+    { "row": 3, "status": "ok", "output": "filled/form-3.pdf", "bytes": 18240, "sha256": "41d0…" }
   ]
 }
 ```
+
+`sha256` is the SHA-256 of the bytes written, a receipt to check the file against
+later.
 
 ## Through `run` and MCP
 

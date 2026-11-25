@@ -10,6 +10,7 @@ use std::path::Path;
 
 use pdfcraft_engine::{Edit, FormField, FormFieldKind, Session, field_flags};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 
 use crate::batch::{absolute, publish};
 use crate::forms::value_for;
@@ -72,13 +73,15 @@ impl Automation {
                     return Err("the output path leaves out_dir".to_string());
                 }
                 let written = publish(&target, &pdf).map_err(|e| e.to_string())?;
-                Ok((written, pdf.len()))
+                // A receipt: the SHA-256 of the bytes written, to check the file against later.
+                let sha256: String = Sha256::digest(pdf.as_slice()).iter().map(|b| format!("{b:02x}")).collect();
+                Ok((written, pdf.len(), sha256))
             }))
             .unwrap_or_else(|_| Err("filling this row panicked; no file was written for it".into()));
             report.push(match result {
-                Ok((written, size)) => {
+                Ok((written, size, sha256)) => {
                     completed += 1;
-                    json!({ "row": i + 1, "status": "ok", "output": written.to_string_lossy(), "bytes": size })
+                    json!({ "row": i + 1, "status": "ok", "output": written.to_string_lossy(), "bytes": size, "sha256": sha256 })
                 }
                 Err(error) => {
                     failed_rows += 1;
