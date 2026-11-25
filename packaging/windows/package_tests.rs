@@ -6,10 +6,10 @@
 #[cfg(test)]
 mod unit_tests {
     use super::super::package_fs::{copy_file_checked, ensure_real_dir_path, reset_real_dir};
+    use super::super::package_meta::{arch_spec, resolve_dir_path, resolve_version, strip_windows_verbatim, utc_date_from_unix_secs, validate_flags};
     use super::super::package_pe::verify_pe_bytes;
     use super::super::{
-        PortableSources, Result, arch_spec, clear_existing_zip, copy_notice_line, copy_portable_notices, parse_args, remove_part_entry,
-        resolve_dir_path, resolve_version, stage_portable_dir, strip_windows_verbatim, utc_date_from_unix_secs, validate_flags,
+        PortableSources, Result, clear_existing_zip, copy_notice_line, copy_portable_notices, parse_args, remove_part_entry, stage_portable_dir,
     };
     use std::env;
     use std::fs;
