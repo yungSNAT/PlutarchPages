@@ -110,7 +110,8 @@ fn csv_rows_each_become_a_filled_pdf_and_the_open_form_is_untouched() {
 
     // The open document and its file are as they were.
     let open = call(&mut a, "form_fields", json!({ "doc": doc }));
-    let open: std::collections::HashMap<&str, &Value> = open["fields"].as_array().unwrap().iter().map(|f| (f["name"].as_str().unwrap(), &f["value"])).collect();
+    let open: std::collections::HashMap<&str, &Value> =
+        open["fields"].as_array().unwrap().iter().map(|f| (f["name"].as_str().unwrap(), &f["value"])).collect();
     assert_eq!((open["Name"], open["Agree"], open["Tags"]), (&Value::Null, &json!(false), &json!([])), "{open:?}");
     assert_eq!(std::fs::read(dir.path().join("form.pdf")).unwrap(), before);
 }
