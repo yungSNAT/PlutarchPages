@@ -24,6 +24,8 @@ fn business_numbers_match_the_register_example_and_its_layouts() {
     assert_eq!(found(Pattern::Abn, "ABN 51 824 753 556 (51824753556)"), ["51 824 753 556", "51824753556"]);
     // A mistyped number still looks like one, so it is marked as well.
     assert_eq!(found(Pattern::Abn, "ABN 51 824 753 557"), ["51 824 753 557"]);
+    // A hyphen and more digits make a longer number, though an ABN takes no hyphen.
+    assert_eq!(found(Pattern::Abn, "51824753556-7, 7-51824753556, 51 824 753 556-7"), Vec::<String>::new());
 }
 
 #[test]
