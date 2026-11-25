@@ -33,6 +33,8 @@ struct FallbackBuilder {
 
 struct FontResolver<'a> {
     doc: &'a mut Document,
+    /// The index of the page being edited, whose content [`arabic_span`] reads.
+    page: usize,
     fonts: &'a mut Dict,
     metrics: &'a mut std::collections::BTreeMap<String, Metrics>,
     full_faces: HashMap<String, String>,
@@ -192,6 +194,7 @@ enum ThaiSpan {
 
 struct CharacterPreparation<'a> {
     doc: &'a mut Document,
+    page: usize,
     first: &'a TextLine,
     lines: &'a [TextLine],
     draft: &'a str,
@@ -205,14 +208,14 @@ struct CharacterPreparation<'a> {
 
 impl CharacterPreparation<'_> {
     fn prepare(self) -> Result<PreparedCharacters, EditError> {
-        let Self { doc, first, lines, draft, spans, style, overrides, fonts, metrics, max_glyphs } = self;
+        let Self { doc, page, first, lines, draft, spans, style, overrides, fonts, metrics, max_glyphs } = self;
         let thai_choice = builtin_thai_choice(fonts);
         let mut thai = ThaiShaping::default();
         let mut thai_programs = pdfcraft_cos::DecodeBudget::new(MAX_THAI_PROGRAMS, 0);
         let mut chars = Vec::new();
         let mut substituted = None;
         let mut fallback = FallbackBuilder::new(max_glyphs);
-        let mut resolver = FontResolver { doc, fonts, metrics, full_faces: HashMap::new(), programs: HashMap::new() };
+        let mut resolver = FontResolver { doc, page, fonts, metrics, full_faces: HashMap::new(), programs: HashMap::new() };
         for (range, index) in spans {
             let source = lines.get(index).unwrap_or(first);
             let span = draft.get(range.clone()).unwrap_or_default();
@@ -241,7 +244,7 @@ impl CharacterPreparation<'_> {
                 substituted = pdfcraft_fonts::document_thai_font().map(|f| f.family.to_owned());
             }
             let arabic =
-                (!use_thai_outlines && selected_resource.is_none()).then(|| arabic_span(resolver.doc, resolver.fonts, source, span)).flatten();
+                (!use_thai_outlines && selected_resource.is_none()).then(|| arabic_span(resolver.doc, resolver.page, resolver.fonts, source, span)).flatten();
             let use_arabic_outlines = matches!(arabic, Some(ArabicSpan::Outlines));
             if use_arabic_outlines {
                 substituted = pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned());
@@ -1977,6 +1980,7 @@ pub(crate) fn rewrite_styled_block(
     let (dx, dy, width) = paragraph_geometry(doc, &p, block, style, rtl)?;
     let prepared = CharacterPreparation {
         doc,
+        page,
         first,
         lines,
         draft,
