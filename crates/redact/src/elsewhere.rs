@@ -189,9 +189,10 @@ impl Found {
 
 /// The most outline items read.
 const MAX_OUTLINE_ITEMS: usize = 100_000;
-/// The most name-tree nodes read, and how deep the tree is followed.
+/// The most name-tree nodes read. The walks keep their own stack and read each node once, so
+/// depth needs no limit of its own: a chain of `/Kids` is followed as far as this budget, as
+/// clean-up's own walk of the tree follows it.
 const MAX_NAME_TREE_NODES: usize = 100_000;
-const MAX_NAME_TREE_DEPTH: usize = 32;
 
 /// Count the places that hold the `removed` text (see [`Elsewhere`]). `complete` is false when
 /// the collection of removed text was cut short.
@@ -685,16 +686,16 @@ fn embedded_file_tree(doc: &Document) -> HashSet<ObjRef> {
         .root()
         .and_then(|r| doc.get(r).as_dict()?.get(b"Names").cloned())
         .and_then(|names| doc.resolve(&names).as_dict()?.get(b"EmbeddedFiles").cloned());
-    let mut next: Vec<(Object, usize)> = tree.into_iter().map(|t| (t, 0)).collect();
-    while let Some((o, depth)) = next.pop() {
+    let mut next: Vec<Object> = tree.into_iter().collect();
+    while let Some(o) = next.pop() {
         let Object::Ref(r) = o else { continue };
-        if depth > MAX_NAME_TREE_DEPTH || nodes.len() >= MAX_NAME_TREE_NODES || !nodes.insert(r) {
+        if nodes.len() >= MAX_NAME_TREE_NODES || !nodes.insert(r) {
             continue;
         }
         let node = doc.get(r);
         let Some(node) = node.as_dict() else { continue };
         if let Some(kids) = node.get(b"Kids").and_then(|k| doc.resolve(k).as_array().cloned()) {
-            next.extend(kids.into_iter().map(|k| (k, depth.saturating_add(1))));
+            next.extend(kids);
         }
         // The file specifications it lists, whose names and descriptions it counts.
         if let Some(leaves) = node.get(b"Names").and_then(|l| doc.resolve(l).as_array().cloned()) {
@@ -769,16 +770,16 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
         .and_then(|names| doc.resolve(&names).as_dict()?.get(b"EmbeddedFiles").cloned());
     if let Some(tree) = tree {
         let mut seen = HashSet::new();
-        let mut next = vec![(tree, 0usize)];
+        let mut next = vec![tree];
         let (mut read, mut nth) = (0usize, 0usize);
-        while let Some((o, depth)) = next.pop() {
+        while let Some(o) = next.pop() {
             if let Object::Ref(r) = &o
                 && !seen.insert(*r)
             {
                 continue;
             }
             let Some(node) = doc.resolve(&o).as_dict().cloned() else { continue };
-            if read >= MAX_NAME_TREE_NODES || depth > MAX_NAME_TREE_DEPTH {
+            if read >= MAX_NAME_TREE_NODES {
                 // A node past the cap isn't read: count one for what it holds, which Attachments
                 // clears.
                 found.add(Place::Attachment, o.as_ref(), None, None);
@@ -793,7 +794,7 @@ fn attachments(doc: &Document, search: &Search, hit: &dyn Fn(Option<&Object>) ->
                 }
             }
             if let Some(kids) = node.get(b"Kids").map(|k| doc.resolve(k)).and_then(|k| k.as_array().cloned()) {
-                next.extend(kids.into_iter().map(|k| (k, depth.saturating_add(1))));
+                next.extend(kids);
             }
         }
     }

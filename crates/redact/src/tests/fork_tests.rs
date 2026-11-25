@@ -1008,17 +1008,33 @@ fn an_indirect_string_keeps_its_place() {
     assert!(!save_refuses(&doc_with(fields, "", &looped, ""), &["Project Bluefin"]));
 }
 
-/// A walk cut short at its cap is listed as its own place, which its category clears, not as
-/// an object nothing clears (Alcuin round 2, S2).
-#[test]
-fn a_name_tree_too_deep_to_walk_is_listed_as_an_attachment() {
-    // Past the walk's depth cap (`MAX_NAME_TREE_DEPTH`, 32).
-    let levels = 36;
+/// An attachments name tree `levels` deep through `/Kids` references, whose one leaf lists `leaf`.
+fn deep_attachments(levels: usize, leaf: &str) -> Document {
     let mut extra: Vec<String> = (0..levels).map(|i| format!("<< /Kids [{} 0 R] >>", i + 5)).collect();
-    extra.push("<< /Names [(a.txt) << /Type /Filespec /F (a.txt) >>] >>".to_string());
+    extra.push(format!("<< /Names [({leaf}) << /Type /Filespec /F ({leaf}) >>] >>"));
     let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
-    let doc = doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "");
-    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
+    doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "")
+}
+
+/// A deep attachments tree is read to its leaves, as clean-up reads it, rather than refused at a
+/// depth of 32: an attachment that doesn't hold the text lets the save through, and one that does
+/// is listed as an attachment.
+#[test]
+fn a_deep_name_tree_is_read_to_its_leaves() {
+    let removed = || crate::Removed::new(vec!["Project Bluefin".to_string()], true);
+    let left = crate::survivors(&deep_attachments(40, "a.txt"), &removed());
+    assert!(!left.refuses(), "{:?}", left.items);
+    let left = crate::survivors(&deep_attachments(40, "Project Bluefin.txt"), &removed());
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
+}
+
+/// A walk cut short at its node budget is listed as its own place, which its category clears, not
+/// as an object nothing clears (Alcuin round 2, S2).
+#[test]
+fn a_name_tree_past_the_walk_budget_is_listed_as_an_attachment() {
+    // Past the walk's node budget (`MAX_NAME_TREE_NODES`, 100,000).
+    let left = crate::survivors(&deep_attachments(100_001, "a.txt"), &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
     assert!(left.refuses());
     assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
 }
