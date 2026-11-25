@@ -17,7 +17,7 @@ use package_fs::{
 use package_pe::verify_pe_file;
 use std::env;
 use std::error::Error;
-use std::fs::{self, File};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -103,6 +103,27 @@ pub fn resolve_version(cargo_toml: &str, env_ver: Option<&str>) -> Result<(Strin
     Ok((raw, msi))
 }
 
+pub fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
+    let Some(raw) = path.to_str() else {
+        return path;
+    };
+    if let Some(unc) = raw.strip_prefix("\\\\?\\UNC\\") {
+        return PathBuf::from(format!("\\\\{unc}"));
+    }
+    if let Some(local) = raw.strip_prefix("\\\\?\\")
+        && local.as_bytes().get(1) == Some(&b':')
+        && local.len() < 260
+    {
+        return PathBuf::from(local);
+    }
+    path
+}
+
+pub fn resolve_dir_path(raw: PathBuf, cwd: &Path) -> PathBuf {
+    let clean = strip_windows_verbatim(raw);
+    if clean.is_absolute() { clean } else { cwd.join(clean) }
+}
+
 fn parse_workspace_version(cargo_toml: &str) -> Result<String> {
     let mut in_pkg = false;
     for line in cargo_toml.lines().map(str::trim) {
@@ -111,8 +132,8 @@ fn parse_workspace_version(cargo_toml: &str) -> Result<String> {
             continue;
         }
         if in_pkg
-            && let Some(rest) = line.strip_prefix("version")
-            && let Some((_, val)) = rest.split_once('=')
+            && let Some((key, val)) = line.split_once('=')
+            && key.trim() == "version"
         {
             let without_comment = val.split('#').next().unwrap_or(val);
             let trimmed = without_comment.trim().trim_matches('"').trim();
@@ -147,13 +168,16 @@ fn non_empty_env(name: &str) -> Option<String> {
 fn resolve_build_meta(root: &Path) -> Result<(String, String)> {
     let sha = match non_empty_env("PDFCRAFT_BUILD_SHA") {
         Some(v) => v,
-        None => {
-            let out = Command::new("git").args(["rev-parse", "HEAD"]).current_dir(root).stdin(Stdio::null()).output()?;
-            if !out.status.success() {
-                return Err(format!("git rev-parse HEAD failed ({})", out.status).into());
-            }
-            String::from_utf8(out.stdout)?.trim().to_owned()
-        }
+        None => Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| String::from_utf8(out.stdout).ok())
+            .map(|s| s.trim().to_owned())
+            .unwrap_or_default(),
     };
     let date = match non_empty_env("PDFCRAFT_BUILD_DATE") {
         Some(v) => v,
@@ -194,11 +218,20 @@ fn stage_core_files(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>) -> Result<Pa
         copy_file_checked(&src, &stage.join(name))?;
     }
     let sign_script = paths.script_dir.join("sign.ps1");
-    for exe in ["pdfcraft.exe", "pdfcraft-cli.exe"] {
-        let p = stage.join(exe).display().to_string();
-        run_ps_script(meta.shell_bin, &sign_script, &[&p])?;
-    }
+    let gui_staged = stage.join("pdfcraft.exe").display().to_string();
+    let cli_staged = stage.join("pdfcraft-cli.exe").display().to_string();
+    run_ps_script(meta.shell_bin, &sign_script, &[&gui_staged, &cli_staged])?;
     Ok(stage)
+}
+
+pub fn remove_part_entry(path: &Path) -> Result {
+    let meta = reject_symlink(path, "partial model artefact")?;
+    if meta.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
 }
 
 fn stage_models(root: &Path, stage: &Path) -> Result<PathBuf> {
@@ -211,7 +244,7 @@ fn stage_models(root: &Path, stage: &Path) -> Result<PathBuf> {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if name.ends_with(".part") {
-            fs::remove_file(entry.path())?;
+            remove_part_entry(&entry.path())?;
         } else if name.ends_with(".LICENCE.txt") && entry.file_type()?.is_file() {
             has_licence = true;
         }
@@ -304,29 +337,54 @@ fn copy_portable_notices(docs: &Path, p_stage: &Path) -> Result {
     Ok(())
 }
 
-fn build_portable_zip(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>, stage: &Path, models: &Path, docs: &Path, has_fonts: bool) -> Result<PathBuf> {
-    let name = format!("pdfcraft-{}-windows-{}-portable", meta.version, meta.spec.arch);
-    let p_stage = paths.target_dir.join("windows-package").join(&name);
-    reset_real_dir(&p_stage)?;
+pub struct PortableSources<'a> {
+    pub script_dir: &'a Path,
+    pub root: &'a Path,
+    pub stage: &'a Path,
+    pub models: &'a Path,
+    pub docs: &'a Path,
+}
+
+pub fn stage_portable_dir(src: &PortableSources<'_>, p_stage: &Path, has_fonts: bool) -> Result {
+    reset_real_dir(p_stage)?;
     for f in ["pdfcraft.exe", "pdfcraft-cli.exe", "NOTICE", "LICENSE-document.txt"] {
-        copy_file_checked(&stage.join(f), &p_stage.join(f))?;
+        copy_file_checked(&src.stage.join(f), &p_stage.join(f))?;
     }
-    copy_dir_no_symlinks(models, &p_stage.join("models"))?;
+    copy_dir_no_symlinks(src.models, &p_stage.join("models"))?;
     for opt in ["README.md", "LICENSE", "LICENSE-MIT", "LICENSE-APACHE"] {
-        let src = paths.root.join(opt);
-        if src.is_file() {
-            copy_file_checked(&src, &p_stage.join(opt))?;
+        let candidate = src.root.join(opt);
+        if candidate.is_file() {
+            copy_file_checked(&candidate, &p_stage.join(opt))?;
         }
     }
     if has_fonts {
-        copy_portable_notices(docs, &p_stage)?;
+        copy_portable_notices(src.docs, p_stage)?;
     }
-    let _ = File::create(p_stage.join("portable.txt"))?;
-    let zip = paths.dist.join(format!("{name}.zip"));
-    let src_glob = p_stage.join("*");
+    copy_file_checked(&src.script_dir.join("portable.txt"), &p_stage.join("portable.txt"))
+}
+
+fn clear_existing_zip(zip: &Path) -> Result {
+    match fs::symlink_metadata(zip) {
+        Ok(meta) if meta.file_type().is_symlink() || !meta.is_file() => {
+            Err(format!("Symlink or non-file refused at ZIP output path: {}", zip.display()).into())
+        }
+        Ok(_) => Ok(fs::remove_file(zip)?),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn build_portable_zip(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>, stage: &Path, models: &Path, docs: &Path, has_fonts: bool) -> Result<PathBuf> {
+    let name = format!("pdfcraft-{}-windows-{}-portable", meta.version, meta.spec.arch);
+    let p_stage = strip_windows_verbatim(paths.target_dir.join("windows-package").join(&name));
+    let sources = PortableSources { script_dir: paths.script_dir, root: paths.root, stage, models, docs };
+    stage_portable_dir(&sources, &p_stage, has_fonts)?;
+    ensure_real_dir_path(paths.dist)?;
+    let zip = strip_windows_verbatim(paths.dist.join(format!("{name}.zip")));
+    clear_existing_zip(&zip)?;
     let mut cmd = Command::new(meta.shell_bin);
     cmd.args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -Path $env:CRAFT_ZIP_SRC -DestinationPath $env:CRAFT_ZIP_DST -Force"])
-        .env("CRAFT_ZIP_SRC", &src_glob)
+        .env("CRAFT_ZIP_SRC", &p_stage)
         .env("CRAFT_ZIP_DST", &zip);
     run_status(&mut cmd, "Compress-Archive")?;
     Ok(zip)
@@ -346,13 +404,14 @@ struct Prepared {
 fn prepare_package(cfg: &Config) -> Result<Prepared> {
     validate_flags(cfg.skip_build, cfg.built_without_craft_fonts, non_empty_env("CRAFT_FONTS_DIR").is_some())?;
     let spec = arch_spec(&cfg.arch)?;
+    let cwd = strip_windows_verbatim(env::current_dir()?);
     let raw_script_dir = cfg.script_dir.clone().unwrap_or_else(|| PathBuf::from("packaging").join("windows"));
-    let script_dir = fs::canonicalize(raw_script_dir)?;
-    let root = fs::canonicalize(script_dir.join("..").join(".."))?;
+    let script_dir = strip_windows_verbatim(fs::canonicalize(raw_script_dir)?);
+    let root = strip_windows_verbatim(fs::canonicalize(script_dir.join("..").join(".."))?);
     let cargo_toml = fs::read_to_string(root.join("Cargo.toml"))?;
     let (version, msi_version) = resolve_version(&cargo_toml, non_empty_env("PDFCRAFT_VERSION").as_deref())?;
-    let dist = non_empty_env("DIST").map(PathBuf::from).unwrap_or_else(|| root.join("dist").join("release"));
-    let target_dir = non_empty_env("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
+    let dist = non_empty_env("DIST").map(|s| resolve_dir_path(PathBuf::from(s), &cwd)).unwrap_or_else(|| root.join("dist").join("release"));
+    let target_dir = non_empty_env("CARGO_TARGET_DIR").map(|s| resolve_dir_path(PathBuf::from(s), &cwd)).unwrap_or_else(|| root.join("target"));
     let shell_bin = allowlisted_ps_bin(&cfg.shell)?;
     Ok(Prepared { spec, script_dir, root, target_dir, dist, version, msi_version, shell_bin })
 }

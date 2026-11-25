@@ -43,11 +43,18 @@ pub fn ensure_real_dir_path(path: &Path) -> Result {
 }
 
 pub fn reset_real_dir(path: &Path) -> Result {
-    if let Ok(meta) = fs::symlink_metadata(path) {
-        if meta.file_type().is_symlink() || !meta.is_dir() {
-            return Err(format!("Symlink or non-directory refused before clean reset: {}", path.display()).into());
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        ensure_real_dir_path(parent)?;
+    }
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(format!("Symlink or non-directory refused before clean reset: {}", path.display()).into());
+            }
+            fs::remove_dir_all(path)?;
         }
-        fs::remove_dir_all(path)?;
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
     }
     ensure_real_dir_path(path)
 }

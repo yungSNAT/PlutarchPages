@@ -37,8 +37,8 @@ function Resolve-CraftHelperBinary([string] $CacheDir, [string] $Entry, [string]
 
 function Invoke-CraftPackage([string[]] $Arguments) {
   $cacheDir = Resolve-CraftPrivateCacheDir
-  $wc = Resolve-CraftHelperBinary $cacheDir 'win_checks.rs' 'win_checks*.rs' 'win_checks'
-  $pkg = Resolve-CraftHelperBinary $cacheDir 'package.rs' 'package*.rs' 'package'
+  $wc = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'win_checks.rs' -Filter 'win_checks*.rs' -Stem 'win_checks'
+  $pkg = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'package.rs' -Filter 'package*.rs' -Stem 'package'
   if ((Get-FileHash -LiteralPath $wc.Path -Algorithm SHA256).Hash -ne $wc.Hash) {
     throw 'Compiled win_checks binary integrity check failed'
   }
@@ -57,4 +57,4 @@ function Invoke-CraftPackage([string[]] $Arguments) {
 $cmdArgs = @('--arch', $Arch)
 if ($SkipBuild) { $cmdArgs += '--skip-build' }
 if ($BuiltWithoutCraftFonts) { $cmdArgs += '--built-without-craft-fonts' }
-Invoke-CraftPackage $cmdArgs
+Invoke-CraftPackage -Arguments $cmdArgs
