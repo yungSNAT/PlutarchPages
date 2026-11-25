@@ -218,8 +218,8 @@ fn package_nfpm(env: &EnvCtx, formats: &str, spec: &LinuxArchSpec, work: &Path, 
 }
 
 fn download_verified(url: &str, dest: &Path, expected_sha: &str, executable: bool) -> AppResult {
-    let download = dest.with_extension("download");
-    if download.exists() {
+    let download = PathBuf::from(format!("{}.download", dest.display()));
+    if fs::symlink_metadata(&download).is_ok() {
         let _ = fs::remove_file(&download);
     }
     if let Some(parent) = dest.parent() {
@@ -257,6 +257,7 @@ fn ensure_appimage_tool(env: &EnvCtx, spec: &LinuxArchSpec) -> AppResult<PathBuf
         download_verified(&url, &tool, sha, true)?;
     }
     verify_sha256(sha, &tool)?;
+    set_unix_mode(&tool, 0o755)?;
     Ok(fs::canonicalize(&tool)?)
 }
 

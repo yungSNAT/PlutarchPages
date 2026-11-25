@@ -52,7 +52,7 @@ pub fn workspace_version(cargo_toml: &str) -> Option<String> {
             && let Some((k, v)) = trimmed.split_once('=')
             && k.trim() == "version"
         {
-            let cleaned = v.split('#').next().unwrap_or("").replace(['"', ' '], "");
+            let cleaned = v.split('#').next().unwrap_or("").replace(['"', ' ', '\t'], "");
             if !cleaned.is_empty() {
                 return Some(cleaned);
             }
@@ -289,32 +289,85 @@ fn sha256_compress(state: &mut [u32; 8], block: &[u8]) {
     }
 }
 
-pub fn sha256_hex(data: &[u8]) -> String {
-    let mut state = SHA256_INIT;
-    let bit_len = (data.len() as u64).wrapping_mul(8);
-    let mut padded = data.to_vec();
-    padded.push(0x80);
-    while padded.len() % 64 != 56 {
-        padded.push(0);
+struct Sha256State {
+    state: [u32; 8],
+    buf: [u8; 64],
+    buf_len: usize,
+    total_len: u64,
+}
+
+impl Sha256State {
+    fn new() -> Self {
+        Self { state: SHA256_INIT, buf: [0u8; 64], buf_len: 0, total_len: 0 }
     }
-    padded.extend_from_slice(&bit_len.to_be_bytes());
-    for chunk in padded.as_chunks::<64>().0 {
-        sha256_compress(&mut state, chunk);
-    }
-    let mut out = String::with_capacity(64);
-    for word in state {
-        for byte in word.to_be_bytes() {
-            out.push_str(&format!("{byte:02x}"));
+
+    fn update(&mut self, mut data: &[u8]) {
+        self.total_len = self.total_len.wrapping_add(data.len() as u64);
+        if self.buf_len > 0 {
+            let take = data.len().min(64 - self.buf_len);
+            self.buf[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
+            self.buf_len += take;
+            data = &data[take..];
+            if self.buf_len == 64 {
+                let block = self.buf;
+                sha256_compress(&mut self.state, &block);
+                self.buf_len = 0;
+            }
+        }
+        let (chunks, rem) = data.as_chunks::<64>();
+        for chunk in chunks {
+            sha256_compress(&mut self.state, chunk);
+        }
+        if !rem.is_empty() {
+            self.buf[..rem.len()].copy_from_slice(rem);
+            self.buf_len = rem.len();
         }
     }
-    out
+
+    fn finalize(mut self) -> String {
+        let bit_len = self.total_len.wrapping_mul(8);
+        self.buf[self.buf_len] = 0x80;
+        self.buf_len += 1;
+        if self.buf_len > 56 {
+            self.buf[self.buf_len..64].fill(0);
+            let block = self.buf;
+            sha256_compress(&mut self.state, &block);
+            self.buf_len = 0;
+        }
+        self.buf[self.buf_len..56].fill(0);
+        self.buf[56..64].copy_from_slice(&bit_len.to_be_bytes());
+        let block = self.buf;
+        sha256_compress(&mut self.state, &block);
+        let mut out = String::with_capacity(64);
+        for word in self.state {
+            for byte in word.to_be_bytes() {
+                out.push_str(&format!("{byte:02x}"));
+            }
+        }
+        out
+    }
+}
+
+#[cfg(test)]
+pub fn sha256_hex(data: &[u8]) -> String {
+    let mut h = Sha256State::new();
+    h.update(data);
+    h.finalize()
 }
 
 pub fn sha256_file(path: &Path) -> AppResult<String> {
     reject_symlink(path, "file to hash")?;
-    let mut buf = Vec::new();
-    let _ = File::open(path)?.read_to_end(&mut buf)?;
-    Ok(sha256_hex(&buf))
+    let mut f = File::open(path)?;
+    let mut hasher = Sha256State::new();
+    let mut chunk = [0u8; 65_536];
+    loop {
+        let n = f.read(&mut chunk)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&chunk[..n]);
+    }
+    Ok(hasher.finalize())
 }
 
 pub fn verify_sha256(expected: &str, path: &Path) -> AppResult {

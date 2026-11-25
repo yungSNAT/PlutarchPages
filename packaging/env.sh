@@ -69,7 +69,7 @@ run_unix_packager() {
   local bin="$_PACKAGER_WORK/unix_package"
   rustc --edition=2024 -D warnings "$ROOT/packaging/unix_package.rs" -o "$bin"
   local status=0
-  "$bin" --root "$ROOT" "$subcmd" "$@" || status=$?
+  "$bin" --root "$ROOT" "$subcmd" ${1+"$@"} || status=$?
   rm -rf "$_PACKAGER_WORK"
   _PACKAGER_WORK=""
   trap - EXIT

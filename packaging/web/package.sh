@@ -4,4 +4,4 @@
 set -euo pipefail
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
-run_unix_packager web "$@"
+run_unix_packager web ${1+"$@"}

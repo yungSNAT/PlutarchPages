@@ -4,6 +4,7 @@
 //! Symlink-refusing filesystem, private temp dir, and subprocess helpers.
 
 use super::{AppError, AppResult};
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -21,41 +22,61 @@ pub fn reject_symlink(path: &Path, label: &str) -> AppResult<fs::Metadata> {
     Ok(meta)
 }
 
-pub fn ensure_real_dir_path(path: &Path) -> AppResult {
-    let mut cur = PathBuf::new();
-    for comp in path.components() {
-        match comp {
-            Component::Prefix(_) | Component::RootDir => cur.push(comp.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                return Err(AppError::runtime(format!("error: refusing '..' segment in directory path: {}", path.display())));
-            }
-            Component::Normal(seg) => {
-                cur.push(seg);
-                match fs::symlink_metadata(&cur) {
-                    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => {
-                        return Err(AppError::runtime(format!("error: symlink or non-directory refused at {}", cur.display())));
-                    }
-                    Ok(_) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => fs::create_dir(&cur)?,
-                    Err(e) => return Err(e.into()),
-                }
-            }
-        }
-    }
-    if cur.as_os_str().is_empty() {
-        return Err(AppError::runtime("error: empty directory path"));
-    }
-    Ok(())
-}
-
-pub fn reset_real_dir(path: &Path) -> AppResult {
+fn validate_no_parent_segments(path: &Path) -> AppResult {
     if path.as_os_str().is_empty() {
         return Err(AppError::runtime("error: empty directory path"));
     }
     if path.components().any(|c| matches!(c, Component::ParentDir)) {
         return Err(AppError::runtime(format!("error: refusing '..' segment in directory path: {}", path.display())));
     }
+    Ok(())
+}
+
+fn find_existing_ancestor(path: &Path) -> AppResult<(PathBuf, Vec<OsString>)> {
+    let mut cur = path.to_path_buf();
+    let mut missing = Vec::new();
+    while !cur.as_os_str().is_empty() && fs::symlink_metadata(&cur).is_err() {
+        if let Some(name) = cur.file_name() {
+            missing.push(name.to_os_string());
+        }
+        cur.pop();
+    }
+    let anchor = if cur.as_os_str().is_empty() { PathBuf::from(".") } else { fs::canonicalize(&cur)? };
+    Ok((anchor, missing))
+}
+
+fn ensure_real_leaf_dir(path: &Path) -> AppResult {
+    match fs::symlink_metadata(path) {
+        Ok(m) if !m.file_type().is_symlink() && m.is_dir() => Ok(()),
+        Ok(_) => Err(AppError::runtime(format!("error: symlink or non-directory refused at {}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(path)?;
+            Ok(())
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+// Resolves the deepest existing ancestor (e.g. macOS `/var -> private/var`) while still refusing an
+// explicit symlink at the leaf path itself or symlinks under created segments.
+pub fn ensure_real_dir_path(path: &Path) -> AppResult {
+    validate_no_parent_segments(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(m) if !m.file_type().is_symlink() && m.is_dir() => return Ok(()),
+        Ok(_) => return Err(AppError::runtime(format!("error: symlink or non-directory refused at {}", path.display()))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e.into()),
+    }
+    let (mut real, missing) = find_existing_ancestor(path)?;
+    for seg in missing.into_iter().rev() {
+        real.push(seg);
+        ensure_real_leaf_dir(&real)?;
+    }
+    Ok(())
+}
+
+pub fn reset_real_dir(path: &Path) -> AppResult {
+    validate_no_parent_segments(path)?;
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         ensure_real_dir_path(parent)?;
     }

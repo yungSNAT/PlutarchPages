@@ -17,12 +17,16 @@ mod unix_package_macos;
 mod unix_package_tests;
 mod unix_package_web;
 
+#[cfg(not(test))]
 use std::env;
 use std::error::Error;
 use std::fmt;
+#[cfg(not(test))]
 use std::path::PathBuf;
+#[cfg(not(test))]
 use std::process::ExitCode;
 
+#[cfg(not(test))]
 use unix_package_env::EnvCtx;
 
 #[derive(Debug)]
@@ -69,6 +73,7 @@ impl From<&str> for AppError {
 
 pub type AppResult<T = ()> = Result<T, AppError>;
 
+#[cfg(not(test))]
 fn parse_root_and_command(args: &[String]) -> AppResult<(Option<PathBuf>, &str, &[String])> {
     let (root, rest) = match args {
         [flag, path, tail @ ..] if flag == "--root" => {
@@ -88,6 +93,7 @@ fn parse_root_and_command(args: &[String]) -> AppResult<(Option<PathBuf>, &str, 
     Ok((root, cmd.as_str(), cmd_args))
 }
 
+#[cfg(not(test))]
 fn dispatch(args: &[String]) -> AppResult {
     let (root_override, cmd, cmd_args) = parse_root_and_command(args)?;
     let env_ctx = EnvCtx::load(root_override)?;
@@ -102,8 +108,9 @@ fn dispatch(args: &[String]) -> AppResult {
     }
 }
 
+#[cfg(not(test))]
 fn main() -> ExitCode {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let args: Vec<String> = env::args().skip(1).collect(); // nosemgrep: rust.lang.security.args.args
     match dispatch(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

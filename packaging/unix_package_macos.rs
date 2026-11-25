@@ -149,6 +149,7 @@ impl SignCtx {
             .args(["--apple-id", apple_id, "--password", password, "--team-id", team_id])
             .args(["--wait", "--timeout", "1h", "--output-format", "json"])
             .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
             .output()?;
         let stdout = String::from_utf8_lossy(&out.stdout);
         println!("{stdout}");
@@ -331,9 +332,7 @@ fn build_and_sign_dmg(env: &EnvCtx, sign_ctx: &SignCtx, work: &Path, app: &Path,
         c
     });
     verify_res?;
-    if verify_dmg_post_attach(sign_ctx, detach_res, dmg).is_err() {
-        return Err(AppError::runtime("error: DMG verification/notarization failed"));
-    }
+    verify_dmg_post_attach(sign_ctx, detach_res, dmg)?;
     Ok(())
 }
 

@@ -113,7 +113,15 @@ fn emit_flatpak_outputs(env: &EnvCtx, work: &Path, basename: &str, opts: &Flatpa
     println!("wrote {}", out.display());
     if opts.oci {
         let out_oci = env.dist.join(format!("{basename}-oci"));
-        reset_real_dir(&out_oci)?;
+        if let Some(parent) = out_oci.parent() {
+            ensure_real_dir_path(parent)?;
+        }
+        if let Ok(meta) = std::fs::symlink_metadata(&out_oci) {
+            if meta.file_type().is_symlink() || !meta.is_dir() {
+                return Err(AppError::runtime(format!("error: symlink or non-directory refused at {}", out_oci.display())));
+            }
+            std::fs::remove_dir_all(&out_oci)?;
+        }
         run_status(
             Command::new("flatpak").args(["build-bundle", "--oci"]).arg(work.join("repo")).arg(&out_oci).args([APP_ID, "stable"]),
             "flatpak build-bundle --oci",

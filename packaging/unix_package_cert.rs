@@ -16,12 +16,12 @@ const HELP: &str = "\
 CI only: import the Developer ID certificate into a temporary keychain so codesign can use it.
 Reads APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD, RUNNER_TEMP, TMPDIR, GITHUB_ENV.";
 
-struct SigningGuard {
-    temp_dir: PathBuf,
-    cert_path: PathBuf,
-    keychain_path: PathBuf,
-    secret_pass: String,
-    keep_keychain_on_success: bool,
+pub(crate) struct SigningGuard {
+    pub(crate) temp_dir: PathBuf,
+    pub(crate) cert_path: PathBuf,
+    pub(crate) keychain_path: PathBuf,
+    pub(crate) secret_pass: String,
+    pub(crate) keep_keychain_on_success: bool,
 }
 
 impl Drop for SigningGuard {
@@ -41,10 +41,14 @@ impl Drop for SigningGuard {
     }
 }
 
+fn scrub_vec(bytes: &mut Vec<u8>) {
+    bytes.fill(0);
+    let _ = std::hint::black_box(bytes.as_slice());
+}
+
 fn clear_string(s: &mut String) {
-    let buf = s.len();
-    *s = "\0".repeat(buf);
-    s.clear();
+    let mut bytes = std::mem::take(s).into_bytes();
+    scrub_vec(&mut bytes);
 }
 
 fn scrub_and_remove_file(path: &Path) {
@@ -123,13 +127,14 @@ fn random_hex_24() -> AppResult<String> {
     for b in bytes {
         hex.push_str(&format!("{b:02x}"));
     }
-    bytes = [0u8; 24];
-    let _ = bytes;
+    bytes.fill(0);
+    let _ = std::hint::black_box(&bytes);
     Ok(hex)
 }
 
-fn temp_base() -> PathBuf {
-    non_empty_env("RUNNER_TEMP").or_else(|| non_empty_env("TMPDIR")).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from)
+fn temp_base() -> AppResult<PathBuf> {
+    let raw = non_empty_env("RUNNER_TEMP").or_else(|| non_empty_env("TMPDIR")).map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    Ok(fs::canonicalize(&raw)?)
 }
 
 pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
@@ -140,13 +145,15 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
     if !args.is_empty() {
         return Err(AppError::usage(format!("unknown argument: {}", args[0])));
     }
-    let Some(cert_b64) = non_empty_env("APPLE_CERTIFICATE") else {
+    let Some(mut cert_b64) = non_empty_env("APPLE_CERTIFICATE") else {
         env.warn("APPLE_CERTIFICATE is not set: macOS builds will be ad-hoc signed and not notarized");
         return Ok(());
     };
 
     let mut cert_bytes = decode_base64(&cert_b64)?;
-    let temp_dir = create_private_temp_dir(&temp_base(), "pdfcraft-signing.")?;
+    clear_string(&mut cert_b64);
+    let base = temp_base()?;
+    let temp_dir = create_private_temp_dir(&base, "pdfcraft-signing.")?;
     let cert_path = temp_dir.join("pdfcraft-signing.p12");
     let keychain_path = temp_dir.join("pdfcraft-signing.keychain-db");
     let kc_pass = match non_empty_env("KEYCHAIN_PASSWORD") {
@@ -157,30 +164,30 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
         temp_dir,
         cert_path: cert_path.clone(),
         keychain_path: keychain_path.clone(),
-        secret_pass: kc_pass.clone(),
+        secret_pass: kc_pass,
         keep_keychain_on_success: false,
     };
 
     let write_res = write_private_file(&cert_path, &cert_bytes);
-    cert_bytes.fill(0);
+    scrub_vec(&mut cert_bytes);
     write_res?;
 
-    import_into_keychain(&cert_path, &keychain_path, &kc_pass)?;
+    import_into_keychain(&cert_path, &keychain_path, &guard.secret_pass)?;
     scrub_and_remove_file(&cert_path);
 
     let identity = resolve_identity(&keychain_path)?;
-    guard.keep_keychain_on_success = true;
     println!("Imported signing identity {identity}");
     emit_outputs(&identity, &keychain_path)?;
+    guard.keep_keychain_on_success = true;
     Ok(())
 }
 
 fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResult {
-    let cert_pass = env::var("APPLE_CERTIFICATE_PASSWORD").unwrap_or_default();
+    let mut cert_pass = env::var("APPLE_CERTIFICATE_PASSWORD").unwrap_or_default();
     run_status(Command::new("security").arg("create-keychain").arg("-p").arg(kc_pass).arg(keychain), "security create-keychain")?;
     run_status(Command::new("security").args(["set-keychain-settings", "-lut", "21600"]).arg(keychain), "security set-keychain-settings")?;
     run_status(Command::new("security").arg("unlock-keychain").arg("-p").arg(kc_pass).arg(keychain), "security unlock-keychain")?;
-    run_status(
+    let imp_res = run_status(
         Command::new("security")
             .arg("import")
             .arg(cert)
@@ -189,7 +196,9 @@ fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResul
             .args(["-T", "/usr/bin/codesign", "-T", "/usr/bin/security", "-t", "cert", "-f", "pkcs12", "-k"])
             .arg(keychain),
         "security import",
-    )?;
+    );
+    clear_string(&mut cert_pass);
+    imp_res?;
     let _ = run_capture(
         Command::new("security").args(["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k"]).arg(kc_pass).arg(keychain),
         "security set-key-partition-list",
@@ -215,9 +224,9 @@ fn resolve_identity(keychain: &Path) -> AppResult<String> {
     Err(AppError::runtime("error: no 'Developer ID Application' identity in APPLE_CERTIFICATE"))
 }
 
-fn emit_outputs(identity: &str, keychain: &Path) -> AppResult {
-    if let Some(gh_env) = non_empty_env("GITHUB_ENV") {
-        let mut f = OpenOptions::new().create(true).append(true).open(gh_env)?;
+pub(crate) fn emit_outputs_to(identity: &str, keychain: &Path, gh_env: Option<&str>) -> AppResult {
+    if let Some(path) = gh_env.filter(|s| !s.is_empty()) {
+        let mut f = OpenOptions::new().create(true).append(true).open(path)?;
         writeln!(f, "MACOS_SIGN_IDENTITY={identity}")?;
         writeln!(f, "MACOS_KEYCHAIN={}", keychain.display())?;
     } else {
@@ -225,4 +234,8 @@ fn emit_outputs(identity: &str, keychain: &Path) -> AppResult {
         println!("MACOS_KEYCHAIN={}", keychain.display());
     }
     Ok(())
+}
+
+fn emit_outputs(identity: &str, keychain: &Path) -> AppResult {
+    emit_outputs_to(identity, keychain, non_empty_env("GITHUB_ENV").as_deref())
 }

@@ -3,8 +3,8 @@
 
 //! Unit and integration tests for `unix_package.rs`.
 
-use crate::unix_package_cert::{decode_base64, parse_dev_id_identity};
-use crate::unix_package_env::{EnvCtx, render_template, sha256_hex, utc_date_from_unix_secs, validate_build_label, workspace_version};
+use crate::unix_package_cert::{SigningGuard, decode_base64, emit_outputs_to, parse_dev_id_identity};
+use crate::unix_package_env::{EnvCtx, render_template, sha256_file, sha256_hex, utc_date_from_unix_secs, validate_build_label, workspace_version};
 use crate::unix_package_flatpak::{normalize_flatpak_arch, parse_flatpak_args};
 use crate::unix_package_freebsd::{is_freebsd_elf_description, resolve_target_and_arch};
 use crate::unix_package_fs::reset_real_dir;
@@ -20,20 +20,30 @@ static TEST_SEQ: AtomicU64 = AtomicU64::new(0);
 
 fn scratch_dir(name: &str) -> PathBuf {
     let seq = TEST_SEQ.fetch_add(1, Ordering::Relaxed);
-    let dir = env::temp_dir().join(format!("plutarch_unix_pkg_test_{}_{}_{seq}", name, std::process::id()));
+    let base = env::temp_dir(); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+    let dir = base.join(format!("plutarch_unix_pkg_test_{}_{}_{seq}", name, std::process::id()));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).ok();
     dir
 }
 
 #[test]
-fn sha256_matches_nist_vectors() {
+fn sha256_matches_nist_and_boundary_vectors() {
     assert_eq!(sha256_hex(b""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
     assert_eq!(sha256_hex(b"abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     assert_eq!(
         sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
         "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
     );
+    assert_eq!(sha256_hex(&[b'a'; 55]), "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318");
+    assert_eq!(sha256_hex(&[b'a'; 56]), "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a");
+    assert_eq!(sha256_hex(&[b'a'; 64]), "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb");
+    let dir = scratch_dir("sha_stream");
+    let path = dir.join("stream.bin");
+    let payload = vec![0x5au8; 70_000];
+    fs::write(&path, &payload).ok();
+    assert_eq!(sha256_file(&path).ok(), Some(sha256_hex(&payload)));
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -136,7 +146,7 @@ fn templates_and_docs_staging_reject_traversal() {
 #[cfg(unix)]
 #[test]
 fn unix_permissions_and_symlink_guards_hold() {
-    use crate::unix_package_fs::{copy_dir_no_symlinks, copy_file_checked, create_private_temp_dir, write_private_file};
+    use crate::unix_package_fs::{copy_dir_no_symlinks, copy_file_checked, create_private_temp_dir, ensure_real_dir_path, write_private_file};
     use std::os::unix::fs::{PermissionsExt, symlink};
 
     let dir = scratch_dir("unix_guards");
@@ -161,6 +171,37 @@ fn unix_permissions_and_symlink_guards_hold() {
     fs::create_dir_all(&src_dir).ok();
     let _ = symlink(&real_src, src_dir.join("nested_link.txt"));
     assert!(copy_dir_no_symlinks(&src_dir, &dir.join("tree_copy")).is_err());
+
+    let real_parent = dir.join("real_parent");
+    let link_parent = dir.join("link_parent");
+    fs::create_dir_all(&real_parent).ok();
+    let _ = symlink(&real_parent, &link_parent);
+    assert!(ensure_real_dir_path(&link_parent.join("nested/sub")).is_ok());
+    assert!(ensure_real_dir_path(&link_parent).is_err());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn signing_guard_cleans_up_on_emit_failure() {
+    let dir = scratch_dir("sign_guard");
+    let work = dir.join("work");
+    fs::create_dir_all(&work).ok();
+    let cert_path = work.join("cert.p12");
+    let kc_path = work.join("kc.keychain-db");
+    fs::write(&cert_path, b"secret-p12-data").ok();
+    let bad_gh_env = work.to_string_lossy().into_owned();
+    assert!(emit_outputs_to("ID123", &kc_path, Some(&bad_gh_env)).is_err());
+    {
+        let _guard = SigningGuard {
+            temp_dir: work.clone(),
+            cert_path: cert_path.clone(),
+            keychain_path: kc_path,
+            secret_pass: "supersecret".into(),
+            keep_keychain_on_success: false,
+        };
+    }
+    assert!(!cert_path.exists());
+    assert!(!work.exists());
     let _ = fs::remove_dir_all(&dir);
 }
 

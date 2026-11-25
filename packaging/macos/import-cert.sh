@@ -4,4 +4,4 @@ set -euo pipefail
 umask 077
 # shellcheck source=../env.sh
 . "$(dirname "${BASH_SOURCE[0]}")/../env.sh"
-run_unix_packager import-cert "$@"
+run_unix_packager import-cert ${1+"$@"}
