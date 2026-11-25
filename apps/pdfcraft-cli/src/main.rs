@@ -20,6 +20,7 @@
 #[cfg(feature = "mcp")]
 mod automation_args;
 mod batch;
+mod form_fill;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -86,6 +87,9 @@ pdfcraft-cli audit  <file.pdf> [--password PW]            report redaction risks
 pdfcraft-cli batch <files or dirs...> --steps convert,ocr,optimize --out-dir DIR
                       [--recursive] [--root DIR] [--stop-on-error]
                       [--ppi 150] [--quality 60] [--dpi 300] [--language en] [--ocr-all-pages]
+pdfcraft-cli form-fill-batch <form.pdf> --data rows.csv|rows.json --out-dir DIR
+                      [--name-column COL] [--flatten] [--password PW] [--root DIR]
+                      one filled PDF per data row; fails if any row failed (JSON report on stdout)
 pdfcraft-cli tools                                       automation tools and their JSON Schemas
 pdfcraft-cli run    <tool> [key=value …] [--root DIR] [--out image.png]
 pdfcraft-cli run    --script steps.json [--root DIR] [--report]
@@ -146,6 +150,7 @@ fn main() -> ExitCode {
         Some("tools") => tools(),
         Some("run") => run(&args[1..]),
         Some("batch") => batch::run(&args[1..]),
+        Some("form-fill-batch") => form_fill::run(&args[1..]),
         Some("ui") => ui(&args[1..]),
         Some("completions") => completions::completions(&args[1..]),
         #[cfg(feature = "mcp")]

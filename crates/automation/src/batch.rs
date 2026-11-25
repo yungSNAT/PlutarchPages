@@ -132,7 +132,7 @@ fn linked(metadata: &std::fs::Metadata) -> bool {
 }
 
 /// Canonicalize the existing ancestor, including when the requested output does not exist yet.
-fn absolute(path: &Path) -> Result<PathBuf> {
+pub(crate) fn absolute(path: &Path) -> Result<PathBuf> {
     let mut ancestor = path;
     let mut tail = Vec::new();
     while !ancestor.exists() {

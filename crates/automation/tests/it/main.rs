@@ -12,6 +12,7 @@ mod button_caption;
 mod document_actions;
 mod find_text;
 mod form_bulk;
+mod form_fill_batch;
 mod hostile_args;
 mod link_javascript;
 mod list_selection;

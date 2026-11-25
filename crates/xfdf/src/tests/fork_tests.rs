@@ -145,3 +145,43 @@ fn merged_cells_in_every_column_never_start_a_formula() {
     assert_eq!(lines[0], "\"'=HYPERLINK(\"\"http://x\"\")\",Total,Plus,Balance,\"\tName\"");
     assert_eq!(lines[1], "'@SUM(A1),'-2+3,\"'\t'+1+cmd\",-12.5,Ada");
 }
+
+fn owned(rows: &[&[&str]]) -> Vec<Vec<String>> {
+    rows.iter().map(|r| r.iter().map(|c| c.to_string()).collect()).collect()
+}
+
+/// Batch fill reads every record of a table, not only the first one after the names: quoted
+/// commas, doubled quotes and line breaks stay in their cell, a byte order mark and blank lines
+/// are not records, and a quoted empty cell is.
+#[test]
+fn table_records_reads_every_csv_record() {
+    let csv = "\u{feff}Name,Notes\r\nAda,\"likes, commas\"\n\"Bo \"\"B\"\"\",\"two\nlines\"\n\n\"\",\n";
+    assert_eq!(table_records(csv), owned(&[&["Name", "Notes"], &["Ada", "likes, commas"], &["Bo \"B\"", "two\nlines"], &["", ""]]));
+    // A comma outside quotes in the header keeps it CSV even when a value holds a bare tab.
+    assert_eq!(table_records("\"First\tName\",Agree\r\nAda\tMary,Yes\r\n"), owned(&[&["First\tName", "Agree"], &["Ada\tMary", "Yes"]]));
+}
+
+#[test]
+fn table_records_reads_every_tab_delimited_record() {
+    assert_eq!(table_records("Name\tAge\r\nAda\t36\n\nBo\t41\n"), owned(&[&["Name", "Age"], &["Ada", "36"], &["Bo", "41"]]));
+    // One field's text has no tab to show for it (#1321), even when a value holds commas.
+    assert_eq!(table_records("Name\nSmith, Ada\nBo\n"), owned(&[&["Name"], &["Smith, Ada"], &["Bo"]]));
+    assert_eq!(table_records("Name\nAda\nBo"), owned(&[&["Name"], &["Ada"], &["Bo"]]));
+}
+
+#[test]
+fn table_records_of_nothing_is_empty() {
+    assert!(table_records("").is_empty());
+    assert!(table_records("\u{feff}\r\n\n").is_empty());
+}
+
+/// Sharing the record reader leaves a single import as it was: the first row after the names.
+#[test]
+fn a_single_import_still_takes_the_first_row() {
+    let mut dst = blank();
+    let names: Vec<String> = values(&dst).into_iter().map(|(n, _)| n).collect();
+    let text = format!("{}\nfirst\nsecond\n", names[0]);
+    let r = import(&mut dst, text.as_bytes()).unwrap();
+    assert!(r.rejected.is_empty(), "{r:?}");
+    assert_eq!(values(&dst)[0].1, vec!["first".to_string()]);
+}
