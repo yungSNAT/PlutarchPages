@@ -195,7 +195,15 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   Retained scripts stay non-Rust under documented constraints: `check-install-policy.ps1`, `test-msi.ps1` and
   `test-install.ps1` depend on Windows Installer COM/MSI APIs (`WindowsInstaller.Installer`, constraint 2);
   `sign.ps1` is a thin Windows SDK `signtool.exe` wrapper; `security-audit.ps1` is a read-only
-  Authenticode/YARA inspector; and upstream Linux/macOS/FreeBSD/web packaging scripts stay unchanged for now.
+  Authenticode/YARA inspector.
+- `packaging/unix_package.rs` (with `unix_package_{env,fs,linux,freebsd,macos,flatpak,web,cert,tests}.rs`)
+  replaces the Unix and web packaging orchestration in `packaging/linux/package.sh`,
+  `packaging/linux/flatpak-bundle.sh`, `packaging/freebsd/package.sh`, `packaging/macos/package.sh`,
+  `packaging/macos/import-cert.sh` and `packaging/web/package.sh`, compiling on demand via
+  `run_unix_packager` in `packaging/env.sh`. `packaging/env.sh` keeps its pure shell variable setup for
+  workflow steps without a Rust toolchain (`release.yml`'s `version` job); `packaging/linux/postinst.sh`
+  remains a dpkg/rpm maintainer scriptlet (constraint 1); `packaging/macos/dmg/generate.py` stays Python
+  for Pillow/LittleCMS/`ds_store`/`mac_alias` asset generation (constraint 2).
 - Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
   stops it when that account can no longer run workflows. `fuzz.yml` runs at 03:18 UTC, a minute
   after upstream's, so that this repository's account is its actor. Taking upstream's line in a
