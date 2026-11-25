@@ -275,11 +275,6 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   in the renderer and swallow the operators before it. Re-encoding leaves out unknown operators
   holding `EI` (#198), unreported, and keeps an added item's `/PCAdded`. `process_from` and
   `reads_back` in `crates/redact/src/interp.rs`; tests in `crates/redact/src/tests/fork_tests.rs`.
-- A standard-14 font named without a `/FontDescriptor` takes its face's published Ascender and
-  Descender as its glyph box (`std14_extent` in `crates/fonts/src/pdf.rs`), not 0.9 / -0.25 em,
-  so redaction keeps a label set just beside a mark. Symbol and ZapfDingbats keep the generic box.
-  Test: `labels_beside_a_mark_in_a_standard_font_without_a_descriptor_stay` in
-  `crates/redact/src/tests/fork_tests.rs`.
 - Reduce File Size saves its copy only when it is smaller by more than a new `/ModDate` can
   explain (`reduce_saves` in `crates/engine/src/optimizer.rs`, `2b56095f`, for upstream issue
   #490, still open). The app and automation both call it.

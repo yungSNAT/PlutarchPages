@@ -1086,44 +1086,38 @@ fn deeply_held_xmp_refuses_a_save_and_metadata_removal_clears_it() {
         .expect("no stack overflow");
 }
 
-/// A standard-14 font named without a descriptor is drawn with the face's own metrics, so its
-/// glyph box runs from the face's published descender to its ascender (the `/Ascent` and
-/// `/Descent` a descriptor for it would carry), not a generic 0.9 and -0.25 em. With the generic
-/// box, a small label set just above a value's mark, and a line just below it, reached into the
-/// mark and went with the value, though no ink of theirs was under it. A label drawn into the mark
-/// still goes.
+/// One glyph of a standard-14 font named without a descriptor, drawn at `size` pt on baseline 100,
+/// goes when `rect` covers its ink above the face's published ascender. Such a font's glyph box is
+/// the generic 0.9 / -0.25 em; a box from the face's ascender and descender would keep it.
+fn std14_glyph_under_a_mark_goes(face: &str, size: f64, shown: &str, rect: [f64; 4]) {
+    let ops = format!("BT /F1 {size} Tf 50 100 Td ({shown}) Tj ET");
+    let mut doc = pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+        stream("", ops.as_bytes()),
+        format!("<< /Type /Font /Subtype /Type1 /BaseFont /{face} /Encoding /WinAnsiEncoding >>").into_bytes(),
+    ]);
+    mark(&mut doc, 0, &[rect], "");
+    let r = apply(&mut doc, None).unwrap();
+    assert_eq!(r.glyphs, 1, "{face} {size} pt ({shown}): the glyph under the mark goes: {}", content(&doc, 0));
+}
+
+/// Courier's bar reaches above Courier's ascender: a mark from 0.6 em up covers it.
 #[test]
-fn labels_beside_a_mark_in_a_standard_font_without_a_descriptor_stay() {
-    for face in ["Courier-Bold", "Helvetica-Bold", "Times-Bold"] {
-        let page = |label_baseline: f64| {
-            let content = format!(
-                "BT /F1 6.4 Tf 50 {label_baseline} Td (Email:) Tj ET BT /F1 10 Tf 50 181.85 Td (SECRET) Tj ET BT /F1 6.4 Tf 50 175.59 Td (Footnote) Tj ET"
-            );
-            pdf(vec![
-                b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
-                b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
-                b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
-                stream("", content.as_bytes()),
-                format!("<< /Type /Font /Subtype /Type1 /BaseFont /{face} >>").into_bytes(),
-            ])
-        };
-        // The value's box runs 2 pt below its baseline and 7 pt above; the label's baseline is
-        // 0.5 pt above the box, and the footnote's ascender stops short of it.
-        let value = [45.0, 179.85, 120.0, 188.85];
+fn a_courier_bar_under_a_mark_above_the_ascender_goes() {
+    std14_glyph_under_a_mark_goes("Courier", 20.0, "|", [40.0, 112.0, 200.0, 140.0]);
+}
 
-        let mut doc = page(189.35);
-        mark(&mut doc, 0, &[value], "");
-        let r = apply(&mut doc, None).unwrap();
-        let c = content(&doc, 0);
-        assert_eq!(r.glyphs, 6, "{face}: only SECRET goes: {c}");
-        assert!(!c.contains("SECRET") && c.contains("(Email:)") && c.contains("(Footnote)"), "{face}: {c}");
+/// At 72 pt, a mark 46 to 54 pt above the baseline covers part of Courier's bar and none of the
+/// box Courier's ascender gives.
+#[test]
+fn a_large_courier_bar_under_a_narrow_mark_goes() {
+    std14_glyph_under_a_mark_goes("Courier", 72.0, "|", [40.0, 146.0, 200.0, 154.0]);
+}
 
-        // The label's baseline 0.6 pt inside the box: more than a point of its glyph box is under it.
-        let mut doc = page(188.25);
-        mark(&mut doc, 0, &[value], "");
-        let r = apply(&mut doc, None).unwrap();
-        let c = content(&doc, 0);
-        assert_eq!(r.glyphs, 12, "{face}: the label goes with the value: {c}");
-        assert!(!c.contains("Email") && c.contains("(Footnote)"), "{face}: {c}");
-    }
+/// An accented capital reaches above Helvetica's ascender: a mark from 8 pt up covers its accent.
+#[test]
+fn a_helvetica_accented_capital_under_a_mark_goes() {
+    std14_glyph_under_a_mark_goes("Helvetica", 12.0, r"\311", [40.0, 108.0, 200.0, 120.0]);
 }
