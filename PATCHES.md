@@ -186,6 +186,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `cargo xtask icons` (`xtask/src/icons.rs`) replaces upstream's `packaging/icons.sh` and writes
   the same files. If a merge changes or brings back the script, port the change to `icons.rs` and
   delete it. The icon licence notes and ATTRIBUTION rows name the command.
+- `packaging/windows/win_checks.rs` (with `win_checks_{json,policy,tests}.rs`) replaces the PowerShell font-notice
+  validation and installer policy fixture logic in `font-notices.ps1`, `test-font-notices.ps1` and
+  `test-install-policy.ps1`, which compile the standalone Rust helper on demand with `rustc --edition=2024 -D warnings`.
 - Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
   stops it when that account can no longer run workflows. `fuzz.yml` runs at 03:18 UTC, a minute
   after upstream's, so that this repository's account is its actor. Taking upstream's line in a
