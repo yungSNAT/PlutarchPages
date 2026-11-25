@@ -839,6 +839,19 @@ pub fn base_font_name(doc: &Document, font: &Dict) -> String {
         .unwrap_or_default()
 }
 
+/// A standard-14 text face's ascender and descender in em: its published metrics' `Ascender` and
+/// `Descender`, which a descriptor for it carries as `/Ascent` and `/Descent`. Symbol and
+/// ZapfDingbats publish neither.
+fn std14_extent(face: crate::Std14) -> Option<(f64, f64)> {
+    use crate::Std14 as S;
+    match face {
+        S::Helvetica | S::HelveticaBold | S::HelveticaOblique | S::HelveticaBoldOblique => Some((0.718, -0.207)),
+        S::TimesRoman | S::TimesBold | S::TimesItalic | S::TimesBoldItalic => Some((0.683, -0.217)),
+        S::Courier | S::CourierBold | S::CourierOblique | S::CourierBoldOblique => Some((0.629, -0.157)),
+        S::Symbol | S::ZapfDingbats => None,
+    }
+}
+
 /// Codespace ranges and CID mappings from an embedded CMap stream, at most
 /// [`MAX_CMAP_RANGES`] of each (every glyph searches them).
 #[allow(clippy::type_complexity)]
@@ -1092,6 +1105,13 @@ impl Metrics {
                 let de = descent.unwrap_or(0.0) / 1000.0;
                 m.descent = if de < -0.05 { de.max(-0.6) } else { -0.25 };
             }
+        } else if !m.composite && subtype != b"Type3"
+            && let Some((face, crate::Std14Match::Alias)) = crate::Std14::recognise(&base_font_name(doc, font))
+            && let Some((ascent, descent)) = std14_extent(face)
+        {
+            // No descriptor and no program: the viewer draws the standard face, so the glyph box
+            // spans that face's ascender and descender rather than a generic em box.
+            (m.ascent, m.descent) = (ascent, descent);
         }
         m
     }
