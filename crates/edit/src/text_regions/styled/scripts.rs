@@ -11,6 +11,9 @@ const MAX_PROGRAM: usize = 16 << 20;
 /// The most glyphs [`drawn_words`] reads from a page in one font.
 const MAX_DRAWN_GLYPHS: usize = 1 << 16;
 
+/// The most ToUnicode text, in bytes, [`drawn_words`] reads for those glyphs.
+const MAX_DRAWN_TEXT: usize = 1 << 20;
+
 /// How an Arabic span of an edited paragraph is drawn ([`arabic_span`]).
 pub(super) enum ArabicSpan {
     /// Shaped by this resource's own program: a font of the source's face on the page.
@@ -61,14 +64,15 @@ pub(super) fn arabic_span(doc: &Document, page: usize, fonts: &Dict, source: &Te
 /// glyph whose text has a character outside Arabic's joining runs (a space), and wherever the pen
 /// may jump or the font change (`BT`, `ET`, `Tf`, `Td`, `TD`, `Tm`, `T*`, `'`, `"`, `q`, `Q`,
 /// `Do`), so a word is never joined to text drawn elsewhere. Forms the page draws aren't read.
-/// `None` when the content can't be read or shows more than [`MAX_DRAWN_GLYPHS`] in the font.
+/// `None` when the content can't be read or shows more than [`MAX_DRAWN_GLYPHS`] in the font, or
+/// their text exceeds [`MAX_DRAWN_TEXT`].
 fn drawn_words(doc: &Document, page: usize, resource: &str, font: &Dict) -> Option<Vec<Vec<(u32, String)>>> {
     let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
     let p = crate::text::page_dict(doc, page).ok()?;
     let mut budget = pdfcraft_cos::DecodeBudget::page();
     let ops = crate::text::joined(&crate::text::content_streams_within(doc, &p.dict, &mut budget).ok()?).parse().ops;
     let metrics = Metrics::from_dict(doc, font);
-    let (mut current, mut saved, mut glyphs) = (Vec::new(), Vec::new(), 0usize);
+    let (mut current, mut saved, mut glyphs, mut bytes) = (Vec::new(), Vec::new(), 0usize, 0usize);
     let (mut words, mut word) = (Vec::new(), Vec::new());
     for op in &ops {
         let name = op.op.as_slice();
@@ -103,6 +107,10 @@ fn drawn_words(doc: &Document, page: usize, resource: &str, font: &Dict) -> Opti
                     return None;
                 }
                 let text = metrics.text_of(code).unwrap_or_default();
+                bytes = bytes.saturating_add(text.len());
+                if bytes > MAX_DRAWN_TEXT {
+                    return None;
+                }
                 if text.chars().all(joins) {
                     word.push((code, text.into_owned()));
                 } else if !word.is_empty() {

@@ -1571,6 +1571,22 @@ fn kept_arabic_in_a_subset_mapping_codes_through_a_stream_falls_back_for_the_run
     falls_back_for_the_run(face, page, KEPT);
 }
 
+/// Page evidence counts only where the subset and the bundled face cluster a word alike: a
+/// cluster's form is otherwise not the bundled face's alone. A stand-in bundled face without its
+/// GSUB draws lam and alef apart where the subset draws lam-alef, so the page's words refuse.
+#[test]
+fn page_evidence_refuses_where_the_faces_cluster_differently() {
+    let Some(face) = arabic_face() else { return };
+    let shaped = pdfcraft_fonts::source_shaping::shape(face.bytes, ORIGINAL).unwrap();
+    let words: Vec<Vec<(u32, String)>> =
+        shaped.glyphs.split(|g| g.text == " ").map(|w| w.iter().map(|g| (g.id.to_u32(), g.text.clone())).collect()).collect();
+    assert_eq!(words.len(), 2);
+    let drawn_like_page = pdfcraft_fonts::source_shaping::drawn_like_page;
+    assert!(drawn_like_page(face.bytes, face.bytes, &words, KEPT), "the page's own words witness the kept text");
+    let plain = with_table(face.bytes, b"GSUB", EMPTY_GSUB.to_vec());
+    assert!(!drawn_like_page(face.bytes, &plain, &words, KEPT), "lam-alef is one cluster in the subset, 2 in the stand-in");
+}
+
 /// A bracket typed as a word of its own: in the row it is mirrored to the glyph the page shows,
 /// but the layout measures it alone, unmirrored, in a glyph the subset emptied. The whole run is
 /// drawn in the bundled face, not refused.

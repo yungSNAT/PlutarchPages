@@ -520,7 +520,8 @@ const MAX_PAGE_WORDS: usize = 1 << 16;
 /// the page shows, though each form is distinct, fails here, which [`joins_arabic`] can't see.
 /// Then each cluster of `text`'s runs must be one the page drew: the same characters, in the
 /// joining form `reference` gives them there, in the same glyphs. A form the page never shows
-/// fails, as do more than [`MAX_PAGE_WORDS`] bytes of words; either only costs the page's font.
+/// fails, as do a word or run the two faces cluster differently and more than [`MAX_PAGE_WORDS`]
+/// bytes of words; each only costs the page's font.
 pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, String)>], text: &str) -> bool {
     use std::collections::{HashMap, HashSet};
     let (Ok(own), Ok(reference)) = (FontRef::new(program), FontRef::new(reference)) else { return false };
@@ -551,18 +552,26 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
     let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
     let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
     // Each cluster of `run` as `program` draws it: its characters and the reference's glyphs for
-    // them there (the form), with the program's glyphs, sorted, in drawing order.
-    let clusters = |run: &str| -> Vec<((String, Vec<u32>), Vec<u32>)> {
+    // them there (the form), with the program's glyphs, sorted, in drawing order. `None` where the
+    // two faces cluster `run` differently, as a cluster's form is then not the reference's alone.
+    let clusters = |run: &str| -> Option<Vec<((String, Vec<u32>), Vec<u32>)>> {
         let ours = rtl_clusters(&own_shaper, run);
         let theirs = rtl_clusters(&reference_shaper, run);
-        let mut starts: Vec<usize> = ours.iter().map(|(s, _)| *s).collect();
-        starts.sort_unstable();
-        starts.dedup();
+        let starts_of = |glyphs: &[(usize, u32)]| {
+            let mut starts: Vec<usize> = glyphs.iter().map(|(s, _)| *s).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            starts
+        };
+        let starts = starts_of(&ours);
+        if starts != starts_of(&theirs) {
+            return None;
+        }
         let mut out: Vec<((String, Vec<u32>), Vec<u32>)> = Vec::new();
         let mut last = None;
         for &(start, glyph) in &ours {
             if last != Some(start) {
-                let end = starts.iter().copied().find(|&s| s > start).unwrap_or(run.len());
+                let end = starts.get(starts.partition_point(|&s| s <= start)).copied().unwrap_or(run.len());
                 out.push(((run.get(start..end).unwrap_or_default().to_owned(), cluster_at(&theirs, start)), Vec::new()));
                 last = Some(start);
             }
@@ -573,11 +582,11 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
         for (_, glyphs) in &mut out {
             glyphs.sort_unstable();
         }
-        out
+        Some(out)
     };
     let mut seen: HashMap<(String, Vec<u32>), HashSet<Vec<u32>>> = HashMap::new();
     for (word, glyphs) in &texts {
-        let ours = clusters(word);
+        let Some(ours) = clusters(word) else { return false };
         if ours.iter().map(|(_, g)| g.len()).sum::<usize>() != glyphs.len() {
             return false;
         }
@@ -595,7 +604,7 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
     }
     text.split(|c: char| !joins(c))
         .filter(|run| !run.is_empty())
-        .all(|run| clusters(run).into_iter().all(|(key, glyphs)| seen.get(&key).is_some_and(|drawn| drawn.contains(&glyphs))))
+        .all(|run| clusters(run).is_some_and(|c| c.into_iter().all(|(key, glyphs)| seen.get(&key).is_some_and(|drawn| drawn.contains(&glyphs)))))
 }
 
 /// Whether `own` draws `letter`'s isolated, initial, medial and final forms (set against tatweels,
