@@ -225,6 +225,15 @@ fn stage_models(root: &Path, stage: &Path) -> Result<PathBuf> {
     Ok(models)
 }
 
+fn copy_notice_line(line: &str, docs: &Path) -> Result {
+    let ofl = Path::new(line);
+    let family = ofl.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).ok_or("Missing family name")?;
+    if family.is_empty() || family.contains(['/', '\\']) || family == ".." || family == "." {
+        return Err(format!("Invalid font family directory `{family}`").into());
+    }
+    copy_file_checked(ofl, &docs.join(format!("OFL-{family}.txt")))
+}
+
 fn stage_font_notices(win_checks: Option<&PathBuf>, docs: &Path) -> Result<bool> {
     let Some(font_root) = non_empty_env("CRAFT_FONTS_DIR") else {
         return Ok(false);
@@ -244,12 +253,7 @@ fn stage_font_notices(win_checks: Option<&PathBuf>, docs: &Path) -> Result<bool>
         return Err(format!("win_checks font-notices failed ({}): {}", out.status, String::from_utf8_lossy(&out.stderr)).into());
     }
     for line in String::from_utf8(out.stdout)?.lines().map(str::trim).filter(|s| !s.is_empty()) {
-        let ofl = Path::new(line);
-        let family = ofl.parent().and_then(|p| p.file_name()).and_then(|s| s.to_str()).ok_or("Missing family name")?;
-        if family.is_empty() || family.contains(['/', '\\']) || family == ".." || family == "." {
-            return Err(format!("Invalid font family directory `{family}`").into());
-        }
-        copy_file_checked(ofl, &docs.join(format!("OFL-{family}.txt")))?;
+        copy_notice_line(line, docs)?;
     }
     Ok(true)
 }
