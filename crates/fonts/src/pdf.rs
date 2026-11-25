@@ -900,7 +900,7 @@ impl Metrics {
             explicit_default: false,
             std14: Some(crate::Std14::Helvetica),
             scale: 0.001,
-            // A font without a descriptor keeps this box. Redaction removes a glyph by how much of
+            // A font without a descriptor (a Type 3 font aside, measured from its glyphs) keeps this box. Redaction removes a glyph by how much of
             // it lies under a mark, so the box must hold the glyph's ink. A face's published
             // ascender and descender don't (Courier's bar, an accented capital), so the box can
             // shrink only to per-glyph ink boxes, which this crate doesn't carry.

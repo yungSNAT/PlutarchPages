@@ -1100,7 +1100,9 @@ fn std14_glyph_under_a_mark_goes(face: &str, size: f64, shown: &str, rect: [f64;
     ]);
     mark(&mut doc, 0, &[rect], "");
     let r = apply(&mut doc, None).unwrap();
-    assert_eq!(r.glyphs, 1, "{face} {size} pt ({shown}): the glyph under the mark goes: {}", content(&doc, 0));
+    let c = content(&doc, 0);
+    assert_eq!(r.glyphs, 1, "{face} {size} pt ({shown}): the glyph under the mark goes: {c}");
+    assert!(!c.contains(&format!("({shown})")), "{face} {size} pt: the page still shows ({shown}): {c}");
 }
 
 /// Courier's bar reaches above Courier's ascender: a mark from 0.6 em up covers it.
