@@ -4,18 +4,15 @@
 # Exports:
 #   ROOT                    workspace root
 #   VERSION                 [workspace.package] version from Cargo.toml (override: PDFCRAFT_VERSION)
-#   PDFCRAFT_BUILD_LABEL    optional label for a local or patched build (letters, digits, dots);
-#                           compiled into `--version` and About, and appended to the package release
+#   PDFCRAFT_BUILD_LABEL    optional label for a local or patched build (letters, digits, dots)
 #   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
-#   PDFCRAFT_BUILD_SHA    git commit, recorded in the macOS Info.plist (PdfCraftBuildCommit)
-#   PDFCRAFT_BUILD_DATE   UTC build date, YYYY-MM-DD
+#   PDFCRAFT_BUILD_SHA      git commit hash
+#   PDFCRAFT_BUILD_DATE     UTC build date, YYYY-MM-DD
 #   CARGO_TARGET_DIR        cargo's target dir (default: $ROOT/target)
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export ROOT
 
-# The version lives in exactly one place: `[workspace.package] version` in the root Cargo.toml.
-# (`cargo xtask version` prints the same thing; awk avoids compiling xtask here.)
 workspace_version() {
   awk '
     /^\[/ { in_pkg = ($0 == "[workspace.package]") ; next }
@@ -31,8 +28,6 @@ if [[ -z "$VERSION" ]]; then
 fi
 export VERSION
 
-# A labelled build says so in `--version` and About (pdfcraft_engine::build_info) and in its
-# package release (packaging/linux/nfpm.yaml), so it can't be mistaken for the release.
 if [[ -n "${PDFCRAFT_BUILD_LABEL:-}" ]]; then
   case "$PDFCRAFT_BUILD_LABEL" in
     *[!A-Za-z0-9.]* | .* | *.)
@@ -55,57 +50,28 @@ export PDFCRAFT_BUILD_SHA
 export PDFCRAFT_BUILD_DATE="${PDFCRAFT_BUILD_DATE:-$(date -u +%Y-%m-%d)}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
 
-# Emit a GitHub Actions warning (plain stderr outside Actions).
-warn() {
-  if [[ -n "${GITHUB_ACTIONS:-}" ]]; then echo "::warning::$*"; else echo "warning: $*" >&2; fi
-  return
-}
-
-# Copy licence and readme files that exist into a package directory.
-copy_docs() {
-  local dest="$1" f
-  for f in README.md LICENSE LICENSE-MIT LICENSE-APACHE COPYRIGHT NOTICE ATTRIBUTION.md; do
-    if [[ -f "$ROOT/$f" ]]; then cp "$ROOT/$f" "$dest/"; fi
-  done
-  if [[ -d "$ROOT/licenses" ]]; then cp -R "$ROOT/licenses" "$dest/"; fi
-  copy_font_licences "$dest"
-  return
-}
-
-# Builds made with the optional craft-fonts input (CRAFT_FONTS_DIR, set for every release) embed
-# its fonts, so the package carries their licences: fonts/<family>/OFL.txt -> OFL-<family>.txt.
-copy_font_licences() {
-  local dest="$1" f family
-  [[ -n "${CRAFT_FONTS_DIR:-}" ]] || return 0
-  for f in "$CRAFT_FONTS_DIR"/fonts/*/OFL.txt; do
-    [[ -f "$f" ]] || continue
-    family="$(basename "$(dirname "$f")")"
-    cp "$f" "$dest/OFL-$family.txt"
-  done
-}
-
-# Fetch the OCR models into a package directory (#103): `cargo xtask models DEST` downloads every
-# ATTRIBUTION.toml `kind = "model"` file, verified by SHA-256, with its licence text and an
-# ATTRIBUTION.txt crediting them. DEST must be where pdfcraft_ocr::Models::dirs_beside_exe looks
-# from the installed executable. Nothing here names a model file, so a model added to the manifest
-# later ships without changing the packaging.
-stage_models() {
-  local dest="$1"
-  mkdir -p "$dest"
-  dest="$(cd "$dest" && pwd)"
-  (cd "$ROOT" && cargo xtask models "$dest")
-  rm -f "$dest"/*.part
-  if ! ls "$dest"/*.LICENCE.txt >/dev/null 2>&1 || [[ ! -s "$dest/ATTRIBUTION.txt" ]]; then
-    echo "error: no OCR models in $dest after cargo xtask models" >&2
-    exit 1
+_PACKAGER_WORK=""
+_cleanup_packager() {
+  if [[ -n "${_PACKAGER_WORK:-}" ]]; then
+    rm -rf "$_PACKAGER_WORK"
   fi
-  echo "OCR models in $dest:"
-  ls -l "$dest"
 }
 
-# Portable SHA-256 of a file (prints just the hash).
-sha256() {
-  local file="$1"
-  if command -v sha256sum >/dev/null; then sha256sum "$file" | cut -d' ' -f1; else shasum -a 256 "$file" | cut -d' ' -f1; fi
-  return
+run_unix_packager() {
+  local subcmd="$1"
+  shift
+  command -v rustc >/dev/null || {
+    echo "error: rustc not found (install a stable Rust toolchain)" >&2
+    exit 1
+  }
+  _PACKAGER_WORK="$(umask 077 && mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/pdfcraft-packager.XXXXXXXX")"
+  trap _cleanup_packager EXIT
+  local bin="$_PACKAGER_WORK/unix_package"
+  rustc --edition=2024 -D warnings "$ROOT/packaging/unix_package.rs" -o "$bin"
+  local status=0
+  "$bin" --root "$ROOT" "$subcmd" ${1+"$@"} || status=$?
+  rm -rf "$_PACKAGER_WORK"
+  _PACKAGER_WORK=""
+  trap - EXIT
+  return "$status"
 }
