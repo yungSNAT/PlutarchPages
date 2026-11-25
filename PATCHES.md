@@ -214,7 +214,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - CodeQL: `.github/codeql/codeql-config.yml` excludes tests and `vendor/`.
 - Dependabot: `.github/dependabot.yml` doesn't list `/crates/filters/fuzz`. That crate is its own workspace and
   depends on `crates/filters`, which inherits from the root workspace. Dependabot fetches it without
-  the root, so the cargo job failed. Remove it again if a merge restores it.
+  the root, so the cargo job failed. Remove it again if a merge restores it. It also ignores minor
+  and major updates of `skrifa` and `harfrust`, which `pdfcraft-fonts` keeps on egui's versions so
+  both share one `read-fonts`: a grouped update that raised them alone failed to build (#211, #220).
 - Post-merge CI: `freebsd.yml` and `windows-arm64.yml` run on a push to `main` only when it changes
   their pull request paths, and each also runs weekly. Upstream runs both on every push, where
   FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
