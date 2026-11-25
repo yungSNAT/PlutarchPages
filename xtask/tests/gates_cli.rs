@@ -33,12 +33,12 @@ const UPWARD: &str = r#"{"packages": [
 ]}
 "#;
 
-/// A folder of its own under the temporary directory, removed when dropped.
+/// A folder of its own under Cargo's per-target scratch directory, removed when dropped.
 struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("xtask-gates-{}-{name}", std::process::id()));
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("xtask-gates-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("bin")).unwrap();
         let scratch = Scratch(dir);
