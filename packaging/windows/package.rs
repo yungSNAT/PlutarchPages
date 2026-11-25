@@ -18,7 +18,7 @@ use package_pe::verify_pe_file;
 use std::env;
 use std::error::Error;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,6 +33,7 @@ pub struct ArchSpec {
 
 struct Config {
     arch: String,
+    host_arch: String,
     skip_build: bool,
     built_without_craft_fonts: bool,
     script_dir: Option<PathBuf>,
@@ -91,16 +92,63 @@ pub fn arch_spec(arch: &str) -> Result<ArchSpec> {
     }
 }
 
+fn is_valid_version_token(raw: &str) -> bool {
+    !raw.is_empty()
+        && !raw.starts_with(['.', '-', '+'])
+        && !raw.ends_with(['.', '-', '+'])
+        && !raw.contains("..")
+        && raw.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+}
+
 pub fn resolve_version(cargo_toml: &str, env_ver: Option<&str>) -> Result<(String, String)> {
     let raw = match env_ver.map(str::trim).filter(|s| !s.is_empty()) {
         Some(v) => v.to_owned(),
         None => parse_workspace_version(cargo_toml)?,
     };
-    let msi = raw.split('-').next().unwrap_or(&raw).trim().to_owned();
-    if msi.is_empty() || !msi.bytes().all(|b| b.is_ascii_digit() || b == b'.') {
+    if !is_valid_version_token(&raw) {
+        return Err(format!("Invalid version string `{raw}`").into());
+    }
+    let msi = raw.split(['-', '+']).next().unwrap_or(&raw).trim().to_owned();
+    if msi.is_empty() || !msi.split('.').all(|seg| !seg.is_empty() && seg.bytes().all(|b| b.is_ascii_digit())) {
         return Err(format!("Invalid MSI version derived from `{raw}`").into());
     }
     Ok((raw, msi))
+}
+
+fn unquote_toml_str(raw: &str) -> Option<&str> {
+    let no_comment = raw.split('#').next()?.trim();
+    no_comment
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| no_comment.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+pub fn normalize_lexical(path: &Path) -> Result<PathBuf> {
+    let mut out = PathBuf::new();
+    let mut depth: usize = 0;
+    for comp in path.components() {
+        match comp {
+            Component::Prefix(_) | Component::RootDir => out.push(comp.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if depth == 0 {
+                    return Err(format!("Directory path escapes root with '..': {}", path.display()).into());
+                }
+                let _ = out.pop();
+                depth -= 1;
+            }
+            Component::Normal(seg) => {
+                out.push(seg);
+                depth += 1;
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        return Err(format!("Empty directory path from {}", path.display()).into());
+    }
+    Ok(out)
 }
 
 pub fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
@@ -119,9 +167,10 @@ pub fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
     path
 }
 
-pub fn resolve_dir_path(raw: PathBuf, cwd: &Path) -> PathBuf {
+pub fn resolve_dir_path(raw: PathBuf, cwd: &Path) -> Result<PathBuf> {
     let clean = strip_windows_verbatim(raw);
-    if clean.is_absolute() { clean } else { cwd.join(clean) }
+    let joined = if clean.is_absolute() { clean } else { cwd.join(clean) };
+    Ok(strip_windows_verbatim(normalize_lexical(&joined)?))
 }
 
 fn parse_workspace_version(cargo_toml: &str) -> Result<String> {
@@ -134,17 +183,15 @@ fn parse_workspace_version(cargo_toml: &str) -> Result<String> {
         if in_pkg
             && let Some((key, val)) = line.split_once('=')
             && key.trim() == "version"
+            && let Some(ver) = unquote_toml_str(val)
         {
-            let without_comment = val.split('#').next().unwrap_or(val);
-            let trimmed = without_comment.trim().trim_matches('"').trim();
-            if !trimmed.is_empty() {
-                return Ok(trimmed.to_owned());
-            }
+            return Ok(ver.to_owned());
         }
     }
     Err("Failed to resolve [workspace.package].version from Cargo.toml".into())
 }
 
+// Standalone rustc helper has no external crates (`chrono`), so convert Unix epoch seconds to UTC date in pure std.
 pub fn utc_date_from_unix_secs(secs: u64) -> Result<String> {
     let days_u = secs / 86_400;
     let days = i64::try_from(days_u).map_err(|_| "Unix timestamp overflow")?;
@@ -192,6 +239,7 @@ fn build_binaries(paths: &BuildPaths<'_>, spec: &ArchSpec) -> Result {
     cargo
         .args(["build", "--release", "--locked", "-p", "pdfcraft", "-p", "pdfcraft-cli", "--target", spec.target])
         .current_dir(paths.root)
+        .env("CARGO_TARGET_DIR", paths.target_dir)
         .env(spec.rustflags_env, "-C target-feature=+crt-static")
         .env("PDFCRAFT_REQUIRE_WINRES", "1")
         .env("PDFCRAFT_BUILD_SHA", &sha)
@@ -234,10 +282,10 @@ pub fn remove_part_entry(path: &Path) -> Result {
     Ok(())
 }
 
-fn stage_models(root: &Path, stage: &Path) -> Result<PathBuf> {
+fn stage_models(paths: &BuildPaths<'_>, stage: &Path) -> Result<PathBuf> {
     let models = ensure_real_subdir(stage, "models")?;
     let mut cmd = Command::new("cargo");
-    cmd.args(["xtask", "models"]).arg(&models).current_dir(root);
+    cmd.args(["xtask", "models"]).arg(&models).current_dir(paths.root).env("CARGO_TARGET_DIR", paths.target_dir);
     run_status(&mut cmd, "cargo xtask models")?;
     let mut has_licence = false;
     for entry in fs::read_dir(&models)? {
@@ -383,9 +431,14 @@ fn build_portable_zip(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>, stage: &Pa
     let zip = strip_windows_verbatim(paths.dist.join(format!("{name}.zip")));
     clear_existing_zip(&zip)?;
     let mut cmd = Command::new(meta.shell_bin);
-    cmd.args(["-NoProfile", "-NonInteractive", "-Command", "Compress-Archive -Path $env:CRAFT_ZIP_SRC -DestinationPath $env:CRAFT_ZIP_DST -Force"])
-        .env("CRAFT_ZIP_SRC", &p_stage)
-        .env("CRAFT_ZIP_DST", &zip);
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Compress-Archive -LiteralPath $env:CRAFT_ZIP_SRC -DestinationPath $env:CRAFT_ZIP_DST -Force",
+    ])
+    .env("CRAFT_ZIP_SRC", &p_stage)
+    .env("CRAFT_ZIP_DST", &zip);
     run_status(&mut cmd, "Compress-Archive")?;
     Ok(zip)
 }
@@ -404,16 +457,26 @@ struct Prepared {
 fn prepare_package(cfg: &Config) -> Result<Prepared> {
     validate_flags(cfg.skip_build, cfg.built_without_craft_fonts, non_empty_env("CRAFT_FONTS_DIR").is_some())?;
     let spec = arch_spec(&cfg.arch)?;
-    let cwd = strip_windows_verbatim(env::current_dir()?);
+    let cwd = strip_windows_verbatim(fs::canonicalize(env::current_dir()?)?);
     let raw_script_dir = cfg.script_dir.clone().unwrap_or_else(|| PathBuf::from("packaging").join("windows"));
     let script_dir = strip_windows_verbatim(fs::canonicalize(raw_script_dir)?);
     let root = strip_windows_verbatim(fs::canonicalize(script_dir.join("..").join(".."))?);
     let cargo_toml = fs::read_to_string(root.join("Cargo.toml"))?;
     let (version, msi_version) = resolve_version(&cargo_toml, non_empty_env("PDFCRAFT_VERSION").as_deref())?;
-    let dist = non_empty_env("DIST").map(|s| resolve_dir_path(PathBuf::from(s), &cwd)).unwrap_or_else(|| root.join("dist").join("release"));
-    let target_dir = non_empty_env("CARGO_TARGET_DIR").map(|s| resolve_dir_path(PathBuf::from(s), &cwd)).unwrap_or_else(|| root.join("target"));
+    let dist = match non_empty_env("DIST") {
+        Some(s) => resolve_dir_path(PathBuf::from(s), &cwd)?,
+        None => root.join("dist").join("release"),
+    };
+    let target_dir = match non_empty_env("CARGO_TARGET_DIR") {
+        Some(s) => resolve_dir_path(PathBuf::from(s), &cwd)?,
+        None => root.join("target"),
+    };
     let shell_bin = allowlisted_ps_bin(&cfg.shell)?;
     Ok(Prepared { spec, script_dir, root, target_dir, dist, version, msi_version, shell_bin })
+}
+
+fn can_run_on_host(arch: &str, host_arch: &str) -> bool {
+    arch != "arm64" || host_arch.eq_ignore_ascii_case("arm64") || host_arch.eq_ignore_ascii_case("aarch64")
 }
 
 fn run_package(cfg: &Config) -> Result {
@@ -424,12 +487,12 @@ fn run_package(cfg: &Config) -> Result {
         build_binaries(&paths, &p.spec)?;
     }
     let stage = stage_core_files(&paths, &meta)?;
-    let models = stage_models(paths.root, &stage)?;
+    let models = stage_models(&paths, &stage)?;
     let docs = ensure_real_subdir(&stage, "font-licences")?;
     let has_fonts = stage_font_notices(cfg.win_checks.as_ref(), &docs)?;
     let msi = build_and_check_msi(&paths, &meta, &stage, &models, &docs, has_fonts)?;
     let zip = build_portable_zip(&paths, &meta, &stage, &models, &docs, has_fonts)?;
-    if p.spec.arch != "arm64" || env::consts::ARCH == "aarch64" {
+    if can_run_on_host(p.spec.arch, &cfg.host_arch) {
         run_status(Command::new(stage.join("pdfcraft-cli.exe")).arg("--version"), "pdfcraft-cli.exe --version")?;
     }
     println!("Packaged {} ({} bytes) and {} ({} bytes)", msi.display(), fs::metadata(&msi)?.len(), zip.display(), fs::metadata(&zip)?.len());
@@ -439,6 +502,7 @@ fn run_package(cfg: &Config) -> Result {
 fn parse_args(args: &[String]) -> Result<Config> {
     let mut cfg = Config {
         arch: String::from("x64"),
+        host_arch: env::consts::ARCH.to_owned(),
         skip_build: false,
         built_without_craft_fonts: false,
         script_dir: None,
@@ -450,6 +514,10 @@ fn parse_args(args: &[String]) -> Result<Config> {
         match args[i].as_str() {
             "--arch" if i + 1 < args.len() => {
                 cfg.arch = args[i + 1].clone();
+                i += 2;
+            }
+            "--host-arch" if i + 1 < args.len() => {
+                cfg.host_arch = args[i + 1].clone();
                 i += 2;
             }
             "--skip-build" => {

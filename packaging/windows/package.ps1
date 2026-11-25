@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+# Dot-source Resolve-CraftPrivateCacheDir for isolated helper compilation.
 . (Join-Path $PSScriptRoot 'font-notices.ps1')
 
 function Resolve-CraftHelperBinary([string] $CacheDir, [string] $Entry, [string] $Filter, [string] $Stem) {
@@ -37,20 +38,29 @@ function Resolve-CraftHelperBinary([string] $CacheDir, [string] $Entry, [string]
 
 function Invoke-CraftPackage([string[]] $Arguments) {
   $cacheDir = Resolve-CraftPrivateCacheDir
-  $wc = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'win_checks.rs' -Filter 'win_checks*.rs' -Stem 'win_checks'
-  $pkg = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'package.rs' -Filter 'package*.rs' -Stem 'package'
-  if ((Get-FileHash -LiteralPath $wc.Path -Algorithm SHA256).Hash -ne $wc.Hash) {
-    throw 'Compiled win_checks binary integrity check failed'
-  }
-  if ((Get-FileHash -LiteralPath $pkg.Path -Algorithm SHA256).Hash -ne $pkg.Hash) {
-    throw 'Compiled package binary integrity check failed'
-  }
-  $fullArgs = @('--script-dir', $PSScriptRoot, '--shell', (Get-Process -Id $PID).Path, '--win-checks', $wc.Path) + $Arguments
-  & $pkg.Path @fullArgs
-  $code = $LASTEXITCODE
-  if ($code -ne 0) {
-    $global:LASTEXITCODE = 0
-    throw "package.rs failed with exit code $code"
+  try {
+    $pkg = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'package.rs' -Filter 'package*.rs' -Stem 'package'
+    if ((Get-FileHash -LiteralPath $pkg.Path -Algorithm SHA256).Hash -ne $pkg.Hash) {
+      throw 'Compiled package binary integrity check failed'
+    }
+    $hostArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString().ToLowerInvariant()
+    $fullArgs = @('--script-dir', $PSScriptRoot, '--shell', (Get-Process -Id $PID).Path, '--host-arch', $hostArch)
+    if (-not [string]::IsNullOrWhiteSpace($env:CRAFT_FONTS_DIR)) {
+      $wc = Resolve-CraftHelperBinary -CacheDir $cacheDir -Entry 'win_checks.rs' -Filter 'win_checks*.rs' -Stem 'win_checks'
+      if ((Get-FileHash -LiteralPath $wc.Path -Algorithm SHA256).Hash -ne $wc.Hash) {
+        throw 'Compiled win_checks binary integrity check failed'
+      }
+      $fullArgs += @('--win-checks', $wc.Path)
+    }
+    $fullArgs += $Arguments
+    & $pkg.Path @fullArgs
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+      $global:LASTEXITCODE = 0
+      throw "package.rs failed with exit code $code"
+    }
+  } finally {
+    Remove-Item -LiteralPath $cacheDir -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 

@@ -50,6 +50,7 @@ mod unit_tests {
         buf[0x3C..0x40].copy_from_slice(&0x80u32.to_le_bytes());
         buf[0x80..0x84].copy_from_slice(b"PE\0\0");
         buf[0x84..0x86].copy_from_slice(&machine.to_le_bytes());
+        buf[0x94..0x96].copy_from_slice(&0x00F0u16.to_le_bytes());
         buf[0x98..0x9A].copy_from_slice(&opt_magic.to_le_bytes());
         buf[0xDC..0xDE].copy_from_slice(&subsystem.to_le_bytes());
         buf
@@ -73,7 +74,10 @@ mod unit_tests {
         assert_eq!(resolve_version(toml, None)?, ("0.22.0-rc.1".into(), "0.22.0".into()));
         assert_eq!(resolve_version(toml, Some("1.4.2"))?, ("1.4.2".into(), "1.4.2".into()));
         assert!(resolve_version("[workspace.package]\nversion_foo = \"9.9.9\"\nedition = \"2024\"\n", None).is_err());
-        assert!(resolve_version(toml, Some("-invalid")).is_err());
+        assert!(resolve_version("[workspace.package]\nversion = 0.22.0\n", None).is_err());
+        for bad in ["-invalid", "..", "1..2", "0.1.0-../evil", r"0.1.0-..\evil", "1.0."] {
+            assert!(resolve_version(toml, Some(bad)).is_err(), "expected rejection for `{bad}`");
+        }
         Ok(())
     }
 
@@ -118,16 +122,30 @@ mod unit_tests {
     }
 
     #[test]
-    fn strip_verbatim_and_resolve_dir_paths() {
+    fn pe_header_rejects_dos_overlap_and_short_opt_header() {
+        let mut dos_overlap = make_pe(0x8664, 0x020B, 2);
+        dos_overlap[0x3C..0x40].copy_from_slice(&0x20u32.to_le_bytes());
+        dos_overlap[0x20..0x24].copy_from_slice(b"PE\0\0");
+        assert!(verify_pe_bytes(&dos_overlap, 0x8664, 2, "overlap").is_err());
+        let mut short_opt = make_pe(0x8664, 0x020B, 2);
+        short_opt[0x94..0x96].copy_from_slice(&0x0044u16.to_le_bytes());
+        assert!(verify_pe_bytes(&short_opt, 0x8664, 2, "short_opt").is_err());
+    }
+
+    #[test]
+    fn strip_verbatim_and_resolve_dir_paths() -> Result {
         assert_eq!(strip_windows_verbatim(PathBuf::from(r"\\?\C:\repo\pkg")), PathBuf::from(r"C:\repo\pkg"));
         assert_eq!(strip_windows_verbatim(PathBuf::from(r"\\?\UNC\server\share\pkg")), PathBuf::from(r"\\server\share\pkg"));
         let long_path = PathBuf::from(format!(r"\\?\C:\{}", "a".repeat(260)));
         assert_eq!(strip_windows_verbatim(long_path.clone()), long_path);
-        assert_eq!(resolve_dir_path(PathBuf::from("dist/out"), Path::new("repo")), PathBuf::from("repo").join("dist/out"));
+        assert_eq!(resolve_dir_path(PathBuf::from("dist/out"), Path::new("repo"))?, PathBuf::from("repo").join("dist/out"));
+        assert_eq!(resolve_dir_path(PathBuf::from("../dist"), Path::new("work/repo"))?, PathBuf::from("work").join("dist"));
+        assert!(resolve_dir_path(PathBuf::from("../../escape"), Path::new("repo")).is_err());
         #[cfg(windows)]
-        assert_eq!(resolve_dir_path(PathBuf::from(r"\\?\D:\abs\dir"), Path::new("repo")), PathBuf::from(r"D:\abs\dir"));
+        assert_eq!(resolve_dir_path(PathBuf::from(r"\\?\D:\abs\dir"), Path::new("repo"))?, PathBuf::from(r"D:\abs\dir"));
         #[cfg(unix)]
-        assert_eq!(resolve_dir_path(PathBuf::from("/abs/dir"), Path::new("repo")), PathBuf::from("/abs/dir"));
+        assert_eq!(resolve_dir_path(PathBuf::from("/abs/dir"), Path::new("repo"))?, PathBuf::from("/abs/dir"));
+        Ok(())
     }
 
     #[test]
@@ -140,6 +158,8 @@ mod unit_tests {
             "package".into(),
             "--arch".into(),
             "arm64".into(),
+            "--host-arch".into(),
+            "arm64".into(),
             "--skip-build".into(),
             "--built-without-craft-fonts".into(),
             "--shell".into(),
@@ -150,6 +170,7 @@ mod unit_tests {
             "wc.exe".into(),
         ])?;
         assert_eq!(full.arch, "arm64");
+        assert_eq!(full.host_arch, "arm64");
         assert!(full.skip_build && full.built_without_craft_fonts);
         assert_eq!(full.script_dir, Some(PathBuf::from("scripts")));
         assert_eq!(full.win_checks, Some(PathBuf::from("wc.exe")));
@@ -174,6 +195,7 @@ mod unit_tests {
         assert!(copy_file_checked(&tmp.0.join("missing.txt"), &dst).is_err());
         assert!(ensure_real_dir_path(&dst).is_err());
         assert!(ensure_real_dir_path(&tmp.0.join("..").join("escape")).is_err());
+        assert!(reset_real_dir(&tmp.0.join("nested").join("..")).is_err());
         Ok(())
     }
 

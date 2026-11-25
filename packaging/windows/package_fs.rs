@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Filesystem staging, symlink checks, and subprocess helpers for `package.rs`.
+//!
+//! Assumes packaging runs under a build-owner-controlled workspace (`target/` and `dist/` are not shared
+//! untrusted temporary directories), reducing TOCTOU exposure between symlink checks and file operations.
 
 use super::Result;
 use std::fs;
@@ -42,7 +45,18 @@ pub fn ensure_real_dir_path(path: &Path) -> Result {
     Ok(())
 }
 
+fn reject_parent_or_empty(path: &Path) -> Result {
+    if path.as_os_str().is_empty() {
+        return Err("Empty directory path".into());
+    }
+    if path.components().any(|c| matches!(c, Component::ParentDir)) {
+        return Err(format!("Refusing '..' segment in directory path: {}", path.display()).into());
+    }
+    Ok(())
+}
+
 pub fn reset_real_dir(path: &Path) -> Result {
+    reject_parent_or_empty(path)?;
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         ensure_real_dir_path(parent)?;
     }
@@ -102,6 +116,8 @@ pub fn copy_dir_no_symlinks(src: &Path, dst: &Path) -> Result {
             copy_dir_no_symlinks(&entry.path(), &target)?;
         } else if ft.is_file() {
             copy_file_checked(&entry.path(), &target)?;
+        } else {
+            return Err(format!("Unsupported filesystem entry refused during copy: {}", entry.path().display()).into());
         }
     }
     Ok(())

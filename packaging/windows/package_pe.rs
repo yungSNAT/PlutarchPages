@@ -20,20 +20,32 @@ fn read_u32_le(bytes: &[u8], off: usize, field: &str) -> Result<u32> {
     Ok(u32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
-/// Verifies DOS signature, PE header signature, `Machine`, optional-header magic, and `Subsystem`.
+/// Verifies DOS signature, PE header offset and signature, `Machine`, COFF optional-header size/magic, and `Subsystem`.
 pub fn verify_pe_bytes(bytes: &[u8], expected_machine: u16, expected_subsystem: u16, label: &str) -> Result {
     if bytes.get(0..2) != Some(b"MZ") {
         return Err(format!("{label}: missing MZ DOS header").into());
     }
     let e_lfanew = usize::try_from(read_u32_le(bytes, 0x3C, "e_lfanew")?).map_err(|_| format!("{label}: e_lfanew exceeds usize"))?;
+    if e_lfanew < 0x40 {
+        return Err(format!("{label}: e_lfanew 0x{e_lfanew:x} overlaps DOS header").into());
+    }
     let pe_end = e_lfanew.checked_add(4).ok_or("PE signature offset overflow")?;
     if bytes.get(e_lfanew..pe_end) != Some(b"PE\0\0") {
         return Err(format!("{label}: missing PE signature at 0x{e_lfanew:x}").into());
     }
+    check_pe_coff_and_opt(bytes, e_lfanew, expected_machine, expected_subsystem, label)
+}
+
+fn check_pe_coff_and_opt(bytes: &[u8], e_lfanew: usize, expected_machine: u16, expected_subsystem: u16, label: &str) -> Result {
     let machine_off = e_lfanew.checked_add(4).ok_or("PE machine offset overflow")?;
     let machine = read_u16_le(bytes, machine_off, "Machine")?;
     if machine != expected_machine {
         return Err(format!("{label}: wrong PE Machine 0x{machine:04X}, expected 0x{expected_machine:04X}").into());
+    }
+    let opt_size_off = e_lfanew.checked_add(20).ok_or("PE SizeOfOptionalHeader overflow")?;
+    let opt_size = read_u16_le(bytes, opt_size_off, "SizeOfOptionalHeader")?;
+    if opt_size < 0x46 {
+        return Err(format!("{label}: PE SizeOfOptionalHeader {opt_size} too small for Subsystem").into());
     }
     let opt_off = e_lfanew.checked_add(24).ok_or("PE optional header overflow")?;
     let magic = read_u16_le(bytes, opt_off, "OptionalHeader.Magic")?;
