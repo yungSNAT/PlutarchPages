@@ -104,8 +104,8 @@ mv ~/.var/app/io.github.EquityBot.PlutarchPages ~/.var/app/io.github.yungSNAT.Pl
 
 ## Fork changes
 
-Changes in PlutarchPages, on top of upstream PdfCraft. The feature list follows PDF-XChange Pro's
-published components (names and descriptions only; nothing from its program code), implemented
+Changes in PlutarchPages, on top of upstream PdfCraft. The feature list follows a comparable commercial
+editor's published components (names and descriptions only; nothing from its program code), implemented
 from public specifications like the rest of PdfCraft.
 
 - **Name and brand.** The app is called PlutarchPages wherever it shows its name. Settings folders,
@@ -130,7 +130,7 @@ from public specifications like the rest of PdfCraft.
   `/Identity`, so a stream isn't saved in the clear in a file meant to be encrypted: the stream takes
   the document's filter, and a file whose `/Encrypt` dictionary can't say what protects it doesn't
   open.
-- **Create from CSV, Markdown and email** (PDF-XChange's CSV, Markdown and EML converters): open or
+- **Create from CSV, Markdown and email** (CSV, Markdown and EML converters): open or
   combine `.csv`/`.tsv` (a table with a repeated header row), `.md` and `.eml` files, or use
   `doc_create`. Email attachments are listed, and embedded only when asked. Text is set in the
   standard PDF fonts; characters they can't show are reported.
@@ -143,12 +143,12 @@ from public specifications like the rest of PdfCraft.
   and pages you trust.
 - **Read Out Loud** (View menu, `speech_start`): the current page or the rest of the document through
   Windows speech, macOS `say` or eSpeak NG, with the text sent only on standard input.
-- **Bookmarks** (PDF-XChange's Bookmarks plug-in): colour, bold and italic from the bookmark menu or
+- **Bookmarks** (a bookmarks plug-in): colour, bold and italic from the bookmark menu or
   `bookmark_set_style`, and the bookmark for the current page is shaded in the panel.
 - **PDF Optimizer**: discard form submit, import and reset actions, discard external
   cross-references, and remove PDF/A and PDF/X identification.
-- **Convert colours to grayscale** (PDF-XChange's Color Converter; Edit menu, `doc_convert_gray`).
-- **Export to Excel** (PDF-XChange's Convert to MS Office; File menu, `doc_export_office` with an
+- **Convert colours to grayscale** (a colour converter; Edit menu, `doc_convert_gray`).
+- **Export to Excel** (convert to Office; File menu, `doc_export_office` with an
   `.xlsx` path): one worksheet per page, detected tables as rows and columns, plain numbers as numbers.
 - **Windows printing with Type 3 fonts** (upstream
   [#2684](https://github.com/storytold/pdfcraft/issues/2684), from
@@ -180,10 +180,10 @@ pictures), enhanced OCR clean-up, an AI assistant and an Explorer 'Combine' menu
 
 PlutarchPages is alpha, like PdfCraft (see [What's next](#whats-next)). Another tool fits better when:
 
-- **You need to edit existing text today, or a wider toolset:** [Stirling-PDF](https://github.com/Stirling-Tools/Stirling-PDF) has a text editor and lists 60 or more tools (v3.3.0, [stirling.com/pricing](https://www.stirling.com/pricing), read 13 November 2026), as a desktop app, in the browser or on your own server. Its core is MIT; some of its directories are under a proprietary licence. PlutarchPages reads Latin-script scans ([Scan &amp; OCR](#scan-pages-then-read-the-words-back-before-trusting-them)) and converts Office files through an installed LibreOffice ([Fork changes](#fork-changes)), so those alone are no reason to switch.
-- **You only merge, split, rotate or extract pages:** [PDFsam Basic](https://github.com/torakiki/pdfsam) is a mature desktop app for exactly that (AGPL-3.0).
-- **You want one viewer for PDF, EPUB, DjVu and comic books:** [Okular](https://okular.kde.org/), KDE's document viewer, reads them all and annotates PDFs (GPL).
-- **You transform PDFs in scripts:** [qpdf](https://github.com/qpdf/qpdf) is a mature command line tool that encrypts, linearises, selects pages and repairs files without changing their content (Apache-2.0). `pdfcraft-cli` covers PlutarchPages's own engine.
+- **You need to edit existing text today, or a wider toolset:** an open source PDF toolkit with a text editor and 60 or more tools, as a desktop app, in the browser or on your own server, fits better. PlutarchPages reads Latin-script scans ([Scan &amp; OCR](#scan-pages-then-read-the-words-back-before-trusting-them)) and converts Office files through an installed LibreOffice ([Fork changes](#fork-changes)), so those alone are no reason to switch.
+- **You only merge, split, rotate or extract pages:** a mature desktop app made for exactly that fits better.
+- **You want one viewer for PDF, EPUB, DjVu and comic books:** a multi-format document viewer reads them all and annotates PDFs.
+- **You transform PDFs in scripts:** a mature command line tool encrypts, linearises, selects pages and repairs files without changing their content. `pdfcraft-cli` covers PlutarchPages's own engine.
 - **You want the upstream app:** [PdfCraft](https://github.com/storytold/pdfcraft), without this fork's [changes](#fork-changes). Both are MIT or Apache-2.0.
 
 ---
@@ -549,8 +549,6 @@ The banner's lettering and emblem are drawn from Cascadia Mono and Besley glyphs
 
 PdfCraft is dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
 Copyright (c) 2026 ArtCraft Team and the PdfCraft contributors. Required notices are in [NOTICE](NOTICE).
-
-<sub>Adobe, Photoshop, Illustrator, Premiere Pro, Lightroom, Acrobat, After Effects and InDesign are trademarks or registered trademarks of Adobe Inc. in the United States and/or other countries. PdfCraft is an independent, open-source project and is not affiliated with, sponsored by or endorsed by Adobe Inc.; these names are used only to describe the workflows it is compatible with.</sub>
 
 ---
 
