@@ -1014,7 +1014,7 @@ pub fn tools() -> Vec<ToolDef> {
         t("sign_list", "List and validate signatures", "Every signature field with its validation: status (valid, unknown = intact but the signer isn't trusted, invalid, unsigned), signer and certificate, date, reason, location, certification level, page and rect, whether PdfCraft draws that state into the signature's own appearance as displayed (verdict_shown; never written to the file), the revision it covers and changes made after signing (none, allowed, disallowed), with an explanation of each.")
             .ro()
             .with(schema(json!({ "doc": doc() }), &["doc"])),
-        t("sign_id_create", "Create a digital ID", "Create a self-signed digital ID and save it as a password-protected .p12 file (Create a new digital ID ▸ Save to file). Default key: 2048-bit RSA, valid 5 years.").with(schema(
+        t("sign_id_create", "Create a digital ID", "Create a self-signed digital ID and save it as a password-protected .p12 file. Default key: 2048-bit RSA, valid 5 years.").with(schema(
             json!({
                 "name": { "type": "string", "minLength": 1 },
                 "organization": { "type": "string" },
