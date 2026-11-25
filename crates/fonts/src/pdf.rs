@@ -1105,7 +1105,8 @@ impl Metrics {
                 let de = descent.unwrap_or(0.0) / 1000.0;
                 m.descent = if de < -0.05 { de.max(-0.6) } else { -0.25 };
             }
-        } else if !m.composite && subtype != b"Type3"
+        } else if !m.composite
+            && subtype != b"Type3"
             && let Some((face, crate::Std14Match::Alias)) = crate::Std14::recognise(&base_font_name(doc, font))
             && let Some((ascent, descent)) = std14_extent(face)
         {
