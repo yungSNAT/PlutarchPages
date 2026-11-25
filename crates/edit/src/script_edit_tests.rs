@@ -1228,6 +1228,261 @@ fn wide_advances_on_a_long_arabic_run_do_not_overflow_advance() {
     assert!(!joins_arabic(&with_table(&wide, b"GPOS", unplaced), face.bytes, &text));
 }
 
+/// The glyph ID emitted for character `c` when shaping `text` in `face`.
+fn shaped_glyph(face: &[u8], text: &str, c: char) -> usize {
+    let target = c.to_string();
+    pdfcraft_fonts::source_shaping::shape(face, text).unwrap().glyphs.iter().find(|g| g.text == target).unwrap().id.to_u32() as usize
+}
+
+/// The lookup list indices attached to the first feature record tagged `tag` in `gsub`.
+fn feature_lookups(gsub: &[u8], tag: &[u8; 4]) -> Vec<usize> {
+    let features = be16(gsub, 6);
+    for r_idx in 0..be16(gsub, features) {
+        let record = features + 2 + 6 * r_idx;
+        if &gsub[record..record + 4] == tag {
+            let feature = features + be16(gsub, record + 4);
+            return (0..be16(gsub, feature + 2)).map(|i| be16(gsub, feature + 4 + 2 * i)).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Rewrites `from` -> `to` inside `MultipleSubst` (`type 2`) sequences for `covered` in `tag`.
+fn rewrite_feature_sequence(gsub: &mut [u8], tag: &[u8; 4], covered: usize, from: usize, to: usize) -> usize {
+    let lookups = be16(gsub, 8);
+    let mut replaced = 0;
+    for index in feature_lookups(gsub, tag) {
+        let lookup = lookups + be16(gsub, lookups + 2 + 2 * index);
+        for i in 0..be16(gsub, lookup + 4) {
+            let mut at = lookup + be16(gsub, lookup + 6 + 2 * i);
+            let kind = if be16(gsub, lookup) == 7 {
+                let kind = be16(gsub, at + 2);
+                at += be32(gsub, at + 4);
+                kind
+            } else {
+                be16(gsub, lookup)
+            };
+            let Some(found) = (kind == 2).then(|| coverage_index(gsub, at + be16(gsub, at + 2), covered)).flatten() else { continue };
+            let sequence = at + be16(gsub, at + 6 + 2 * found);
+            for k in 0..be16(gsub, sequence) {
+                let g = sequence + 2 + 2 * k;
+                if be16(gsub, g) == from {
+                    gsub[g..g + 2].copy_from_slice(&u16::try_from(to).unwrap().to_be_bytes());
+                    replaced += 1;
+                }
+            }
+        }
+    }
+    replaced
+}
+
+/// Copies glyph `g`'s raw `glyf` bytes and 4-byte `hmtx` entry from `program` (long `loca`).
+fn glyph_data(program: &[u8], g: usize) -> (Vec<u8>, [u8; 4]) {
+    let (glyf, loca, hmtx) = (tables(program)[b"glyf"], tables(program)[b"loca"], tables(program)[b"hmtx"]);
+    assert!(g < be16(tables(program)[b"hhea"], 34));
+    let (start, end) = (be32(loca, 4 * g), be32(loca, 4 * (g + 1)));
+    let entry: [u8; 4] = hmtx[4 * g..4 * g + 4].try_into().unwrap();
+    (glyf[start..end].to_vec(), entry)
+}
+
+/// Returns `program` with each `(gid, glyf_bytes, hmtx4)` replaced and `loca`/`hmtx` rebuilt.
+fn with_glyphs(program: &[u8], edits: &[(usize, Vec<u8>, [u8; 4])]) -> Vec<u8> {
+    let (glyf, loca) = (tables(program)[b"glyf"], tables(program)[b"loca"]);
+    let mut hmtx = tables(program)[b"hmtx"].to_vec();
+    for &(g, _, entry) in edits {
+        assert!(g < be16(tables(program)[b"hhea"], 34));
+        hmtx[4 * g..4 * g + 4].copy_from_slice(&entry);
+    }
+    let at = |g: usize| be32(loca, 4 * g);
+    let (mut new_glyf, mut new_loca) = (Vec::new(), Vec::new());
+    for g in 0..be16(tables(program)[b"maxp"], 4) {
+        new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).unwrap().to_be_bytes());
+        if let Some((_, data, _)) = edits.iter().find(|(id, _, _)| *id == g) {
+            new_glyf.extend_from_slice(data);
+        } else {
+            new_glyf.extend_from_slice(&glyf[at(g)..at(g + 1)]);
+        }
+        new_glyf.resize(new_glyf.len().next_multiple_of(4), 0);
+    }
+    new_loca.extend_from_slice(&u32::try_from(new_glyf.len()).unwrap().to_be_bytes());
+    with_table(&with_table(&with_table(program, b"glyf", new_glyf), b"loca", new_loca), b"hmtx", hmtx)
+}
+
+/// Every glyph of `face` kept and its variations dropped.
+fn flat_font(face: &[u8]) -> Vec<u8> {
+    let every: BTreeSet<usize> = (0..be16(tables(face)[b"maxp"], 4)).collect();
+    subset(face, &every, true)
+}
+
+/// The bundled face drawing initial `tah` in its isolated glyph (`joined` copies `tah`'s initial
+/// outline so ink reaches `x <= 0.0`; `!joined` keeps its non-joining isolated outline).
+fn tah_initial_as_isolated(face: &[u8], joined: bool) -> Vec<u8> {
+    let tah = usize::from(nominal(face, '\u{0637}'));
+    let initial = shaped_glyph(face, "\u{0637}\u{0640}", '\u{0637}');
+    assert_ne!(initial, tah, "the bundled face has an initial tah of its own");
+    let program = flat_font(face);
+    let mut gsub = tables(&program)[b"GSUB"].to_vec();
+    assert!(rewrite_feature_sequence(&mut gsub, b"init", tah, initial, tah) > 0, "the bundled face makes initial tah by multiple substitution");
+    let program = with_table(&program, b"GSUB", gsub);
+    if !joined {
+        return program;
+    }
+    let (data, hmtx) = glyph_data(&program, initial);
+    with_glyphs(&program, &[(tah, data, hmtx)])
+}
+
+/// A two-contour glyph whose contour 0 is a single move-only point at `x = 0` and whose only drawn
+/// contour starts at `x = 20`, with `lsb = 0` matching `xmin = 0`.
+fn move_only_at_zero_glyph(advance: u16) -> (Vec<u8>, [u8; 4]) {
+    let mut g = Vec::new();
+    for v in [2i16, 0, 0, 600, 500] {
+        g.extend_from_slice(&v.to_be_bytes());
+    }
+    for v in [0u16, 3, 0] {
+        g.extend_from_slice(&v.to_be_bytes());
+    }
+    g.extend_from_slice(&[1, 1, 1, 1]);
+    for dx in [0i16, 20, 580, -300] {
+        g.extend_from_slice(&dx.to_be_bytes());
+    }
+    for dy in [0i16, 0, 0, 500] {
+        g.extend_from_slice(&dy.to_be_bytes());
+    }
+    let mut hmtx = [0u8; 4];
+    hmtx[..2].copy_from_slice(&advance.to_be_bytes());
+    (g, hmtx)
+}
+
+/// The bundled face giving `zah` (`\u{0638}`) its own isolated/initial/medial/final skeleton whilst
+/// keeping bare `tah` (`\u{0637}`) completely untouched with distinct positional forms.
+fn zah_initial_as_isolated(face: &[u8], joined: bool) -> Vec<u8> {
+    let (tah, zah) = (usize::from(nominal(face, '\u{0637}')), usize::from(nominal(face, '\u{0638}')));
+    let (tah_init, tah_medi, tah_fina) = (
+        shaped_glyph(face, "\u{0637}\u{0640}", '\u{0637}'),
+        shaped_glyph(face, "\u{0640}\u{0637}\u{0640}", '\u{0637}'),
+        shaped_glyph(face, "\u{0640}\u{0637}", '\u{0637}'),
+    );
+    let (sad, sad_init, sad_medi, sad_fina) = (
+        usize::from(nominal(face, '\u{0635}')),
+        shaped_glyph(face, "\u{0635}\u{0640}", '\u{0635}'),
+        shaped_glyph(face, "\u{0640}\u{0635}\u{0640}", '\u{0635}'),
+        shaped_glyph(face, "\u{0640}\u{0635}", '\u{0635}'),
+    );
+    let program = flat_font(face);
+    let mut gsub = tables(&program)[b"GSUB"].to_vec();
+    assert!(rewrite_feature_sequence(&mut gsub, b"ccmp", zah, tah, sad) > 0, "ccmp decomposes zah onto tah");
+    assert!(rewrite_feature_sequence(&mut gsub, b"init", sad, sad_init, sad) > 0, "init maps the dedicated skeleton");
+    let program = with_table(&program, b"GSUB", gsub);
+    let (iso_src, iso_hmtx) = glyph_data(&program, if joined { tah_init } else { tah });
+    let (medi_src, medi_hmtx) = glyph_data(&program, tah_medi);
+    let (fina_src, fina_hmtx) = glyph_data(&program, tah_fina);
+    with_glyphs(&program, &[(sad, iso_src, iso_hmtx), (sad_medi, medi_src, medi_hmtx), (sad_fina, fina_src, fina_hmtx)])
+}
+
+/// Appends a contextual `liga` rule mapping `base` -> `target` immediately before `mark`, using `dlig`
+/// as the invoked single substitution so bare `base` keeps its joining glyph whilst `base + mark`
+/// shapes in `target` across both isolated and initial forms.
+fn add_marked_tah_rule(gsub: &mut Vec<u8>, base: usize, mark: usize, target: usize) {
+    let ll = be16(gsub, 8);
+    let (ctx_li, single_li) = (feature_lookups(gsub, b"liga")[0], feature_lookups(gsub, b"dlig")[0]);
+    assert_ne!(ctx_li, single_li);
+    let single_off = u16::try_from(gsub.len() - ll).unwrap();
+    for v in [1u16, 0, 1, 8, 2, 8, 1, u16::try_from(target).unwrap(), 1, 1, u16::try_from(base).unwrap()] {
+        gsub.extend_from_slice(&v.to_be_bytes());
+    }
+    let ctx_off = u16::try_from(gsub.len() - ll).unwrap();
+    for v in [
+        6u16,
+        0,
+        1,
+        8,
+        3,
+        0,
+        1,
+        18,
+        1,
+        24,
+        1,
+        0,
+        u16::try_from(single_li).unwrap(),
+        1,
+        1,
+        u16::try_from(base).unwrap(),
+        1,
+        1,
+        u16::try_from(mark).unwrap(),
+    ] {
+        gsub.extend_from_slice(&v.to_be_bytes());
+    }
+    gsub[ll + 2 + 2 * single_li..ll + 4 + 2 * single_li].copy_from_slice(&single_off.to_be_bytes());
+    gsub[ll + 2 + 2 * ctx_li..ll + 4 + 2 * ctx_li].copy_from_slice(&ctx_off.to_be_bytes());
+}
+
+/// Arial, Tahoma and Times New Roman draw initial tah and zah in the isolated glyph, whose ink
+/// reaches the next letter. Such a font keeps a span that starts a word with either, where the
+/// bundled face's distinct initial form refused it; one whose isolated glyph stops short of the
+/// join is still refused, as is the joining font where the bundled face's other forms differ.
+#[test]
+fn an_initial_tah_in_an_isolated_glyph_that_joins_keeps_the_font() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let (joined, gap) = (tah_initial_as_isolated(face.bytes, true), tah_initial_as_isolated(face.bytes, false));
+    for text in ["طلب", "ظلم", "بطل حظ", "ط"] {
+        assert!(joins_arabic(&joined, face.bytes, text), "{text}");
+    }
+    for text in ["طلب", "ظلم"] {
+        assert!(!joins_arabic(&gap, face.bytes, text), "{text}");
+    }
+    assert!(joins_arabic(&gap, face.bytes, "بطل حظ"), "no initial tah or zah");
+}
+
+/// A move-only point at `x = 0` cannot qualify an isolated initial tah whose drawn ink leaves a gap.
+#[test]
+fn move_only_contour_at_zero_does_not_count_as_a_joining_initial_tah() {
+    let Some(face) = arabic_face() else { return };
+    let gap = tah_initial_as_isolated(face.bytes, false);
+    let tah = usize::from(nominal(face.bytes, '\u{0637}'));
+    let adv = u16::try_from(be16(tables(&gap)[b"hmtx"], 4 * tah)).unwrap();
+    let (glyph, hmtx) = move_only_at_zero_glyph(adv);
+    let font = with_glyphs(&gap, &[(tah, glyph, hmtx)]);
+    assert!(!pdfcraft_fonts::source_shaping::joins_arabic(&font, face.bytes, "طلب"));
+}
+
+/// Shared-initial zah keeps initial and isolated runs when its outline reaches `x <= 0` and refuses
+/// initial runs when it leaves a gap, without touching tah.
+#[test]
+fn an_initial_zah_in_an_isolated_glyph_that_joins_keeps_the_font() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let (joined, gap) = (zah_initial_as_isolated(face.bytes, true), zah_initial_as_isolated(face.bytes, false));
+    for text in ["ظلم", "حظوظ", "ظ", "طلب"] {
+        assert!(joins_arabic(&joined, face.bytes, text), "{text}");
+    }
+    assert!(!joins_arabic(&gap, face.bytes, "ظلم"));
+    for text in ["حظ", "طلب"] {
+        assert!(joins_arabic(&gap, face.bytes, text), "{text}");
+    }
+}
+
+/// Marked initial tah checks the outline shaped with its marks, not the unmarked glyph alone.
+#[test]
+fn initial_tah_with_mark_checks_its_marked_outline() {
+    use pdfcraft_fonts::source_shaping::joins_arabic;
+    let Some(face) = arabic_face() else { return };
+    let joined = tah_initial_as_isolated(face.bytes, true);
+    assert!(joins_arabic(&joined, face.bytes, "ط\u{064e}ل"));
+
+    let tah = usize::from(nominal(face.bytes, '\u{0637}'));
+    let fatha = usize::from(nominal(face.bytes, '\u{064e}'));
+    let marked_slot = shaped_glyph(face.bytes, "\u{0637}\u{0640}", '\u{0637}');
+    let (gap_data, gap_hmtx) = glyph_data(&flat_font(face.bytes), tah);
+    let mut gsub = tables(&joined)[b"GSUB"].to_vec();
+    add_marked_tah_rule(&mut gsub, tah, fatha, marked_slot);
+    let marked_gap = with_glyphs(&with_table(&joined, b"GSUB", gsub), &[(marked_slot, gap_data, gap_hmtx)]);
+    assert!(joins_arabic(&marked_gap, face.bytes, "طلب"));
+    assert!(!joins_arabic(&marked_gap, face.bytes, "ط\u{064e}ل"));
+}
+
 /// A subset whose GSUB has no Arabic joining features. The whole run is drawn in the bundled face.
 #[test]
 fn kept_arabic_in_a_subset_without_joining_features_falls_back_for_the_run() {

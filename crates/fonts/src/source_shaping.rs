@@ -471,11 +471,15 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
     let own_map = own.charmap();
     let letters: std::collections::BTreeSet<char> = text.chars().filter(|c| letter(*c)).collect();
-    if !letters.iter().all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c)) {
+    if !letters
+        .iter()
+        .all(|&c| own_map.map(c).is_some() && tells_forms_apart(&own_shaper, &reference_shaper, c, matches!(c, '\u{0637}' | '\u{0638}')))
+    {
         return false;
     }
     let space = |face: &FontRef| face.charmap().map(' ').map(|g| g.to_u32());
     let (own_space, reference_space) = (space(&own), space(&reference));
+    let mut joined_isolated = std::collections::BTreeMap::new();
     run_marks.into_iter().all(|(run, marks)| {
         if !places_marks(&own_shaper, own_space, run)
             || !stacks_marks((&own_shaper, own_space), (&reference_shaper, reference_space), run)
@@ -491,22 +495,98 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
             let alone: String = std::iter::once(c).chain(marks).collect();
             let isolated = |shaper: &harfrust::Shaper| cluster_at(&rtl_clusters(shaper, &alone), 0);
             let (ours, theirs) = (cluster_at(&ours, at), cluster_at(&theirs, at));
-            drawn(&ours) && drawn(&theirs) && (theirs == isolated(&reference_shaper) || ours != isolated(&own_shaper))
+            drawn(&ours)
+                && drawn(&theirs)
+                && (theirs == isolated(&reference_shaper)
+                    || ours != isolated(&own_shaper)
+                    || (matches!(c, '\u{0637}' | '\u{0638}') && {
+                        let initial = |shaper: &harfrust::Shaper| cluster_at(&rtl_clusters(shaper, &format!("{alone}\u{0640}")), 0);
+                        theirs == initial(&reference_shaper)
+                            && ours == initial(&own_shaper)
+                            && *joined_isolated.entry(alone).or_insert_with_key(|s| initial_is_isolated(&own, &own_shaper, s))
+                    }))
         })
     })
 }
 
 /// Whether `own` draws `letter`'s isolated, initial, medial and final forms (set against tatweels,
 /// which join on both sides) as distinct glyphs wherever `reference` does, both drawing each form
-/// in glyphs of their own.
-fn tells_forms_apart(own: &harfrust::Shaper, reference: &harfrust::Shaper, letter: char) -> bool {
+/// in glyphs of their own. With `may_share_initial` (`ط` or `ظ`), `own`'s initial form may be its
+/// isolated one; any initial occurrence in text is still gated on [`initial_is_isolated`].
+fn tells_forms_apart(own: &harfrust::Shaper, reference: &harfrust::Shaper, letter: char, may_share_initial: bool) -> bool {
     let forms = |shaper: &harfrust::Shaper| {
         let (t, after) = ('\u{0640}', '\u{0640}'.len_utf8());
         [(format!("{letter}"), 0), (format!("{letter}{t}"), 0), (format!("{t}{letter}{t}"), after), (format!("{t}{letter}"), after)]
             .map(|(text, at)| cluster_at(&rtl_clusters(shaper, &text), at))
     };
     let (ours, theirs) = (forms(own), forms(reference));
-    ours.iter().chain(&theirs).all(|glyphs| drawn(glyphs)) && (0..4).all(|i| (0..i).all(|j| theirs[i] == theirs[j] || ours[i] != ours[j]))
+    ours.iter().chain(&theirs).all(|glyphs| drawn(glyphs))
+        && (0..4).all(|i| (0..i).all(|j| theirs[i] == theirs[j] || ours[i] != ours[j] || (may_share_initial && (j, i) == (0, 1))))
+}
+
+/// Whether `face` draws `alone`'s initial form (set before a tatweel) in its isolated glyphs, and
+/// the drawn outline of one of them with an advance reaches the left edge of `alone`'s isolated
+/// shaping, where the letter after it joins: Arial, Tahoma and Times New Roman draw tah and zah so.
+/// Only on-curve vertices of drawn segments count, excluding curve control points and move-only
+/// contours. An isolated glyph that stops short of that edge, as the bundled face's does, leaves a
+/// gap before the next letter and is refused.
+fn initial_is_isolated(face: &FontRef, shaper: &harfrust::Shaper, alone: &str) -> bool {
+    use skrifa::MetadataProvider as _;
+    use skrifa::instance::{LocationRef, Size};
+    use skrifa::outline::{DrawSettings, OutlinePen};
+    /// The least x of the on-curve endpoints across drawn segments.
+    struct Left {
+        pen: Option<f32>,
+        min: f32,
+    }
+    impl Left {
+        fn new() -> Self {
+            Self { pen: None, min: f32::INFINITY }
+        }
+        fn segment(&mut self, x: f32) {
+            self.min = self.min.min(x).min(self.pen.take().unwrap_or(f32::INFINITY));
+        }
+    }
+    impl OutlinePen for Left {
+        fn move_to(&mut self, x: f32, _: f32) {
+            self.pen = Some(x);
+        }
+        fn line_to(&mut self, x: f32, _: f32) {
+            self.segment(x);
+        }
+        fn quad_to(&mut self, _: f32, _: f32, x: f32, _: f32) {
+            self.segment(x);
+        }
+        fn curve_to(&mut self, _: f32, _: f32, _: f32, _: f32, x: f32, _: f32) {
+            self.segment(x);
+        }
+        fn close(&mut self) {
+            self.pen = None;
+        }
+    }
+    let isolated = rtl_shape(shaper, alone, &[]);
+    if cluster_at(&rtl_clusters(shaper, alone), 0) != cluster_at(&rtl_clusters(shaper, &format!("{alone}\u{0640}")), 0) {
+        return false;
+    }
+    let outlines = face.outline_glyphs();
+    let mut x = 0i64;
+    for (info, p) in isolated.glyph_infos().iter().zip(isolated.glyph_positions()) {
+        let (Some(at), Some(next)) = (x.checked_add(i64::from(p.x_offset)), x.checked_add(i64::from(p.x_advance))) else {
+            return false;
+        };
+        x = next;
+        let mut left = Left::new();
+        if p.x_advance > 0
+            && outlines
+                .get(GlyphId::new(info.glyph_id))
+                .is_some_and(|o| o.draw(DrawSettings::unhinted(Size::unscaled(), LocationRef::default()), &mut left).is_ok())
+            && left.min.is_finite()
+            && at as f64 + f64::from(left.min) <= 0.0
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether a cluster has glyphs and none of them is `.notdef`.
