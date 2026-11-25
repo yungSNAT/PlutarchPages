@@ -75,6 +75,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `pdfcraft-cli audit --before <original>` (and `--before-password`) audits the original as
   well and adds `leaks` and `before` to the JSON line and `leaks: N before -> M after` to stderr
   (`apps/pdfcraft-cli/src/check.rs`, `options.rs`); without `--before` the output is upstream's.
+- Search & Redact has 2 more patterns, `tfn` (Australian tax file numbers) and `abn` (Australian
+  Business Numbers), matched by format alone, in `crates/redact/src/patterns.rs`; tests in
+  `crates/redact/src/patterns/tests/fork_tests.rs`. Keep both variants when a merge changes `Pattern`.
 - Remove Hidden Information follows owners, outlines, name trees, optional content `/Order`
   arrays and nested inline streams iteratively, as deep as a parsed file nests, so it and a save
   after Apply Redactions work on a 1 MiB thread stack (a Windows main thread's). An outline nested
@@ -104,7 +107,7 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   accepts it and the vendored craft-pdf as local copies (`VENDORED` in `xtask/src/pdf_deps.rs`).
   `source_order_differs` marks reversed content order within a simple horizontal ASCII line.
   These are review signals. Accessible replacements and different writing orders can be intentional.
-- The PDF-XChange-style converters, speech, bookmark, optimiser, colour and Excel features.
+- The converters, speech, bookmark, optimiser, colour and Excel features.
 - `program_is_executable` in `crates/ocr/src/tesseract.rs` has no early `return false` before its
   `cfg(not(unix))` block, so Clippy's `needless_bool` (from Rust 1.100) passes on Windows. Upstream's
   copy, from #977, fails the Windows gate on it. Take upstream's version at the next merge only if
