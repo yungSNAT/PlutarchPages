@@ -72,6 +72,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `cargo xtask fork-check` fails when the revision `Cargo.toml` names isn't the vendored base. The
   detached fuzz workspaces of the facades repeat the patch, and the PRC fuzz target moved to
   `crates/prc-render/fuzz` when the PRC reader became craft-prc.
+- Search & Redact has 2 more patterns, `tfn` (Australian tax file numbers) and `abn` (Australian
+  Business Numbers), matched by format alone, in `crates/redact/src/patterns.rs`; tests in
+  `crates/redact/src/patterns/tests/fork_tests.rs`. Keep both variants when a merge changes `Pattern`.
 - Remove Hidden Information follows owners, outlines, name trees, optional content `/Order`
   arrays and nested inline streams iteratively, as deep as a parsed file nests, so it and a save
   after Apply Redactions work on a 1 MiB thread stack (a Windows main thread's). An outline nested

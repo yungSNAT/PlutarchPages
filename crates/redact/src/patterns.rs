@@ -1,5 +1,6 @@
-//! Search & Redact patterns (Acrobat's Find Text ▸ Patterns): phone numbers, email addresses,
-//! credit card numbers, US Social Security numbers, dates and IBANs. Each matcher works on a page's
+//! Search & Redact patterns (Find Text ▸ Patterns): phone numbers, email addresses, credit card
+//! numbers, US Social Security numbers, dates, IBANs, and Australian tax file numbers and business
+//! numbers. Each matcher works on a page's
 //! text as characters and returns character ranges; callers map them to glyphs and areas.
 
 use std::ops::Range;
@@ -12,9 +13,12 @@ pub enum Pattern {
     Ssn,
     Date,
     Iban,
+    Tfn,
+    Abn,
 }
 
-pub const PATTERNS: [Pattern; 6] = [Pattern::Phone, Pattern::Email, Pattern::CreditCard, Pattern::Ssn, Pattern::Date, Pattern::Iban];
+pub const PATTERNS: [Pattern; 8] =
+    [Pattern::Phone, Pattern::Email, Pattern::CreditCard, Pattern::Ssn, Pattern::Date, Pattern::Iban, Pattern::Tfn, Pattern::Abn];
 
 impl Pattern {
     pub fn label(self) -> &'static str {
@@ -25,6 +29,8 @@ impl Pattern {
             Pattern::Ssn => "Social Security Numbers",
             Pattern::Date => "Dates",
             Pattern::Iban => "IBAN Numbers",
+            Pattern::Tfn => "Tax File Numbers (Australia)",
+            Pattern::Abn => "Business Numbers (Australia)",
         }
     }
 
@@ -36,6 +42,8 @@ impl Pattern {
             Pattern::Ssn => "ssn",
             Pattern::Date => "date",
             Pattern::Iban => "iban",
+            Pattern::Tfn => "tfn",
+            Pattern::Abn => "abn",
         }
     }
 
@@ -404,6 +412,60 @@ fn date(s: &[char], i: usize) -> Option<usize> {
     Some(k2 + y - i)
 }
 
+/// What joins the digits of a longer number, whether or not the number matched takes it.
+const JOINERS: [char; 2] = [' ', '-'];
+
+/// Digits from `i` in groups of the given sizes, written together or with one separator from `seps`
+/// (the same one) between groups. Before it, no digit and no space or hyphen then a digit, so a
+/// match never starts inside a longer number (a phone or card number's last groups). After it, no
+/// digit and no hyphen then a digit; a space then a number may follow ("123 456 782 01/07/2025"),
+/// as redaction errs towards marking too much. Returns the length matched.
+fn grouped_digits(s: &[char], i: usize, groups: &[usize], seps: &[char]) -> Option<usize> {
+    if !digit(s.get(i))
+        || i.checked_sub(1).is_some_and(|p| digit(s.get(p)) || s.get(p).is_some_and(|c| JOINERS.contains(c)) && run_continues(s, p, -1, &JOINERS))
+    {
+        return None;
+    }
+    let total: usize = groups.iter().sum();
+    let whole = |end: usize| !digit(s.get(end)) && !(s.get(end) == Some(&'-') && run_continues(s, end, 1, &['-']));
+    // Written together.
+    if (i..i + total).all(|k| digit(s.get(k))) && whole(i + total) {
+        return Some(total);
+    }
+    // In groups, with one kind of separator.
+    let sep = *s.get(i + groups.first()?)?;
+    if !seps.contains(&sep) {
+        return None;
+    }
+    let mut k = i;
+    for (n, &g) in groups.iter().enumerate() {
+        if n > 0 {
+            if s.get(k) != Some(&sep) {
+                return None;
+            }
+            k += 1;
+        }
+        if !(k..k + g).all(|j| digit(s.get(j))) {
+            return None;
+        }
+        k += g;
+    }
+    whole(k).then_some(k - i)
+}
+
+/// An Australian tax file number: 9 digits, together or as 3 groups of 3 ("123 456 782",
+/// "123-456-782"). The format alone decides: the check-digit algorithm is not published openly,
+/// and a redaction errs towards marking too much.
+fn tfn(s: &[char], i: usize) -> Option<usize> {
+    grouped_digits(s, i, &[3, 3, 3], &[' ', '-'])
+}
+
+/// An Australian Business Number: 11 digits, together or grouped 2, 3, 3, 3 with spaces
+/// ("51 824 753 556"). The format alone decides, so a mistyped number is marked too.
+fn abn(s: &[char], i: usize) -> Option<usize> {
+    grouped_digits(s, i, &[2, 3, 3, 3], &[' '])
+}
+
 /// An IBAN (ISO 13616): a two-letter country code, two check digits and the rest
 /// of the country's exact length in letters and digits, either compact or in the
 /// printed groups of four. A space is accepted only after a full group, so an
@@ -580,6 +642,8 @@ pub fn find(pattern: Pattern, text: &[char]) -> Vec<Range<usize>> {
         Pattern::Ssn => ssn,
         Pattern::Date => date,
         Pattern::Iban => iban,
+        Pattern::Tfn => tfn,
+        Pattern::Abn => abn,
     };
     let mut out = Vec::new();
     let mut i = 0;
@@ -614,6 +678,7 @@ pub fn word_list(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod fork_tests;
 
     #[test]
     fn word_lists_are_trimmed_unique_and_bounded() {
