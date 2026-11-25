@@ -4,10 +4,10 @@
 //! Non-executable MSI policy fixture generation and WiX validation.
 
 use super::win_checks_json::{InstallPolicy, parse_install_policy};
-use super::{Result, join_rel, reject_symlink, strip_windows_verbatim};
+use super::{Result, join_rel, strip_windows_verbatim};
 use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::io::{ErrorKind, Write};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 fn ensure_real_dir(root: &Path, rel_slash: &str) -> Result<PathBuf> {
@@ -77,10 +77,7 @@ fn write_payload_fixtures(stage: &Path, payloads: &[String]) -> Result {
 fn write_stage_metadata(stage: &Path) -> Result {
     for folder in ["docs", "models", "notices"] {
         let dir = ensure_real_dir(stage, folder)?;
-        write_real_file(
-            &dir.join(format!("{folder}-fixture.txt")),
-            b"Metadata test fixture, not a user file or model.\r\n",
-        )?;
+        write_real_file(&dir.join(format!("{folder}-fixture.txt")), b"Metadata test fixture, not a user file or model.\r\n")?;
     }
     let models = stage.join("models");
     for model in ["metadata-one.rten", "metadata-two.rten"] {
@@ -115,14 +112,7 @@ fn add_wix_defines(cmd: &mut Command, root: &Path, stage: &Path, icon_rel: &str)
     }
 }
 
-fn build_and_check_policy_msi(
-    root: &Path,
-    script_dir: &Path,
-    stage: &Path,
-    arch: &str,
-    policy: &InstallPolicy,
-    shell: &str,
-) -> Result {
+fn build_and_check_policy_msi(root: &Path, script_dir: &Path, stage: &Path, arch: &str, policy: &InstallPolicy, shell: &str) -> Result {
     let msi = stage.join(format!("{}-NOT-INSTALLABLE.msi", policy.id));
     let mut cmd = Command::new("wix");
     cmd.arg("build");
@@ -159,12 +149,33 @@ fn build_and_check_policy_msi(
     Ok(())
 }
 
-fn run_install_policy_fixtures(
-    script_dir: &Path,
-    output_dir: &Path,
-    architectures: &[String],
-    shell: &str,
-) -> Result {
+pub(super) fn ensure_output_dir(output_dir: &Path) -> Result<PathBuf> {
+    let mut cur = PathBuf::new();
+    for comp in output_dir.components() {
+        match comp {
+            Component::Prefix(_) | Component::RootDir => cur.push(comp.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => return Err("Output directory must not contain '..' segments".into()),
+            Component::Normal(seg) => {
+                cur.push(seg);
+                match fs::symlink_metadata(&cur) {
+                    Ok(m) if m.file_type().is_symlink() || !m.is_dir() => {
+                        return Err(format!("Symlink or non-directory refused for output directory: {}", cur.display()).into());
+                    }
+                    Ok(_) => {}
+                    Err(e) if e.kind() == ErrorKind::NotFound => fs::create_dir(&cur)?,
+                    Err(e) => return Err(e.into()),
+                }
+            }
+        }
+    }
+    if cur.as_os_str().is_empty() {
+        return Err("Output directory path is empty".into());
+    }
+    Ok(strip_windows_verbatim(fs::canonicalize(&cur)?))
+}
+
+fn run_install_policy_fixtures(script_dir: &Path, output_dir: &Path, architectures: &[String], shell: &str) -> Result {
     for arch in architectures {
         if !matches!(arch.as_str(), "x64" | "x86" | "arm64") {
             return Err(format!("Unsupported architecture: {arch}").into());
@@ -172,9 +183,7 @@ fn run_install_policy_fixtures(
     }
     let root = strip_windows_verbatim(fs::canonicalize(script_dir.join("..").join(".."))?);
     let policy = parse_install_policy(&fs::read_to_string(script_dir.join("install-policy.json"))?)?;
-    fs::create_dir_all(output_dir)?;
-    let _ = reject_symlink(output_dir, "output directory")?;
-    let output = strip_windows_verbatim(fs::canonicalize(output_dir)?);
+    let output = ensure_output_dir(output_dir)?;
     for arch in architectures {
         let stage = ensure_real_dir(&output, arch)?;
         write_payload_fixtures(&stage, &policy.payloads)?;
@@ -189,10 +198,22 @@ pub fn run_install_policy_cmd(rest: &[String]) -> Result {
     let mut i = 0;
     while i < rest.len() {
         match rest[i].as_str() {
-            "--script-dir" if i + 1 < rest.len() => { script_dir = Some(PathBuf::from(&rest[i + 1])); i += 2; }
-            "--output-dir" if i + 1 < rest.len() => { output_dir = Some(PathBuf::from(&rest[i + 1])); i += 2; }
-            "--shell" if i + 1 < rest.len() => { shell = rest[i + 1].clone(); i += 2; }
-            "--arch" if i + 1 < rest.len() => { archs.push(rest[i + 1].clone()); i += 2; }
+            "--script-dir" if i + 1 < rest.len() => {
+                script_dir = Some(PathBuf::from(&rest[i + 1]));
+                i += 2;
+            }
+            "--output-dir" if i + 1 < rest.len() => {
+                output_dir = Some(PathBuf::from(&rest[i + 1]));
+                i += 2;
+            }
+            "--shell" if i + 1 < rest.len() => {
+                shell = rest[i + 1].clone();
+                i += 2;
+            }
+            "--arch" if i + 1 < rest.len() => {
+                archs.push(rest[i + 1].clone());
+                i += 2;
+            }
             other => return Err(format!("Unexpected option `{other}`").into()),
         }
     }

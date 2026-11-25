@@ -21,7 +21,7 @@ struct JsonCursor<'a> {
 
 impl<'a> JsonCursor<'a> {
     fn skip_ws(&mut self) {
-        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_whitespace() {
+        while self.pos < self.bytes.len() && matches!(self.bytes[self.pos], b' ' | b'\t' | b'\n' | b'\r') {
             self.pos += 1;
         }
     }
@@ -37,7 +37,11 @@ impl<'a> JsonCursor<'a> {
 
     fn read_u16_hex(&mut self) -> Result<u32> {
         let end = self.pos.checked_add(4).ok_or("JSON \\u offset overflow")?;
-        let hex = std::str::from_utf8(self.bytes.get(self.pos..end).ok_or("Truncated \\u escape")?)?;
+        let raw = self.bytes.get(self.pos..end).ok_or("Truncated \\u escape")?;
+        if !raw.iter().all(u8::is_ascii_hexdigit) {
+            return Err("Invalid \\u escape digits".into());
+        }
+        let hex = std::str::from_utf8(raw)?;
         self.pos = end;
         u32::from_str_radix(hex, 16).map_err(|e| format!("Invalid \\u escape: {e}").into())
     }
@@ -118,7 +122,10 @@ impl<'a> JsonCursor<'a> {
         }
     }
 
-    fn skip_container(&mut self, close: u8, keyed: bool) -> Result {
+    fn skip_container(&mut self, close: u8, keyed: bool, depth: usize) -> Result {
+        if depth >= 64 {
+            return Err("JSON nesting depth exceeds limit".into());
+        }
         self.pos += 1;
         self.skip_ws();
         if self.bytes.get(self.pos) == Some(&close) {
@@ -130,7 +137,7 @@ impl<'a> JsonCursor<'a> {
                 let _ = self.read_string()?;
                 self.expect_byte(b':')?;
             }
-            self.skip_value()?;
+            self.skip_value(depth + 1)?;
             self.skip_ws();
             match self.bytes.get(self.pos).copied() {
                 Some(b',') => self.pos += 1,
@@ -186,12 +193,12 @@ impl<'a> JsonCursor<'a> {
         Ok(())
     }
 
-    fn skip_value(&mut self) -> Result {
+    fn skip_value(&mut self, depth: usize) -> Result {
         self.skip_ws();
         match self.bytes.get(self.pos).copied() {
             Some(b'"') => self.read_string().map(|_| ()),
-            Some(b'[') => self.skip_container(b']', false),
-            Some(b'{') => self.skip_container(b'}', true),
+            Some(b'[') => self.skip_container(b']', false, depth),
+            Some(b'{') => self.skip_container(b'}', true, depth),
             Some(b't') => self.skip_literal(b"true"),
             Some(b'f') => self.skip_literal(b"false"),
             Some(b'n') => self.skip_literal(b"null"),
@@ -221,7 +228,7 @@ impl PolicyBuilder {
             "extensions" => self.extensions = Some(cur.read_string_array()?),
             "localization" => self.localization = Some(cur.read_string_array()?),
             "payloads" => self.payloads = Some(cur.read_string_array()?),
-            _ => cur.skip_value()?,
+            _ => cur.skip_value(1)?,
         }
         Ok(())
     }

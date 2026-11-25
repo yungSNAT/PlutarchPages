@@ -52,10 +52,7 @@ fn check_manifest_paths(fixture: &Path, core: &str, chinese: &str) -> Result {
     if collect_font_notices(fixture, true)?.len() != 2 {
         return Err("Expected both unique family notices".into());
     }
-    for (bad, msg) in [
-        ("fonts/core/OFL.txt", "another family cannot supply this notice"),
-        ("../OFL.txt", "notice path escapes font input"),
-    ] {
+    for (bad, msg) in [("fonts/core/OFL.txt", "another family cannot supply this notice"), ("../OFL.txt", "notice path escapes font input")] {
         fs::write(&zh, chinese.replace("fonts/chinese/OFL.txt", bad))?;
         assert_rejected(collect_font_notices(fixture, true), msg)?;
     }
@@ -91,14 +88,8 @@ pub fn run_font_notice_regressions(craft_fonts_root: Option<&Path>) -> Result {
     let chinese = "Chinese | Regular | fonts/chinese/face.ttf | Hans | OFL-1.1 | fonts/chinese/OFL.txt";
     check_manifest_paths(&fixture.0, core, chinese)?;
     check_manifest_missing(&fixture.0)?;
-    assert_notice_names(
-        &["OFL-core.txt".into(), "OFL-chinese.txt".into()],
-        &["SHORT.TXT|OFL-core.txt".into(), "OFL-chinese.txt".into()],
-    )?;
-    assert_rejected(
-        assert_notice_names(&["OFL-core.txt".into(), "OFL-chinese.txt".into()], &["OFL-core.txt".into()]),
-        "MSI lost one staged notice",
-    )?;
+    assert_notice_names(&["OFL-core.txt".into(), "OFL-chinese.txt".into()], &["SHORT.TXT|OFL-core.txt".into(), "OFL-chinese.txt".into()])?;
+    assert_rejected(assert_notice_names(&["OFL-core.txt".into(), "OFL-chinese.txt".into()], &["OFL-core.txt".into()]), "MSI lost one staged notice")?;
     if let Some(root) = craft_fonts_root {
         let actual = collect_font_notices(root, true)?;
         println!("Verified {} notices from the actual native manifests", actual.len());
@@ -136,11 +127,19 @@ mod unit_tests {
         let sample = r#"{"extra":true,"num":-0.5e+2,"nil":null,"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":["\u2026-\uD83D\uDE00"]}"#;
         let parsed = parse_install_policy(sample)?;
         assert_eq!(parsed.payloads, ["\u{2026}-\u{1F600}"]);
+        let deep = format!(
+            r#"{{"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[],"extra":{}{}}}"#,
+            "[".repeat(65),
+            "]".repeat(65)
+        );
         for bad in [
             r#"{"id":"\uD800","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
+            r#"{"id":"\u+041","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
             r#"{"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]} trailing"#,
             r#"{"id":"x","bad":tru,"icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
             r#"{"id":"x","bad":01,"icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
+            "\x0c{\"id\":\"x\",\"icon\":\"i\",\"sources\":[],\"extensions\":[],\"localization\":[],\"payloads\":[]}",
+            deep.as_str(),
         ] {
             assert!(parse_install_policy(bad).is_err(), "accepted bad JSON: {bad}");
         }
@@ -157,9 +156,7 @@ mod unit_tests {
     fn notice_names_and_verbatim_helper() -> Result {
         assert_notice_names(&["--dash.txt".into()], &["SHORT|--dash.txt".into()])?;
         assert!(assert_notice_names(&["OFL-missing.txt".into()], &[]).is_err());
-        let (exp, act) = parse_notice_names_args(&[
-            "--expected-count".into(), "1".into(), "--a.txt".into(), "--b.txt".into(), "--a.txt".into(),
-        ])?;
+        let (exp, act) = parse_notice_names_args(&["--expected-count".into(), "1".into(), "--a.txt".into(), "--b.txt".into(), "--a.txt".into()])?;
         assert_eq!(exp, ["--a.txt"]);
         assert_eq!(act, ["--b.txt", "--a.txt"]);
         assert_eq!(strip_windows_verbatim(PathBuf::from("\\\\?\\C:\\foo")), PathBuf::from("C:\\foo"));
@@ -178,11 +175,32 @@ mod unit_tests {
         let fam = root.0.join("fonts").join("core");
         fs::create_dir_all(&fam)?;
         std::os::unix::fs::symlink(outside.0.join("secret.txt"), fam.join("OFL.txt"))?;
-        fs::write(
-            root.0.join("fonts").join("manifest.txt"),
-            "Core | Regular | fonts/core/face.ttf | Latn | OFL-1.1 | fonts/core/OFL.txt\n",
-        )?;
+        fs::write(root.0.join("fonts").join("manifest.txt"), "Core | Regular | fonts/core/face.ttf | Latn | OFL-1.1 | fonts/core/OFL.txt\n")?;
         assert!(collect_font_notices(&root.0, false).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_output_dir_rejects_parent_dir_and_creates_real_dir() -> Result {
+        use super::super::win_checks_policy::ensure_output_dir;
+        use super::TempDir;
+        let root = TempDir::new("pdfcraft-out-clean")?;
+        let created = ensure_output_dir(&root.0.join("nested").join("dir"))?;
+        assert!(created.is_dir());
+        assert!(ensure_output_dir(&root.0.join("nested").join("..").join("esc")).is_err());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_output_dir_refuses_intermediate_symlink_without_creating_target() -> Result {
+        use super::super::win_checks_policy::ensure_output_dir;
+        use super::TempDir;
+        let outside = TempDir::new("pdfcraft-out-target")?;
+        let root = TempDir::new("pdfcraft-out-root")?;
+        std::os::unix::fs::symlink(&outside.0, root.0.join("sym"))?;
+        assert!(ensure_output_dir(&root.0.join("sym").join("child")).is_err());
+        assert!(!outside.0.join("child").exists());
         Ok(())
     }
 }

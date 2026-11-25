@@ -3,14 +3,15 @@ $script:CraftWinChecksExe = $null
 $script:CraftWinChecksSrcHash = $null
 $script:CraftWinChecksExeHash = $null
 
-function New-CraftPrivateCacheDir {
+function Resolve-CraftPrivateCacheDir {
   if ([IO.Path]::DirectorySeparatorChar -eq '/') {
-    $dir = (& mktemp -d "${env:TMPDIR:-/tmp}/pdfcraft-wc-XXXXXX").Trim()
-    if ($LASTEXITCODE -ne 0 -or -not $dir) {
+    $tmpRoot = if ($env:TMPDIR) { $env:TMPDIR.TrimEnd('/') } else { '/tmp' }
+    $raw = & mktemp -d "$tmpRoot/pdfcraft-wc-XXXXXX"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($raw)) {
       $global:LASTEXITCODE = 0
       throw 'Failed to create private temporary directory for win_checks'
     }
-    return $dir
+    return $raw.Trim()
   }
   $dir = Join-Path ([IO.Path]::GetTempPath()) ("pdfcraft-wc-$PID-" + [guid]::NewGuid())
   [void](New-Item -ItemType Directory -Path $dir)
@@ -31,7 +32,7 @@ function Invoke-CraftWinChecks([string[]] $Arguments) {
   $srcHash = ([BitConverter]::ToString($hashBytes) -replace '-', '').Substring(0, 16)
   $ext = if ([IO.Path]::DirectorySeparatorChar -eq '\') { '.exe' } else { '' }
   if (-not $script:CraftWinChecksExe -or $script:CraftWinChecksSrcHash -ne $srcHash -or -not (Test-Path -LiteralPath $script:CraftWinChecksExe -PathType Leaf)) {
-    if (-not $script:CraftWinChecksDir) { $script:CraftWinChecksDir = New-CraftPrivateCacheDir }
+    if (-not $script:CraftWinChecksDir) { $script:CraftWinChecksDir = Resolve-CraftPrivateCacheDir }
     $exe = Join-Path $script:CraftWinChecksDir "win_checks-$srcHash$ext"
     & rustc --edition=2024 -D warnings $src -o $exe
     if ($LASTEXITCODE -ne 0) {

@@ -10,10 +10,11 @@ Invoke-CraftWinChecks $cmdArgs
 # Smoke-test the PowerShell shim layer (FileInfo return shape + rejection propagation).
 $fixture = Join-Path ([IO.Path]::GetTempPath()) ('pdfcraft-ps-font-notices-' + [guid]::NewGuid())
 try {
-  $coreDir = Join-Path $fixture 'fonts\core'
+  $fontsDir = Join-Path $fixture 'fonts'
+  $coreDir = Join-Path $fontsDir 'core'
   New-Item -ItemType Directory -Path $coreDir -Force | Out-Null
   Set-Content -LiteralPath (Join-Path $coreDir 'OFL.txt') -Value 'Synthetic notice fixture'
-  Set-Content -LiteralPath (Join-Path $fixture 'fonts\manifest.txt') 'Core | Regular | fonts/core/face.ttf | Latn | OFL-1.1 | fonts/core/OFL.txt'
+  Set-Content -LiteralPath (Join-Path $fontsDir 'manifest.txt') 'Core | Regular | fonts/core/face.ttf | Latn | OFL-1.1 | fonts/core/OFL.txt'
 
   $notices = @(Get-CraftFontNotices $fixture $false)
   if ($notices.Count -ne 1 -or $notices[0] -isnot [IO.FileInfo] -or $notices[0].Directory.Name -ne 'core') {
