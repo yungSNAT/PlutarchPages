@@ -730,7 +730,7 @@ mod tests {
         let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
         doc.trailer.set("Root", catalog);
         doc.trailer.set("ID", vec![Object::string_literal("0123456789abcdef"), Object::string_literal("0123456789abcdef")]);
-        let owner = concat!("own", "er");
+        let owner = "owner";
         let version = EncryptionVersion::V1 { document: &doc, owner_password: owner, user_password: "", permissions: Permissions::PRINTABLE };
         let state = EncryptionState::try_from(version).unwrap();
         doc.encrypt(&state).unwrap();
@@ -779,8 +779,18 @@ mod tests {
         assert_eq!(logged("ours.log"), want);
         assert_eq!(logged("theirs.log"), want);
 
-        // Only the first file: nothing skipped for its permissions.
+        // Only the first file: nothing skipped for its permissions, and only it is run.
+        std::fs::remove_file(tmp.join("ours.log")).unwrap();
         super::text_scores(&corpus, &ours, || std::process::Command::new(&theirs), 1).unwrap();
+        assert_eq!(logged("ours.log"), format!("{}/a.pdf\n", corpus.display()));
+
+        // A corpus whose only file the oracle finds near-empty has nothing to compare.
+        let short_only = tmp.join("short-only");
+        std::fs::create_dir(&short_only).unwrap();
+        std::fs::write(short_only.join("short.pdf"), b"%PDF-1.7\n").unwrap();
+        let err = super::text_scores(&short_only, &ours, || std::process::Command::new(&theirs), usize::MAX).unwrap_err().to_string();
+        assert_eq!(err, "no comparable files");
+
         let err = super::text_scores(&corpus, &ours, || std::process::Command::new(&theirs), 0).unwrap_err().to_string();
         assert_eq!(err, "no comparable files");
         assert!(super::text_scores(&tmp.join("absent"), &ours, || std::process::Command::new(&theirs), 1).is_err());

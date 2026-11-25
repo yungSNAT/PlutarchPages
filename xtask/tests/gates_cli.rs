@@ -252,7 +252,9 @@ fn ci_runs_the_steps_in_order() {
 fn check_refuses_to_sweep_without_the_pinned_corpus() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     if root.join("corpus/pdfjs/test/pdfs").is_dir() {
-        return; // a fetched corpus is checked for real, which is not this test's business
+        // A fetched corpus is checked for real, which is not this test's business.
+        eprintln!("skipped: corpus/pdfjs is present, so `check` would verify it rather than refuse");
+        return;
     }
     let s = Scratch::new("check");
     let out = s.xtask(&["check"], &[]);
@@ -277,6 +279,8 @@ fn text_oracle_needs_pdftotext_and_the_cli() {
         let out = s.xtask(&["text-oracle"], &[]);
         assert_eq!(out.status.code(), Some(1));
         assert!(stderr(&out).contains("No such file or directory"), "{}", stderr(&out));
+    } else {
+        eprintln!("skipped the missing-corpus case: corpus/pdfjs is present");
     }
 }
 
