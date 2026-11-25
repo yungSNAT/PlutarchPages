@@ -416,8 +416,10 @@ fn date(s: &[char], i: usize) -> Option<usize> {
 const JOINERS: [char; 2] = [' ', '-'];
 
 /// Digits from `i` in groups of the given sizes, written together or with one separator from `seps`
-/// (the same one) between groups, as a whole number: no digit, and no space or hyphen then a digit,
-/// either side, whichever separators the number itself takes. Returns the length matched.
+/// (the same one) between groups. Before it, no digit and no space or hyphen then a digit, so a
+/// match never starts inside a longer number (a phone or card number's last groups). After it, no
+/// digit and no hyphen then a digit; a space then a number may follow ("123 456 782 01/07/2025"),
+/// as redaction errs towards marking too much. Returns the length matched.
 fn grouped_digits(s: &[char], i: usize, groups: &[usize], seps: &[char]) -> Option<usize> {
     if !digit(s.get(i))
         || i.checked_sub(1).is_some_and(|p| digit(s.get(p)) || s.get(p).is_some_and(|c| JOINERS.contains(c)) && run_continues(s, p, -1, &JOINERS))
@@ -425,7 +427,7 @@ fn grouped_digits(s: &[char], i: usize, groups: &[usize], seps: &[char]) -> Opti
         return None;
     }
     let total: usize = groups.iter().sum();
-    let whole = |end: usize| !digit(s.get(end)) && !(s.get(end).is_some_and(|c| JOINERS.contains(c)) && run_continues(s, end, 1, &JOINERS));
+    let whole = |end: usize| !digit(s.get(end)) && !(s.get(end) == Some(&'-') && run_continues(s, end, 1, &['-']));
     // Written together.
     if (i..i + total).all(|k| digit(s.get(k))) && whole(i + total) {
         return Some(total);
