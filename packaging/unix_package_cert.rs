@@ -16,18 +16,49 @@ const HELP: &str = "\
 CI only: import the Developer ID certificate into a temporary keychain so codesign can use it.
 Reads APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD, RUNNER_TEMP, TMPDIR, GITHUB_ENV.";
 
+pub(crate) struct SecretBytes(Vec<u8>);
+
+impl SecretBytes {
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl Drop for SecretBytes {
+    fn drop(&mut self) {
+        scrub_vec(&mut self.0);
+    }
+}
+
+pub(crate) struct SecretString(String);
+
+impl SecretString {
+    pub(crate) fn new(s: String) -> Self {
+        Self(s)
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for SecretString {
+    fn drop(&mut self) {
+        clear_string(&mut self.0);
+    }
+}
+
 pub(crate) struct SigningGuard {
     pub(crate) temp_dir: PathBuf,
     pub(crate) cert_path: PathBuf,
     pub(crate) keychain_path: PathBuf,
-    pub(crate) secret_pass: String,
+    pub(crate) secret_pass: SecretString,
     pub(crate) keep_keychain_on_success: bool,
 }
 
 impl Drop for SigningGuard {
     fn drop(&mut self) {
         scrub_and_remove_file(&self.cert_path);
-        clear_string(&mut self.secret_pass);
         if !self.keep_keychain_on_success {
             let _ = Command::new("security")
                 .arg("delete-keychain")
@@ -41,9 +72,14 @@ impl Drop for SigningGuard {
     }
 }
 
+#[cfg(test)]
+pub(crate) static TEST_SCRUB_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn scrub_vec(bytes: &mut Vec<u8>) {
     bytes.fill(0);
     let _ = std::hint::black_box(bytes.as_slice());
+    #[cfg(test)]
+    let _ = TEST_SCRUB_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn clear_string(s: &mut String) {
@@ -85,14 +121,19 @@ fn decode_base64_quad(chunk: &[u8; 4], is_last: bool, out: &mut Vec<u8>) -> AppR
     Ok(())
 }
 
-pub fn decode_base64(input: &str) -> AppResult<Vec<u8>> {
-    let clean: Vec<u8> = input.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    if !clean.len().is_multiple_of(4) {
+pub(crate) fn decode_base64(input: &str) -> AppResult<SecretBytes> {
+    let mut clean = SecretBytes(Vec::with_capacity(input.len()));
+    for b in input.bytes() {
+        if !b.is_ascii_whitespace() {
+            clean.0.push(b);
+        }
+    }
+    if !clean.0.len().is_multiple_of(4) {
         return Err(AppError::runtime("error: invalid base64 length in APPLE_CERTIFICATE"));
     }
-    let mut out = Vec::with_capacity((clean.len() / 4) * 3);
-    for (idx, chunk) in clean.as_chunks::<4>().0.iter().enumerate() {
-        decode_base64_quad(chunk, idx + 1 == clean.len() / 4, &mut out)?;
+    let mut out = SecretBytes(Vec::with_capacity((clean.0.len() / 4) * 3));
+    for (idx, chunk) in clean.0.as_chunks::<4>().0.iter().enumerate() {
+        decode_base64_quad(chunk, idx + 1 == clean.0.len() / 4, &mut out.0)?;
     }
     Ok(out)
 }
@@ -145,21 +186,22 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
     if !args.is_empty() {
         return Err(AppError::usage(format!("unknown argument: {}", args[0])));
     }
-    let Some(mut cert_b64) = non_empty_env("APPLE_CERTIFICATE") else {
+    let Some(raw_b64) = non_empty_env("APPLE_CERTIFICATE") else {
         env.warn("APPLE_CERTIFICATE is not set: macOS builds will be ad-hoc signed and not notarized");
         return Ok(());
     };
+    let cert_b64 = SecretString::new(raw_b64);
+    let cert_bytes = decode_base64(cert_b64.as_str())?;
+    drop(cert_b64);
 
-    let mut cert_bytes = decode_base64(&cert_b64)?;
-    clear_string(&mut cert_b64);
     let base = temp_base()?;
     let temp_dir = create_private_temp_dir(&base, "pdfcraft-signing.")?;
     let cert_path = temp_dir.join("pdfcraft-signing.p12");
     let keychain_path = temp_dir.join("pdfcraft-signing.keychain-db");
-    let kc_pass = match non_empty_env("KEYCHAIN_PASSWORD") {
+    let kc_pass = SecretString::new(match non_empty_env("KEYCHAIN_PASSWORD") {
         Some(p) => p,
         None => random_hex_24()?,
-    };
+    });
     let mut guard = SigningGuard {
         temp_dir,
         cert_path: cert_path.clone(),
@@ -168,11 +210,11 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
         keep_keychain_on_success: false,
     };
 
-    let write_res = write_private_file(&cert_path, &cert_bytes);
-    scrub_vec(&mut cert_bytes);
+    let write_res = write_private_file(&cert_path, cert_bytes.as_slice());
+    drop(cert_bytes);
     write_res?;
 
-    import_into_keychain(&cert_path, &keychain_path, &guard.secret_pass)?;
+    import_into_keychain(&cert_path, &keychain_path, guard.secret_pass.as_str())?;
     scrub_and_remove_file(&cert_path);
 
     let identity = resolve_identity(&keychain_path)?;
@@ -182,23 +224,22 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
     Ok(())
 }
 
-fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResult {
-    let mut cert_pass = env::var("APPLE_CERTIFICATE_PASSWORD").unwrap_or_default();
+pub(crate) fn import_with_cert_pass(cert: &Path, keychain: &Path, kc_pass: &str, cert_pass_raw: String) -> AppResult {
+    let cert_pass = SecretString::new(cert_pass_raw);
     run_status(Command::new("security").arg("create-keychain").arg("-p").arg(kc_pass).arg(keychain), "security create-keychain")?;
     run_status(Command::new("security").args(["set-keychain-settings", "-lut", "21600"]).arg(keychain), "security set-keychain-settings")?;
     run_status(Command::new("security").arg("unlock-keychain").arg("-p").arg(kc_pass).arg(keychain), "security unlock-keychain")?;
-    let imp_res = run_status(
+    run_status(
         Command::new("security")
             .arg("import")
             .arg(cert)
             .arg("-P")
-            .arg(&cert_pass)
+            .arg(cert_pass.as_str())
             .args(["-T", "/usr/bin/codesign", "-T", "/usr/bin/security", "-t", "cert", "-f", "pkcs12", "-k"])
             .arg(keychain),
         "security import",
-    );
-    clear_string(&mut cert_pass);
-    imp_res?;
+    )?;
+    drop(cert_pass);
     let _ = run_capture(
         Command::new("security").args(["set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k"]).arg(kc_pass).arg(keychain),
         "security set-key-partition-list",
@@ -212,6 +253,10 @@ fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResul
         set_list.arg(kc);
     }
     run_status(&mut set_list, "security list-keychains -s")
+}
+
+fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResult {
+    import_with_cert_pass(cert, keychain, kc_pass, env::var("APPLE_CERTIFICATE_PASSWORD").unwrap_or_default())
 }
 
 fn resolve_identity(keychain: &Path) -> AppResult<String> {

@@ -6,7 +6,7 @@
 use super::unix_package_env::{EnvCtx, non_empty_env, render_template, verify_sha256};
 use super::unix_package_fs::{
     command_exists, copy_dir_no_symlinks, copy_file_checked, create_symlink_unix, ensure_real_dir_path, install_file_mode, reject_symlink,
-    reset_real_dir, run_capture, run_staged_binary, run_status, set_unix_mode, strip_best_effort,
+    remove_checked_file, reset_real_dir, run_capture, run_staged_binary, run_status, set_unix_mode, strip_best_effort,
 };
 use super::{AppError, AppResult};
 use std::fs;
@@ -293,10 +293,7 @@ fn package_appimage(env: &EnvCtx, spec: &LinuxArchSpec, work: &Path, stage: &Pat
     let abs_dist = fs::canonicalize(&env.dist)?;
     let out = abs_dist.join(format!("{basename}.AppImage"));
     let zsync = abs_dist.join(format!("{basename}.AppImage.zsync"));
-    if zsync.exists() {
-        reject_symlink(&zsync, "zsync output")?;
-        fs::remove_file(&zsync)?;
-    }
+    remove_checked_file(&zsync, "zsync output")?;
     let repo = non_empty_env("GITHUB_REPOSITORY").unwrap_or_else(|| String::from("yungSNAT/PlutarchPages"));
     let (owner, name) = repo.split_once('/').unwrap_or((&repo, ""));
     let update_info = format!("gh-releases-zsync|{owner}|{name}|latest|pdfcraft-*-linux-{}.AppImage.zsync", spec.arch);

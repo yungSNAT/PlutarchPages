@@ -4,7 +4,9 @@
 //! macOS app bundle, DMG, codesign & notarization packager (`packaging/macos/package.sh`).
 
 use super::unix_package_env::{EnvCtx, non_empty_env, render_template};
-use super::unix_package_fs::{copy_file_checked, create_symlink_unix, ensure_real_dir_path, reset_real_dir, run_staged_binary, run_status};
+use super::unix_package_fs::{
+    copy_file_checked, create_symlink_unix, ensure_real_dir_path, remove_checked_file, reset_real_dir, run_staged_binary, run_status,
+};
 use super::{AppError, AppResult};
 use std::fs;
 use std::path::Path;
@@ -300,9 +302,7 @@ fn build_and_sign_dmg(env: &EnvCtx, sign_ctx: &SignCtx, work: &Path, app: &Path,
     create_symlink_unix("/Applications", &stage.join("Applications"))?;
     copy_file_checked(&here.join("dmg/background.tiff"), &stage.join(".background/background.tiff"))?;
     copy_file_checked(&here.join("dmg/dmg-layout.DS_Store"), &stage.join(".DS_Store"))?;
-    if dmg.exists() {
-        fs::remove_file(dmg)?;
-    }
+    remove_checked_file(dmg, "dmg output")?;
 
     hdiutil_retry(env, "create", || {
         let mut c = Command::new("hdiutil");
@@ -359,9 +359,7 @@ fn build_cli_zip(env: &EnvCtx, sign_ctx: &SignCtx, work: &Path, cli_zip: &Path, 
     env.copy_docs(&cli_dir)?;
     sign_ctx.sign(&["--options", "runtime"], &cli_bin)?;
     run_status(Command::new("codesign").args(["--verify", "--strict", "--verbose=2"]).arg(&cli_bin), "codesign verify cli")?;
-    if cli_zip.exists() {
-        fs::remove_file(cli_zip)?;
-    }
+    remove_checked_file(cli_zip, "cli zip output")?;
     run_status(Command::new("ditto").args(["-c", "-k", "--keepParent"]).arg(&cli_dir).arg(cli_zip), "ditto cli zip")?;
     sign_ctx.notarize(cli_zip)?;
     Ok(())

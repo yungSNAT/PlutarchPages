@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 //! Symlink-refusing filesystem, private temp dir, and subprocess helpers.
+//!
+//! Assumes packaging runs under a build-owner-controlled workspace (`target/` and `dist/` are not shared
+//! untrusted temporary directories), bounding TOCTOU exposure between symlink checks and file operations;
+//! `find_existing_ancestor` canonicalises the deepest existing ancestor (accommodating macOS `/var` and
+//! `/tmp` symlinks or symlinked workspace mounts) while refusing leaf or newly created symlinks.
 
 use super::{AppError, AppResult};
 use std::ffi::OsString;
@@ -113,6 +118,14 @@ pub fn copy_file_checked(src: &Path, dst: &Path) -> AppResult {
 pub fn install_file_mode(src: &Path, dst: &Path, mode: u32) -> AppResult {
     copy_file_checked(src, dst)?;
     set_unix_mode(dst, mode)?;
+    Ok(())
+}
+
+pub fn remove_checked_file(path: &Path, label: &str) -> AppResult {
+    if fs::symlink_metadata(path).is_ok() {
+        reject_symlink(path, label)?;
+        fs::remove_file(path)?;
+    }
     Ok(())
 }
 

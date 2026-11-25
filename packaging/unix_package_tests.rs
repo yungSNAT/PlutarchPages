@@ -3,7 +3,9 @@
 
 //! Unit and integration tests for `unix_package.rs`.
 
-use crate::unix_package_cert::{SigningGuard, decode_base64, emit_outputs_to, parse_dev_id_identity};
+use crate::unix_package_cert::{
+    SecretBytes, SecretString, SigningGuard, TEST_SCRUB_CALLS, decode_base64, emit_outputs_to, import_with_cert_pass, parse_dev_id_identity,
+};
 use crate::unix_package_env::{EnvCtx, render_template, sha256_file, sha256_hex, utc_date_from_unix_secs, validate_build_label, workspace_version};
 use crate::unix_package_flatpak::{normalize_flatpak_arch, parse_flatpak_args};
 use crate::unix_package_freebsd::{is_freebsd_elf_description, resolve_target_and_arch};
@@ -48,12 +50,16 @@ fn sha256_matches_nist_and_boundary_vectors() {
 
 #[test]
 fn base64_decodes_and_rejects_malformed() {
-    assert_eq!(decode_base64("TWFu").ok(), Some(b"Man".to_vec()));
-    assert_eq!(decode_base64("T WE=\n").ok(), Some(b"Ma".to_vec()));
-    assert_eq!(decode_base64("TQ==").ok(), Some(b"M".to_vec()));
+    use std::sync::atomic::Ordering;
+    assert_eq!(decode_base64("TWFu").ok().as_ref().map(SecretBytes::as_slice), Some(b"Man".as_slice()));
+    assert_eq!(decode_base64("T WE=\n").ok().as_ref().map(SecretBytes::as_slice), Some(b"Ma".as_slice()));
+    assert_eq!(decode_base64("TQ==").ok().as_ref().map(SecretBytes::as_slice), Some(b"M".as_slice()));
+    let before = TEST_SCRUB_CALLS.load(Ordering::Relaxed);
     assert!(decode_base64("abc").is_err());
     assert!(decode_base64("TW=a").is_err());
     assert!(decode_base64("T!Fu").is_err());
+    let after = TEST_SCRUB_CALLS.load(Ordering::Relaxed);
+    assert!(after >= before + 5, "expected intermediate decode buffers scrubbed on error ({before} -> {after})");
 }
 
 #[test]
@@ -183,6 +189,7 @@ fn unix_permissions_and_symlink_guards_hold() {
 
 #[test]
 fn signing_guard_cleans_up_on_emit_failure() {
+    use std::sync::atomic::Ordering;
     let dir = scratch_dir("sign_guard");
     let work = dir.join("work");
     fs::create_dir_all(&work).ok();
@@ -191,15 +198,21 @@ fn signing_guard_cleans_up_on_emit_failure() {
     fs::write(&cert_path, b"secret-p12-data").ok();
     let bad_gh_env = work.to_string_lossy().into_owned();
     assert!(emit_outputs_to("ID123", &kc_path, Some(&bad_gh_env)).is_err());
+    let before_scrub = TEST_SCRUB_CALLS.load(Ordering::Relaxed);
     {
         let _guard = SigningGuard {
             temp_dir: work.clone(),
             cert_path: cert_path.clone(),
-            keychain_path: kc_path,
-            secret_pass: "supersecret".into(),
+            keychain_path: kc_path.clone(),
+            secret_pass: SecretString::new("supersecret".into()),
             keep_keychain_on_success: false,
         };
     }
+    let after_guard = TEST_SCRUB_CALLS.load(Ordering::Relaxed);
+    assert!(after_guard > before_scrub, "expected SigningGuard to scrub secret_pass on drop");
+    assert!(import_with_cert_pass(&cert_path, &kc_path, "kc-pass", "cert-pass".into()).is_err());
+    let after_import_err = TEST_SCRUB_CALLS.load(Ordering::Relaxed);
+    assert!(after_import_err > after_guard, "expected import_with_cert_pass to scrub cert_pass on early error");
     assert!(!cert_path.exists());
     assert!(!work.exists());
     let _ = fs::remove_dir_all(&dir);
