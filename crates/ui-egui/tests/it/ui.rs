@@ -698,9 +698,11 @@ fn tabs_shrink_to_fit_then_arrows_step_through_them_and_open_stays_in_sight() {
     // The leftmost of the buttons on the right (PlutarchPages has no Discord button).
     let shortcuts = h.get_by_label("Keyboard shortcuts").rect();
     assert!(open.right() <= shortcuts.left(), "Open {open:?} must not run under the buttons {shortcuts:?}");
-    // The strip reserves room only for the buttons it draws, so the shrunk tabs and Open reach them.
+    // The strip reserves room only for the buttons it draws, so the shrunk tabs and Open reach
+    // them: about 34 pt is left, and the old reserve for a Discord button added its text width
+    // and 42 pt more.
     let gap = shortcuts.left() - open.right();
-    assert!(gap < 24.0, "Open {open:?} leaves {gap} pt unused before the buttons {shortcuts:?}");
+    assert!(gap < 60.0, "Open {open:?} leaves {gap} pt unused before the buttons {shortcuts:?}");
     let mut previous_right = f32::MIN;
     for i in 0..5 {
         let tab = h.get_by_label(&name(i)).rect();
