@@ -10,14 +10,7 @@
 //!   win_checks test-install-policy --output-dir <dir> [--arch <x64|x86|arm64>]... [--shell <pwsh>]
 
 #![forbid(unsafe_code)]
-#![deny(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unimplemented,
-    clippy::todo,
-    clippy::unreachable
-)]
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 mod win_checks_json;
 mod win_checks_policy;
@@ -48,9 +41,7 @@ pub fn strip_windows_verbatim(path: PathBuf) -> PathBuf {
 }
 
 fn is_valid_family(s: &str) -> bool {
-    !s.is_empty()
-        && s.bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
 pub fn join_rel(root: &Path, rel_slash: &str) -> Result<PathBuf> {
@@ -65,8 +56,7 @@ pub fn join_rel(root: &Path, rel_slash: &str) -> Result<PathBuf> {
 }
 
 pub fn reject_symlink(path: &Path, label: &str) -> Result<fs::Metadata> {
-    let meta = fs::symlink_metadata(path)
-        .map_err(|_| format!("Missing {label}: {}", path.display()))?;
+    let meta = fs::symlink_metadata(path).map_err(|_| format!("Missing {label}: {}", path.display()))?;
     if meta.file_type().is_symlink() {
         return Err(format!("Symlink refused for {label}: {}", path.display()).into());
     }
@@ -86,22 +76,14 @@ fn parse_font_notice_row(root_canon: &Path, manifest: &Path, line: &str) -> Resu
         .ok_or_else(|| format!("Invalid font notice path: {relative}"))?;
     let font_path = fields[2].replace('\\', "/");
     let prefix = format!("fonts/{family}/");
-    if font_path
-        .strip_prefix(&prefix)
-        .filter(|r| !r.is_empty() && !r.contains('/'))
-        .is_none()
-    {
-        return Err(format!(
-            "Font and notice must belong to the same family directory: {font_path} / {relative}"
-        )
-        .into());
+    if font_path.strip_prefix(&prefix).filter(|r| !r.is_empty() && !r.contains('/')).is_none() {
+        return Err(format!("Font and notice must belong to the same family directory: {font_path} / {relative}").into());
     }
     let _ = reject_symlink(&root_canon.join("fonts"), "fonts directory")?;
     let _ = reject_symlink(&root_canon.join("fonts").join(family), "font family directory")?;
     let notice = join_rel(root_canon, &relative)?;
-    let meta = reject_symlink(&notice, "OFL notice").map_err(|_| {
-        format!("Missing, symlinked or empty OFL notice for {}: {}", fields[0], notice.display())
-    })?;
+    let meta = reject_symlink(&notice, "OFL notice")
+        .map_err(|_| format!("Missing, symlinked or empty OFL notice for {}: {}", fields[0], notice.display()))?;
     if !meta.is_file() || meta.len() == 0 {
         return Err(format!("Missing or empty OFL notice for {}: {}", fields[0], notice.display()).into());
     }
@@ -131,8 +113,7 @@ fn read_manifest_lines(root_canon: &Path, manifest: &Path, required: bool) -> Re
 
 /// Validates declared native font manifests and returns sorted notice file paths.
 pub fn collect_font_notices(font_root: &Path, require_chinese: bool) -> Result<Vec<PathBuf>> {
-    let root_canon = fs::canonicalize(font_root)
-        .map_err(|e| format!("Cannot resolve font root {}: {e}", font_root.display()))?;
+    let root_canon = fs::canonicalize(font_root).map_err(|e| format!("Cannot resolve font root {}: {e}", font_root.display()))?;
     let fonts_dir = root_canon.join("fonts");
     let _ = reject_symlink(&fonts_dir, "fonts directory")?;
     let mut notices: BTreeMap<String, PathBuf> = BTreeMap::new();
@@ -157,10 +138,7 @@ pub fn collect_font_notices(font_root: &Path, require_chinese: bool) -> Result<V
 }
 
 pub fn assert_notice_names(expected: &[String], actual: &[String]) -> Result {
-    let names: HashSet<&str> = actual
-        .iter()
-        .map(|s| s.rsplit('|').next().unwrap_or(s.as_str()))
-        .collect();
+    let names: HashSet<&str> = actual.iter().map(|s| s.rsplit('|').next().unwrap_or(s.as_str())).collect();
     for exp in expected {
         if !names.contains(exp.as_str()) {
             return Err(format!("The MSI is missing staged font notice: {exp}").into());
@@ -199,9 +177,7 @@ fn run_cli(args: &[String]) -> Result {
             let (expected, actual) = parse_notice_names_args(rest)?;
             assert_notice_names(&expected, &actual)
         }
-        "test-font-notices" => {
-            win_checks_tests::run_font_notice_regressions(rest.first().filter(|s| !s.is_empty()).map(Path::new))
-        }
+        "test-font-notices" => win_checks_tests::run_font_notice_regressions(rest.first().filter(|s| !s.is_empty()).map(Path::new)),
         "test-install-policy" => win_checks_policy::run_install_policy_cmd(rest),
         other => Err(format!("Unknown subcommand `{other}`").into()),
     }
