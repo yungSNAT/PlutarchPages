@@ -416,7 +416,9 @@ fn date(s: &[char], i: usize) -> Option<usize> {
 /// (the same one) between groups, as a whole number: no digit, and no separator then a digit,
 /// either side. Returns the length matched.
 fn grouped_digits(s: &[char], i: usize, groups: &[usize], seps: &[char]) -> Option<usize> {
-    if !digit(s.get(i)) || i.checked_sub(1).is_some_and(|p| digit(s.get(p)) || s.get(p).is_some_and(|c| seps.contains(c)) && run_continues(s, p, -1, seps)) {
+    if !digit(s.get(i))
+        || i.checked_sub(1).is_some_and(|p| digit(s.get(p)) || s.get(p).is_some_and(|c| seps.contains(c)) && run_continues(s, p, -1, seps))
+    {
         return None;
     }
     let total: usize = groups.iter().sum();
