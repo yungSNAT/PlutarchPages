@@ -23,7 +23,7 @@ concurrency:
 jobs:
   gate:
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/gate.yml@2b3fb9dc05036f73c77d18f753a3aa9da55fa386 # main, 31 October 2026
+    uses: storytold/craft-common-actions/.github/workflows/gate.yml@82f995029cffa611fea46e4dddb0ba2627190003 # main, 31 October 2026
     with:
       os: '["windows-latest"]'
       # Required by the gate, which installs these on Linux legs only.

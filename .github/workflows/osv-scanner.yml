@@ -40,7 +40,7 @@ jobs:
       actions: read # Its SARIF upload reads this run's details.
       contents: read
       security-events: write # Upload the results to code scanning.
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
 
   scan-pr:
     name: OSV-Scanner pull request
@@ -50,7 +50,7 @@ jobs:
       actions: read # Its SARIF upload reads this run's details.
       contents: read
       security-events: write # Upload the results to code scanning.
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@b1d267aea5211fa648d9d442fa64b90dbdcbdd36 # v2.7.0
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@32d3cd482bdadfb38b186c0ad1b031902d55d932 # v2.7.1
     with:
       # A pull request from a fork gets a read-only token, so its results are
       # not uploaded to code scanning; the check still fails on
