@@ -201,7 +201,7 @@ PdfCraft opens files from strangers, and people trust it with their work. A malf
 ## CI workflows
 - Workflows in `.github/workflows/` call the shared workflows in [`storytold/craft-common-actions`](https://github.com/storytold/craft-common-actions) at `@main`, with their inputs and secrets. No other jobs: if no shared workflow does what's needed, it doesn't go here.
   In this fork they are pinned to a commit instead, and `cargo xtask fork-check` rejects `@main` (PATCHES.md, 'Shared CI').
-- Don't add or change CI in a feature or fix PR. If the existing workflows can't build or test a change, link an existing craft-common-actions issue or PR, or open a new issue, or a PR only for a small fix that is safe for every app and does not increase CI time.
+- Don't add CI jobs in a feature or fix PR; standalone packaging helpers (`rustc --edition=2024 -D warnings`, like `packaging/linux/arch-package.rs`) run through the existing workflow entrypoints without adding workflows. If the existing workflows can't build or test a new feature, link an existing craft-common-actions issue or PR, or open a new issue, or a PR only for a small fix that is safe for every app and does not increase CI time.
 - Some workflow files here still run their own jobs. Don't add to them. Moving a job into craft-common-actions is its own task, never part of another PR, and the job stays here until a shared workflow runs it.
 
 ## Reusing this code
