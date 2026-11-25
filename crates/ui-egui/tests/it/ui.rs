@@ -799,10 +799,7 @@ fn the_integrated_title_bar_mirrors_with_traffic_lights_at_the_right() {
     // The other end: Preferences, theme and shortcuts, mirroring their order at the right.
     let (preferences, help) = (rect("Preferences"), rect("Keyboard shortcuts"));
     assert!(preferences.left() < 20.0, "Preferences {preferences:?} at the far end");
-    assert!(
-        preferences.right() <= theme.left() && theme.right() <= help.left(),
-        "Preferences, theme, shortcuts"
-    );
+    assert!(preferences.right() <= theme.left() && theme.right() <= help.left(), "Preferences, theme, shortcuts");
     assert!(help.right() < rect("Open").left(), "shortcuts stay clear of Open");
 }
 
