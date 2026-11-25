@@ -1,7 +1,7 @@
 # pdfcraft-external
 
 Layer L4, native only (the engine leaves it out of the web build). Optional programs the user
-installed separately, used by PlutarchPages for the PDF-XChange features that need them:
+installed separately, used by PlutarchPages for the features that need them:
 
 - `office_to_pdf`: Office files (doc, docx, odt, rtf, xls, xlsx, ods, ppt, pptx, odp; no
   macro-enabled formats) through LibreOffice's `soffice --headless --convert-to pdf`. LibreOffice
