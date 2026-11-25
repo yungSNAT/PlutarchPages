@@ -841,13 +841,13 @@ fn without_mark_to_mark_onto(gpos: &[u8], glyph: usize) -> (Vec<u8>, usize) {
 /// A subset whose mark-to-mark data stacks fatha on shadda but nothing on fatha: the sukun the edit
 /// adds would be attached to seen's own anchor, through the shadda, though both other marks are
 /// stacked. The whole run is drawn in the bundled face; the same subset with its GPOS intact keeps
-/// the run.
+/// the run. The page draws the stacked text twice, so its forms have the page's evidence.
 #[test]
 fn kept_arabic_with_a_mark_stack_the_subset_cuts_short_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
     let (fatha, sukun) = (usize::from(nominal(face.bytes, '\u{064e}')), usize::from(nominal(face.bytes, '\u{0652}')));
     let page = |cut: bool| {
-        producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        producer_page_with(face.bytes, "NotoSansArabic", &format!("{STACKED} {STACKED}"), |keep| {
             let program = subset(face.bytes, &keep.iter().copied().chain([sukun]).collect(), true);
             if !cut {
                 return program;
@@ -915,6 +915,7 @@ fn sukun_on_shadda(program: &[u8], shadda: u16, sukun: u16) -> Vec<u8> {
 /// the second (its flags allow that): every mark is still moved by `mkmk`, so the count of stacked
 /// marks matches the bundled face's, but the sukun is drawn through the fatha. The run is drawn in
 /// the bundled face, which keeps its own marks; the same subset without the change keeps the run.
+/// The page draws the stacked text twice, so its forms have the page's evidence.
 #[test]
 fn a_page_font_that_stacks_a_mark_on_the_wrong_mark_falls_back_for_the_run() {
     use pdfcraft_fonts::source_shaping::joins_arabic;
@@ -924,7 +925,7 @@ fn a_page_font_that_stacks_a_mark_on_the_wrong_mark_falls_back_for_the_run() {
     assert!(joins_arabic(face.bytes, face.bytes, STACKED));
     assert!(!joins_arabic(&skipping, face.bytes, STACKED));
     let page = |skip: bool| {
-        producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+        producer_page_with(face.bytes, "NotoSansArabic", &format!("{STACKED} {STACKED}"), |keep| {
             let program = subset(face.bytes, &keep.iter().copied().chain([usize::from(sukun)]).collect(), true);
             if skip { sukun_on_shadda(&program, shadda, sukun) } else { program }
         })
