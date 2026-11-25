@@ -75,6 +75,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - Search & Redact has 2 more patterns, `tfn` (Australian tax file numbers) and `abn` (Australian
   Business Numbers), matched by format alone, in `crates/redact/src/patterns.rs`; tests in
   `crates/redact/src/patterns/tests/fork_tests.rs`. Keep both variants when a merge changes `Pattern`.
+- Remove Hidden Information follows owners, outlines, name trees, optional content `/Order`
+  arrays and nested inline streams iteratively, as deep as a parsed file nests, so it and a save
+  after Apply Redactions work on a 1 MiB thread stack (a Windows main thread's). An outline nested
+  in place past `MAX_DIRECT_DEPTH` (256) levels refuses rather than being skipped (#212). Code in
+  `crates/redact/src/sanitize.rs`; tests in `crates/redact/src/tests.rs` (upstream's file),
+  `crates/redact/src/tests/fork_tests.rs`, `crates/engine/src/tests/fork_tests.rs` and
+  `crates/cos/tests/it/deep_nesting.rs`.
 - Redaction audit checks text and covers in nested Form XObjects and annotation appearance streams
   in paint order. Keep this path when merging upstream. Text in a tiling pattern or a Type3 glyph
   procedure fails the audit, which does not read it. Both text readings (`glyph_text` and the
@@ -217,11 +224,16 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - CodeQL: `.github/codeql/codeql-config.yml` excludes tests and `vendor/`.
 - Dependabot: `.github/dependabot.yml` doesn't list `/crates/filters/fuzz`. That crate is its own workspace and
   depends on `crates/filters`, which inherits from the root workspace. Dependabot fetches it without
-  the root, so the cargo job failed. Remove it again if a merge restores it.
+  the root, so the cargo job failed. Remove it again if a merge restores it. It also ignores minor
+  and major updates of `skrifa` and `harfrust`, which `pdfcraft-fonts` keeps on egui's versions so
+  both share one `read-fonts`: a grouped update that raised them alone failed to build (#211, #220).
 - Post-merge CI: `freebsd.yml` and `windows-arm64.yml` run on a push to `main` only when it changes
   their pull request paths, and each also runs weekly. Upstream runs both on every push, where
   FreeBSD's per-commit cache kept this repository over its 10 GB cache limit, so reapply the push
   `paths` and FreeBSD's `schedule` when a merge drops them.
+- `ocr.yml` and `upstream-drift.yml` are this fork's own and run their own jobs. They pin
+  `dtolnay/rust-toolchain` at its `v1` tag with `toolchain: stable`, as the other workflows do, so
+  Dependabot updates them with the rest; a pin to the action's `stable` branch drifts unnoticed.
 - `windows-it-nextest.yml` is this fork's own: on demand, and on a pull request that changes it, it
   runs ui-egui's `it` tests 6 times under nextest on a GPU-less `windows-latest`, so a test that
   crashes its process fails by name.
