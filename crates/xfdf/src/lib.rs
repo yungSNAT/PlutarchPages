@@ -375,8 +375,15 @@ fn csv_records(t: &str) -> Vec<Vec<String>> {
 /// once per row (a single import takes only the first row). The format is told apart as a single
 /// import tells it; blank lines are not records.
 pub fn table_records(text: &str) -> Vec<Vec<String>> {
-    let _ = text;
-    Vec::new()
+    let t = text.trim_start_matches('\u{feff}');
+    let tsv =
+        || -> Vec<Vec<String>> { t.lines().filter(|line| !line.is_empty()).map(|line| line.split('\t').map(str::to_string).collect()).collect() };
+    if has_tab_delimiter(t) {
+        return tsv();
+    }
+    let records = csv_records(t);
+    // Text exported from a one-field form has no tab to show for it (#1321), as in `import_table`.
+    if matches!(records.as_slice(), [head, row, ..] if head.len() == 1 && row.len() > 1) { tsv() } else { records }
 }
 
 /// Tab-delimited text: a row of names, a row of values.
