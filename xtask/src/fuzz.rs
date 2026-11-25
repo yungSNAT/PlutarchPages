@@ -762,11 +762,10 @@ mod tests {
         let silent = script(dir.path(), "silent", "exit 3");
         assert_eq!(run_one(&silent, &input, long), (Outcome::Crash, "exit status: 3; ".into()));
         let missing = run_one(&dir.path().join("absent"), &input, long);
-        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            assert_eq!(missing.0, Outcome::Crash, "a child that cannot start under the shell fails: {missing:?}");
-        } else {
-            assert_eq!(missing.0, Outcome::Ok, "a child that cannot be spawned is not a finding: {missing:?}");
-        }
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        assert_eq!(missing.0, Outcome::Crash, "a child that cannot start under the shell fails: {missing:?}");
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        assert_eq!(missing.0, Outcome::Ok, "a child that cannot be spawned is not a finding: {missing:?}");
 
         let stuck = script(dir.path(), "stuck", "exec sleep 30");
         assert_eq!(run_one(&stuck, &input, Duration::ZERO), (Outcome::Hang, "over 0 s".into()));
