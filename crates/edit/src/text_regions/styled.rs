@@ -243,8 +243,9 @@ impl CharacterPreparation<'_> {
             if use_thai_outlines {
                 substituted = pdfcraft_fonts::document_thai_font().map(|f| f.family.to_owned());
             }
-            let arabic =
-                (!use_thai_outlines && selected_resource.is_none()).then(|| arabic_span(resolver.doc, resolver.page, resolver.fonts, source, span)).flatten();
+            let arabic = (!use_thai_outlines && selected_resource.is_none())
+                .then(|| arabic_span(resolver.doc, resolver.page, resolver.fonts, source, span))
+                .flatten();
             let use_arabic_outlines = matches!(arabic, Some(ArabicSpan::Outlines));
             if use_arabic_outlines {
                 substituted = pdfcraft_fonts::document_arabic_font().map(|f| f.family.to_owned());
