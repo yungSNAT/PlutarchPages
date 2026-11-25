@@ -444,4 +444,34 @@ mod tests {
         assert_eq!(winansi(high), want);
         assert_eq!(winansi("č"), b"?");
     }
+
+    #[test]
+    fn text_strings_are_literal_for_ascii_and_utf16_otherwise() {
+        assert_eq!(text("Plain"), Object::string_literal("Plain"));
+        assert_eq!(text("Ü€"), Object::String(vec![0xfe, 0xff, 0x00, 0xdc, 0x20, 0xac], StringFormat::Hexadecimal));
+    }
+
+    #[test]
+    fn the_current_stamp_is_after_this_code_was_written() {
+        let now = Stamp::now();
+        assert!(now.unix > 1_790_000_000, "{}", now.unix);
+        assert_eq!(Stamp::from_unix(now.unix).iso, now.iso);
+        assert!(now.pdf.starts_with("D:20") && now.iso.ends_with('Z'), "{now:?}");
+    }
+
+    #[test]
+    fn widths_follow_each_fonts_metrics() {
+        let close = |font: Font, s: &str, want: f32| assert!((font.width(s, 10.0) - want).abs() < 1e-4, "{font:?} {s}");
+        close(Font::Courier, "ab", 12.0);
+        close(Font::ZapfDingbats, "a", 8.0);
+        close(Font::Times, "a", 5.0);
+        close(Font::TimesItalic, "a", 5.0);
+        close(Font::Helv, "i", 2.22);
+        close(Font::HelvBold, "i", 2.78);
+        // The non-ASCII punctuation the showcase sets, and the fallback for anything else.
+        close(Font::Helv, "\u{2014}", 10.0);
+        close(Font::Helv, "\u{2013}", 5.56);
+        close(Font::Helv, "\u{2022}", 3.5);
+        close(Font::Helv, "é", 5.56);
+    }
 }
