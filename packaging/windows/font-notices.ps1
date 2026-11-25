@@ -1,4 +1,23 @@
-# Validate one non-comment manifest row via the compiled Rust packaging helper (`win_checks.rs`).
+$script:CraftWinChecksDir = $null
+$script:CraftWinChecksExe = $null
+$script:CraftWinChecksSrcHash = $null
+$script:CraftWinChecksExeHash = $null
+
+function New-CraftPrivateCacheDir {
+  if ([IO.Path]::DirectorySeparatorChar -eq '/') {
+    $dir = (& mktemp -d "${env:TMPDIR:-/tmp}/pdfcraft-wc-XXXXXX").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $dir) {
+      $global:LASTEXITCODE = 0
+      throw 'Failed to create private temporary directory for win_checks'
+    }
+    return $dir
+  }
+  $dir = Join-Path ([IO.Path]::GetTempPath()) ("pdfcraft-wc-$PID-" + [guid]::NewGuid())
+  [void](New-Item -ItemType Directory -Path $dir)
+  return $dir
+}
+
+# Validate and execute the compiled Rust packaging helper (`win_checks.rs`).
 function Invoke-CraftWinChecks([string[]] $Arguments) {
   $src = Join-Path $PSScriptRoot 'win_checks.rs'
   $sources = @(Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'win_checks*.rs' | Sort-Object Name)
@@ -9,24 +28,28 @@ function Invoke-CraftWinChecks([string[]] $Arguments) {
   } finally {
     $sha.Dispose()
   }
-  $hash = ([BitConverter]::ToString($hashBytes) -replace '-', '').Substring(0, 16)
+  $srcHash = ([BitConverter]::ToString($hashBytes) -replace '-', '').Substring(0, 16)
   $ext = if ([IO.Path]::DirectorySeparatorChar -eq '\') { '.exe' } else { '' }
-  $exe = Join-Path ([IO.Path]::GetTempPath()) "pdfcraft-win-checks-$hash$ext"
-  if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) "pdfcraft-win-checks-$hash.$PID.tmp$ext"
-    & rustc --edition=2024 -D warnings $src -o $tmp
+  if (-not $script:CraftWinChecksExe -or $script:CraftWinChecksSrcHash -ne $srcHash -or -not (Test-Path -LiteralPath $script:CraftWinChecksExe -PathType Leaf)) {
+    if (-not $script:CraftWinChecksDir) { $script:CraftWinChecksDir = New-CraftPrivateCacheDir }
+    $exe = Join-Path $script:CraftWinChecksDir "win_checks-$srcHash$ext"
+    & rustc --edition=2024 -D warnings $src -o $exe
     if ($LASTEXITCODE -ne 0) {
-      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
-      throw "Failed to compile win_checks.rs (exit $LASTEXITCODE)"
+      $code = $LASTEXITCODE
+      $global:LASTEXITCODE = 0
+      Remove-Item -LiteralPath $exe -Force -ErrorAction SilentlyContinue
+      throw "Failed to compile win_checks.rs (exit $code)"
     }
-    try {
-      Move-Item -LiteralPath $tmp -Destination $exe -Force
-    } catch {
-      if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw }
-      Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    $script:CraftWinChecksExe = $exe
+    $script:CraftWinChecksSrcHash = $srcHash
+    $script:CraftWinChecksExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+  } else {
+    $actualHash = (Get-FileHash -LiteralPath $script:CraftWinChecksExe -Algorithm SHA256).Hash
+    if ($actualHash -ne $script:CraftWinChecksExeHash) {
+      throw 'Compiled win_checks binary integrity check failed'
     }
   }
-  & $exe @Arguments
+  & $script:CraftWinChecksExe @Arguments
   $code = $LASTEXITCODE
   if ($code -ne 0) {
     $global:LASTEXITCODE = 0

@@ -4,11 +4,42 @@
 //! Non-executable MSI policy fixture generation and WiX validation.
 
 use super::win_checks_json::{InstallPolicy, parse_install_policy};
-use super::{Result, join_rel, strip_windows_verbatim};
+use super::{Result, join_rel, reject_symlink, strip_windows_verbatim};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+fn ensure_real_dir(root: &Path, rel_slash: &str) -> Result<PathBuf> {
+    let mut cur = root.to_path_buf();
+    for seg in rel_slash.split('/').filter(|s| !s.is_empty()) {
+        if seg == "." || seg == ".." || seg.contains('\\') || seg.contains(':') {
+            return Err(format!("Invalid relative directory: {rel_slash}").into());
+        }
+        cur.push(seg);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() || !meta.is_dir() {
+                    return Err(format!("Symlink or non-directory refused at {}", cur.display()).into());
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => fs::create_dir(&cur)?,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    Ok(cur)
+}
+
+fn write_real_file(path: &Path, bytes: &[u8]) -> Result {
+    if let Ok(meta) = fs::symlink_metadata(path)
+        && (meta.file_type().is_symlink() || !meta.is_file())
+    {
+        return Err(format!("Symlink or non-file refused at {}", path.display()).into());
+    }
+    let mut f = File::create(path)?;
+    f.write_all(bytes)?;
+    Ok(())
+}
 
 /// Encodes a valid uncompressed 24-bit RGB BMP image (`width` x `height`).
 pub fn encode_bmp24(width: u32, height: u32) -> Result<Vec<u8>> {
@@ -33,27 +64,31 @@ pub fn encode_bmp24(width: u32, height: u32) -> Result<Vec<u8>> {
 
 fn write_payload_fixtures(stage: &Path, payloads: &[String]) -> Result {
     for name in payloads {
-        let dest = join_rel(stage, &name.replace('\\', "/"))?;
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent)?;
+        let rel = name.replace('\\', "/");
+        if let Some((dir_rel, _)) = rel.rsplit_once('/') {
+            let _ = ensure_real_dir(stage, dir_rel)?;
         }
-        File::create(&dest)?.write_all(b"NON-EXECUTABLE MSI METADATA TEST FIXTURE\r\n")?;
+        let dest = join_rel(stage, &rel)?;
+        write_real_file(&dest, b"NON-EXECUTABLE MSI METADATA TEST FIXTURE\r\n")?;
     }
     Ok(())
 }
 
 fn write_stage_metadata(stage: &Path) -> Result {
     for folder in ["docs", "models", "notices"] {
-        let dir = stage.join(folder);
-        fs::create_dir_all(&dir)?;
-        fs::write(dir.join(format!("{folder}-fixture.txt")), "Metadata test fixture, not a user file or model.\r\n")?;
+        let dir = ensure_real_dir(stage, folder)?;
+        write_real_file(
+            &dir.join(format!("{folder}-fixture.txt")),
+            b"Metadata test fixture, not a user file or model.\r\n",
+        )?;
     }
+    let models = stage.join("models");
     for model in ["metadata-one.rten", "metadata-two.rten"] {
-        fs::write(stage.join("models").join(model), "NON-EXECUTABLE MODEL METADATA FIXTURE\r\n")?;
+        write_real_file(&models.join(model), b"NON-EXECUTABLE MODEL METADATA FIXTURE\r\n")?;
     }
-    fs::write(stage.join("banner.bmp"), encode_bmp24(493, 58)?)?;
-    fs::write(stage.join("dialog.bmp"), encode_bmp24(493, 312)?)?;
-    fs::write(stage.join("licence.rtf"), "{\\rtf1 Metadata test fixture.}\r\n")?;
+    write_real_file(&stage.join("banner.bmp"), &encode_bmp24(493, 58)?)?;
+    write_real_file(&stage.join("dialog.bmp"), &encode_bmp24(493, 312)?)?;
+    write_real_file(&stage.join("licence.rtf"), b"{\\rtf1 Metadata test fixture.}\r\n")?;
     Ok(())
 }
 
@@ -138,10 +173,10 @@ fn run_install_policy_fixtures(
     let root = strip_windows_verbatim(fs::canonicalize(script_dir.join("..").join(".."))?);
     let policy = parse_install_policy(&fs::read_to_string(script_dir.join("install-policy.json"))?)?;
     fs::create_dir_all(output_dir)?;
+    let _ = reject_symlink(output_dir, "output directory")?;
     let output = strip_windows_verbatim(fs::canonicalize(output_dir)?);
     for arch in architectures {
-        let stage = output.join(arch);
-        fs::create_dir_all(&stage)?;
+        let stage = ensure_real_dir(&output, arch)?;
         write_payload_fixtures(&stage, &policy.payloads)?;
         write_stage_metadata(&stage)?;
         build_and_check_policy_msi(&root, script_dir, &stage, arch, &policy, shell)?;

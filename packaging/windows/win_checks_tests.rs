@@ -133,10 +133,17 @@ mod unit_tests {
 
     #[test]
     fn parses_utf8_and_surrogate_json_and_committed_policy() -> Result {
-        let sample = r#"{"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":["\u2026-\uD83D\uDE00"]}"#;
+        let sample = r#"{"extra":true,"num":-0.5e+2,"nil":null,"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":["\u2026-\uD83D\uDE00"]}"#;
         let parsed = parse_install_policy(sample)?;
         assert_eq!(parsed.payloads, ["\u{2026}-\u{1F600}"]);
-        assert!(parse_install_policy(r#"{"id":"\uD800","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#).is_err());
+        for bad in [
+            r#"{"id":"\uD800","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
+            r#"{"id":"x","icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]} trailing"#,
+            r#"{"id":"x","bad":tru,"icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
+            r#"{"id":"x","bad":01,"icon":"i","sources":[],"extensions":[],"localization":[],"payloads":[]}"#,
+        ] {
+            assert!(parse_install_policy(bad).is_err(), "accepted bad JSON: {bad}");
+        }
         let manifest_path = Path::new("packaging/windows/install-policy.json");
         if manifest_path.is_file() {
             let p = parse_install_policy(&fs::read_to_string(manifest_path)?)?;

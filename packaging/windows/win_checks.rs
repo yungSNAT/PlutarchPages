@@ -64,7 +64,7 @@ pub fn join_rel(root: &Path, rel_slash: &str) -> Result<PathBuf> {
     Ok(out)
 }
 
-fn reject_symlink(path: &Path, label: &str) -> Result<fs::Metadata> {
+pub fn reject_symlink(path: &Path, label: &str) -> Result<fs::Metadata> {
     let meta = fs::symlink_metadata(path)
         .map_err(|_| format!("Missing {label}: {}", path.display()))?;
     if meta.file_type().is_symlink() {

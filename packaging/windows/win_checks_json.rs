@@ -143,18 +143,60 @@ impl<'a> JsonCursor<'a> {
         }
     }
 
+    fn skip_literal(&mut self, expected: &[u8]) -> Result {
+        let end = self.pos.checked_add(expected.len()).ok_or("JSON literal overflow")?;
+        if self.bytes.get(self.pos..end) != Some(expected) {
+            return Err("Invalid JSON literal".into());
+        }
+        self.pos = end;
+        Ok(())
+    }
+
+    fn eat_digits(&mut self) -> Result {
+        let start = self.pos;
+        while self.pos < self.bytes.len() && self.bytes[self.pos].is_ascii_digit() {
+            self.pos += 1;
+        }
+        if self.pos == start {
+            return Err("Expected digit in JSON number".into());
+        }
+        Ok(())
+    }
+
+    fn skip_number(&mut self) -> Result {
+        if self.bytes.get(self.pos) == Some(&b'-') {
+            self.pos += 1;
+        }
+        match self.bytes.get(self.pos).copied() {
+            Some(b'0') => self.pos += 1,
+            Some(b'1'..=b'9') => self.eat_digits()?,
+            _ => return Err("Malformed JSON number".into()),
+        }
+        if self.bytes.get(self.pos) == Some(&b'.') {
+            self.pos += 1;
+            self.eat_digits()?;
+        }
+        if matches!(self.bytes.get(self.pos), Some(b'e' | b'E')) {
+            self.pos += 1;
+            if matches!(self.bytes.get(self.pos), Some(b'+' | b'-')) {
+                self.pos += 1;
+            }
+            self.eat_digits()?;
+        }
+        Ok(())
+    }
+
     fn skip_value(&mut self) -> Result {
         self.skip_ws();
         match self.bytes.get(self.pos).copied() {
             Some(b'"') => self.read_string().map(|_| ()),
             Some(b'[') => self.skip_container(b']', false),
             Some(b'{') => self.skip_container(b'}', true),
-            Some(_) => {
-                while self.pos < self.bytes.len() && !matches!(self.bytes[self.pos], b',' | b']' | b'}') {
-                    self.pos += 1;
-                }
-                Ok(())
-            }
+            Some(b't') => self.skip_literal(b"true"),
+            Some(b'f') => self.skip_literal(b"false"),
+            Some(b'n') => self.skip_literal(b"null"),
+            Some(b'-' | b'0'..=b'9') => self.skip_number(),
+            Some(b) => Err(format!("Unexpected byte '{}' in JSON value", b as char).into()),
             None => Err("Unexpected EOF in JSON value".into()),
         }
     }
@@ -201,7 +243,9 @@ pub fn parse_install_policy(raw: &str) -> Result<InstallPolicy> {
     cur.expect_byte(b'{')?;
     let mut b = PolicyBuilder::default();
     cur.skip_ws();
-    if cur.bytes.get(cur.pos) != Some(&b'}') {
+    if cur.bytes.get(cur.pos) == Some(&b'}') {
+        cur.pos += 1;
+    } else {
         loop {
             let key = cur.read_string()?;
             cur.expect_byte(b':')?;
@@ -209,10 +253,17 @@ pub fn parse_install_policy(raw: &str) -> Result<InstallPolicy> {
             cur.skip_ws();
             match cur.bytes.get(cur.pos).copied() {
                 Some(b',') => cur.pos += 1,
-                Some(b'}') => break,
+                Some(b'}') => {
+                    cur.pos += 1;
+                    break;
+                }
                 _ => return Err("Malformed top-level object in install-policy.json".into()),
             }
         }
+    }
+    cur.skip_ws();
+    if cur.pos != cur.bytes.len() {
+        return Err("Unexpected trailing data after top-level JSON object".into());
     }
     b.finish()
 }
