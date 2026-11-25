@@ -189,6 +189,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `packaging/windows/win_checks.rs` (with `win_checks_{json,policy,tests}.rs`) replaces the PowerShell font-notice
   validation and installer policy fixture logic in `font-notices.ps1`, `test-font-notices.ps1` and
   `test-install-policy.ps1`, which compile the standalone Rust helper on demand with `rustc --edition=2024 -D warnings`.
+- `packaging/windows/package.rs` (with `package_{pe,fs,meta,tests}.rs`) replaces the build, PE header checks,
+  staging, model/font notice bundling, WiX invocation, portable staging/ZIP orchestration and CLI smoke
+  test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim.
+  Retained scripts stay non-Rust under documented constraints: `check-install-policy.ps1`, `test-msi.ps1` and
+  `test-install.ps1` depend on Windows Installer COM/MSI APIs (`WindowsInstaller.Installer`, constraint 2);
+  `sign.ps1` is a thin Windows SDK `signtool.exe` wrapper; `security-audit.ps1` is a read-only
+  Authenticode/YARA inspector; and upstream Linux/macOS/FreeBSD/web packaging scripts stay unchanged for now.
 - Schedules: GitHub runs a scheduled workflow as the account that last changed its `cron` line, and
   stops it when that account can no longer run workflows. `fuzz.yml` runs at 03:18 UTC, a minute
   after upstream's, so that this repository's account is its actor. Taking upstream's line in a
