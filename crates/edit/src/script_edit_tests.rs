@@ -1548,6 +1548,29 @@ fn a_subset_whose_gsub_swaps_two_forms_the_page_drew_falls_back_for_the_run() {
     falls_back_for_the_run(face, page, KEPT);
 }
 
+/// The page [`kept_arabic_stays_in_its_subset_with_the_faces_glyphs`] keeps, but its font maps
+/// codes to glyphs through a `/CIDToGIDMap` stream (one that happens to map each code to itself)
+/// rather than the name `Identity`: the codes aren't known to be glyph ids, so the page's words
+/// can't be compared with the program's shaping. The whole run is drawn in the bundled face.
+#[test]
+fn kept_arabic_in_a_subset_mapping_codes_through_a_stream_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let mut page = producer_page(face.bytes, "NotoSansArabic", ORIGINAL, true);
+    let glyphs = be16(tables(face.bytes)[b"maxp"], 4);
+    let map: Vec<u8> = (0..glyphs).flat_map(|g| (g as u16).to_be_bytes()).collect();
+    let map = page.add(Object::Stream(Stream::flate(Dict::new(), &map)));
+    let resources = page.dict(&Object::Ref(pdfcraft_model::pages(&page)[0].obj)).unwrap();
+    let fonts = page.dict(resources.get(b"Resources").unwrap()).and_then(|r| page.dict(r.get(b"Font")?)).unwrap();
+    let Some(&Object::Ref(font)) = fonts.get(b"F1") else { panic!("F1 is a reference") };
+    page.update_dict(font, |d| {
+        let mut descendant = d.get(b"DescendantFonts").and_then(Object::as_array).and_then(|a| a.first()).and_then(Object::as_dict).unwrap().clone();
+        descendant.set(b"CIDToGIDMap".to_vec(), Object::Ref(map));
+        d.set(b"DescendantFonts".to_vec(), Object::Array(vec![Object::Dict(descendant)]));
+    })
+    .unwrap();
+    falls_back_for_the_run(face, page, KEPT);
+}
+
 /// A bracket typed as a word of its own: in the row it is mirrored to the glyph the page shows,
 /// but the layout measures it alone, unmirrored, in a glyph the subset emptied. The whole run is
 /// drawn in the bundled face, not refused.
