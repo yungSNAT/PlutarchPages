@@ -3,6 +3,7 @@
 
 //! macOS app bundle, DMG, codesign & notarization packager (`packaging/macos/package.sh`).
 
+use super::unix_package_cert::SecretString;
 use super::unix_package_env::{EnvCtx, non_empty_env, render_template};
 use super::unix_package_fs::{
     copy_file_checked, create_symlink_unix, ensure_real_dir_path, remove_checked_file, reset_real_dir, run_staged_binary, run_status,
@@ -103,17 +104,29 @@ pub fn extract_json_string_field(json: &str, key: &str) -> Option<String> {
     None
 }
 
-struct SignCtx {
+pub(crate) struct SignCtx {
     identity: String,
     keychain: Option<String>,
-    apple_creds: Option<(String, String, String)>,
+    apple_creds: Option<(String, SecretString, String)>,
 }
 
 impl SignCtx {
+    #[cfg(test)]
+    pub(crate) fn with_apple_creds(apple_id: &str, password: String, team_id: &str) -> Self {
+        Self {
+            identity: "Developer ID Application".into(),
+            keychain: None,
+            apple_creds: Some((apple_id.into(), SecretString::new(password), team_id.into())),
+        }
+    }
+
     fn from_env(env: &EnvCtx) -> Self {
         let identity = non_empty_env("MACOS_SIGN_IDENTITY").unwrap_or_else(|| String::from("-"));
         let keychain = non_empty_env("MACOS_KEYCHAIN");
-        let creds = match (non_empty_env("APPLE_ID"), non_empty_env("APPLE_PASSWORD"), non_empty_env("APPLE_TEAM_ID")) {
+        let apple_id = non_empty_env("APPLE_ID");
+        let apple_password = non_empty_env("APPLE_PASSWORD").map(SecretString::new);
+        let apple_team = non_empty_env("APPLE_TEAM_ID");
+        let creds = match (apple_id, apple_password, apple_team) {
             _ if identity == "-" => {
                 env.warn("macOS: ad-hoc signing (no MACOS_SIGN_IDENTITY); artifacts are not notarized");
                 None
@@ -138,7 +151,7 @@ impl SignCtx {
         run_status(&mut cmd, "codesign")
     }
 
-    fn notarize(&self, file: &Path) -> AppResult {
+    pub(crate) fn notarize(&self, file: &Path) -> AppResult {
         let Some((apple_id, password, team_id)) = &self.apple_creds else {
             return Ok(());
         };
@@ -148,7 +161,7 @@ impl SignCtx {
             .arg("notarytool")
             .arg("submit")
             .arg(file)
-            .args(["--apple-id", apple_id, "--password", password, "--team-id", team_id])
+            .args(["--apple-id", apple_id, "--password", password.as_str(), "--team-id", team_id])
             .args(["--wait", "--timeout", "1h", "--output-format", "json"])
             .stdin(Stdio::null())
             .stderr(Stdio::inherit())
@@ -160,7 +173,7 @@ impl SignCtx {
         if status.as_deref() != Some("Accepted") {
             if let Some(sub_id) = id {
                 let _ = Command::new("xcrun")
-                    .args(["notarytool", "log", &sub_id, "--apple-id", apple_id, "--password", password, "--team-id", team_id])
+                    .args(["notarytool", "log", &sub_id, "--apple-id", apple_id, "--password", password.as_str(), "--team-id", team_id])
                     .stdin(Stdio::null())
                     .status();
             }

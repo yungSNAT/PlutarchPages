@@ -5,7 +5,7 @@
 
 use super::unix_package_env::EnvCtx;
 use super::unix_package_fs::{
-    command_exists, copy_dir_no_symlinks, copy_file_checked, ensure_real_dir_path, reject_symlink, reset_real_dir, run_status,
+    command_exists, copy_dir_no_symlinks, copy_file_checked, ensure_real_dir_path, reject_symlink, remove_checked_file, reset_real_dir, run_status,
 };
 use super::{AppError, AppResult};
 use std::fs;
@@ -90,9 +90,7 @@ fn package_web_zip(env: &EnvCtx, site: &Path) -> AppResult {
 
     ensure_real_dir_path(&env.dist)?;
     let zip_path = env.dist.join(format!("{name}.zip"));
-    if zip_path.exists() {
-        fs::remove_file(&zip_path)?;
-    }
+    remove_checked_file(&zip_path, "web zip output")?;
     let mut zip_cmd = Command::new("zip");
     zip_cmd.arg("-qr9").arg(&zip_path).arg(&name).current_dir(&work);
     run_status(&mut zip_cmd, "zip")?;

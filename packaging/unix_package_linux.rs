@@ -219,9 +219,7 @@ fn package_nfpm(env: &EnvCtx, formats: &str, spec: &LinuxArchSpec, work: &Path, 
 
 fn download_verified(url: &str, dest: &Path, expected_sha: &str, executable: bool) -> AppResult {
     let download = PathBuf::from(format!("{}.download", dest.display()));
-    if fs::symlink_metadata(&download).is_ok() {
-        let _ = fs::remove_file(&download);
-    }
+    remove_checked_file(&download, "download temp file")?;
     if let Some(parent) = dest.parent() {
         ensure_real_dir_path(parent)?;
     }

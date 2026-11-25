@@ -37,7 +37,7 @@ impl SecretString {
         Self(s)
     }
 
-    fn as_str(&self) -> &str {
+    pub(crate) fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -73,13 +73,36 @@ impl Drop for SigningGuard {
 }
 
 #[cfg(test)]
-pub(crate) static TEST_SCRUB_CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+thread_local! {
+    static TEST_SCRUBS: std::cell::RefCell<Vec<(usize, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+#[cfg(test)]
+pub(crate) fn clear_test_scrubs() {
+    TEST_SCRUBS.with(|s| s.borrow_mut().clear());
+}
+
+#[cfg(test)]
+pub(crate) fn take_test_scrubs() -> Vec<(usize, bool)> {
+    TEST_SCRUBS.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+#[cfg(test)]
+pub(crate) fn run_with_signing_guard<F>(mut guard: SigningGuard, work: F) -> AppResult
+where
+    F: FnOnce(&mut SigningGuard) -> AppResult,
+{
+    work(&mut guard)
+}
 
 fn scrub_vec(bytes: &mut Vec<u8>) {
     bytes.fill(0);
     let _ = std::hint::black_box(bytes.as_slice());
     #[cfg(test)]
-    let _ = TEST_SCRUB_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    {
+        let entry = (bytes.len(), bytes.iter().all(|&b| b == 0));
+        TEST_SCRUBS.with(|s| s.borrow_mut().push(entry));
+    }
 }
 
 fn clear_string(s: &mut String) {
@@ -161,16 +184,18 @@ pub fn parse_dev_id_identity(output: &str) -> Option<String> {
     None
 }
 
-fn random_hex_24() -> AppResult<String> {
+fn random_hex_24() -> AppResult<SecretString> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut bytes = [0u8; 24];
     File::open("/dev/urandom")?.read_exact(&mut bytes)?;
     let mut hex = String::with_capacity(48);
-    for b in bytes {
-        hex.push_str(&format!("{b:02x}"));
+    for &b in &bytes {
+        hex.push(HEX[usize::from(b >> 4)] as char);
+        hex.push(HEX[usize::from(b & 0x0f)] as char);
     }
     bytes.fill(0);
     let _ = std::hint::black_box(&bytes);
-    Ok(hex)
+    Ok(SecretString::new(hex))
 }
 
 fn temp_base() -> AppResult<PathBuf> {
@@ -198,10 +223,10 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
     let temp_dir = create_private_temp_dir(&base, "pdfcraft-signing.")?;
     let cert_path = temp_dir.join("pdfcraft-signing.p12");
     let keychain_path = temp_dir.join("pdfcraft-signing.keychain-db");
-    let kc_pass = SecretString::new(match non_empty_env("KEYCHAIN_PASSWORD") {
-        Some(p) => p,
+    let kc_pass = match non_empty_env("KEYCHAIN_PASSWORD") {
+        Some(p) => SecretString::new(p),
         None => random_hex_24()?,
-    });
+    };
     let mut guard = SigningGuard {
         temp_dir,
         cert_path: cert_path.clone(),
@@ -224,12 +249,15 @@ pub fn run(env: &EnvCtx, args: &[String]) -> AppResult {
     Ok(())
 }
 
-pub(crate) fn import_with_cert_pass(cert: &Path, keychain: &Path, kc_pass: &str, cert_pass_raw: String) -> AppResult {
+pub(crate) fn import_with_runner<F>(cert: &Path, keychain: &Path, kc_pass: &str, cert_pass_raw: String, mut run_cmd: F) -> AppResult
+where
+    F: FnMut(&mut Command, &str) -> AppResult,
+{
     let cert_pass = SecretString::new(cert_pass_raw);
-    run_status(Command::new("security").arg("create-keychain").arg("-p").arg(kc_pass).arg(keychain), "security create-keychain")?;
-    run_status(Command::new("security").args(["set-keychain-settings", "-lut", "21600"]).arg(keychain), "security set-keychain-settings")?;
-    run_status(Command::new("security").arg("unlock-keychain").arg("-p").arg(kc_pass).arg(keychain), "security unlock-keychain")?;
-    run_status(
+    run_cmd(Command::new("security").arg("create-keychain").arg("-p").arg(kc_pass).arg(keychain), "security create-keychain")?;
+    run_cmd(Command::new("security").args(["set-keychain-settings", "-lut", "21600"]).arg(keychain), "security set-keychain-settings")?;
+    run_cmd(Command::new("security").arg("unlock-keychain").arg("-p").arg(kc_pass).arg(keychain), "security unlock-keychain")?;
+    run_cmd(
         Command::new("security")
             .arg("import")
             .arg(cert)
@@ -252,11 +280,20 @@ pub(crate) fn import_with_cert_pass(cert: &Path, keychain: &Path, kc_pass: &str,
     for kc in &existing_list {
         set_list.arg(kc);
     }
-    run_status(&mut set_list, "security list-keychains -s")
+    run_cmd(&mut set_list, "security list-keychains -s")
+}
+
+fn read_optional_utf8_env(name: &str) -> AppResult<String> {
+    match env::var(name) {
+        Ok(v) => Ok(v),
+        Err(env::VarError::NotPresent) => Ok(String::new()),
+        Err(env::VarError::NotUnicode(_)) => Err(AppError::runtime(format!("error: {name} is not valid UTF-8"))),
+    }
 }
 
 fn import_into_keychain(cert: &Path, keychain: &Path, kc_pass: &str) -> AppResult {
-    import_with_cert_pass(cert, keychain, kc_pass, env::var("APPLE_CERTIFICATE_PASSWORD").unwrap_or_default())
+    let cert_pass_raw = read_optional_utf8_env("APPLE_CERTIFICATE_PASSWORD")?;
+    import_with_runner(cert, keychain, kc_pass, cert_pass_raw, run_status)
 }
 
 fn resolve_identity(keychain: &Path) -> AppResult<String> {

@@ -122,11 +122,15 @@ pub fn install_file_mode(src: &Path, dst: &Path, mode: u32) -> AppResult {
 }
 
 pub fn remove_checked_file(path: &Path, label: &str) -> AppResult {
-    if fs::symlink_metadata(path).is_ok() {
-        reject_symlink(path, label)?;
-        fs::remove_file(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => Err(AppError::runtime(format!("error: symlink refused for {label}: {}", path.display()))),
+        Ok(_) => {
+            fs::remove_file(path)?;
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e.into()),
     }
-    Ok(())
 }
 
 #[cfg(unix)]
