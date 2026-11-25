@@ -1531,11 +1531,14 @@ fn arabic_in_a_form_the_page_never_drew_falls_back_for_the_run() {
     falls_back_for_the_run(face, page, typed);
 }
 
-/// A subset whose GSUB gives lam its medial form where it starts a join and its initial form where
-/// it joins on both sides: each of lam's forms is still distinct, so the bundled face's checks pass,
-/// but the page drew them the other way round. The whole run is drawn in the bundled face.
+/// A program whose GSUB gives lam its medial form where it starts a join and its initial form where
+/// it joins on both sides: each of lam's forms is still distinct and drawn, so the bundled face's
+/// checks pass, but the page drew them the other way round. The page and the typed text use lam
+/// only in those 2 forms, and never before alef. The whole run is drawn in the bundled face.
 #[test]
 fn a_subset_whose_gsub_swaps_two_forms_the_page_drew_falls_back_for_the_run() {
+    const ORIGINAL: &str = "\u{0644}\u{0643}\u{0645} \u{0639}\u{0644}\u{0645}";
+    const KEPT: &str = "\u{0639}\u{0644}\u{0645} \u{0644}\u{0643}\u{0645}";
     let Some(face) = arabic_face() else { return };
     let lam = usize::from(nominal(face.bytes, '\u{0644}'));
     let initial = shaped_glyph(face.bytes, "\u{0644}\u{0640}", '\u{0644}');
@@ -1544,7 +1547,7 @@ fn a_subset_whose_gsub_swaps_two_forms_the_page_drew_falls_back_for_the_run() {
     let mut gsub = tables(face.bytes)[b"GSUB"].to_vec();
     assert!(rewrite_feature_sequence(&mut gsub, b"init", lam, initial, medial) > 0, "init makes initial lam by multiple substitution");
     assert!(rewrite_feature_sequence(&mut gsub, b"medi", lam, medial, initial) > 0, "medi makes medial lam by multiple substitution");
-    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| with_table(&subset(face.bytes, keep, true), b"GSUB", gsub));
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |_| with_table(face.bytes, b"GSUB", gsub));
     falls_back_for_the_run(face, page, KEPT);
 }
 
@@ -1572,8 +1575,9 @@ fn kept_arabic_in_a_subset_mapping_codes_through_a_stream_falls_back_for_the_run
 }
 
 /// Page evidence counts only where the subset and the bundled face cluster a word alike: a
-/// cluster's form is otherwise not the bundled face's alone. A stand-in bundled face without its
-/// GSUB draws lam and alef apart where the subset draws lam-alef, so the page's words refuse.
+/// cluster's form is otherwise not the bundled face's alone. A stand-in bundled face whose GSUB
+/// lacks its required ligatures draws lam and alef apart where the subset draws lam-alef, so the
+/// page's words refuse.
 #[test]
 fn page_evidence_refuses_where_the_faces_cluster_differently() {
     let Some(face) = arabic_face() else { return };
@@ -1583,7 +1587,16 @@ fn page_evidence_refuses_where_the_faces_cluster_differently() {
     assert_eq!(words.len(), 2);
     let drawn_like_page = pdfcraft_fonts::source_shaping::drawn_like_page;
     assert!(drawn_like_page(face.bytes, face.bytes, &words, KEPT), "the page's own words witness the kept text");
-    let plain = with_table(face.bytes, b"GSUB", EMPTY_GSUB.to_vec());
+    // Renaming the feature leaves the joining forms (no fallback shaping) but drops lam-alef.
+    let mut gsub = tables(face.bytes)[b"GSUB"].to_vec();
+    let tags: Vec<usize> = gsub.windows(4).enumerate().filter(|(_, w)| *w == b"rlig").map(|(i, _)| i).collect();
+    assert!(!tags.is_empty(), "the GSUB has rlig");
+    for i in tags {
+        gsub[i..i + 4].copy_from_slice(b"zzzz");
+    }
+    let plain = with_table(face.bytes, b"GSUB", gsub);
+    let lam_alef = |font: &[u8]| pdfcraft_fonts::source_shaping::shape(font, "\u{0644}\u{0627}").unwrap().glyphs.len();
+    assert_eq!((lam_alef(face.bytes), lam_alef(&plain)), (1, 2), "lam-alef is rlig's");
     assert!(!drawn_like_page(face.bytes, &plain, &words, KEPT), "lam-alef is one cluster in the subset, 2 in the stand-in");
 }
 

@@ -567,12 +567,21 @@ pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, Stri
         if starts != starts_of(&theirs) {
             return None;
         }
+        // The reference's glyphs for each cluster, sorted, gathered once.
+        let mut forms: HashMap<usize, Vec<u32>> = HashMap::new();
+        for &(start, glyph) in &theirs {
+            forms.entry(start).or_default().push(glyph);
+        }
+        for glyphs in forms.values_mut() {
+            glyphs.sort_unstable();
+        }
         let mut out: Vec<((String, Vec<u32>), Vec<u32>)> = Vec::new();
         let mut last = None;
         for &(start, glyph) in &ours {
             if last != Some(start) {
                 let end = starts.get(starts.partition_point(|&s| s <= start)).copied().unwrap_or(run.len());
-                out.push(((run.get(start..end).unwrap_or_default().to_owned(), cluster_at(&theirs, start)), Vec::new()));
+                let form = forms.get(&start).cloned().unwrap_or_default();
+                out.push(((run.get(start..end).unwrap_or_default().to_owned(), form), Vec::new()));
                 last = Some(start);
             }
             if let Some((_, glyphs)) = out.last_mut() {
