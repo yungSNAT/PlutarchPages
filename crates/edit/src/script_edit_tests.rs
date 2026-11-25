@@ -551,21 +551,6 @@ fn glyphs_shown(doc: &Document) -> Vec<(String, u16)> {
     shown
 }
 
-/// The text the ToUnicode of each font the page's content shows a glyph in names for it,
-/// ignoring `ActualText`: what a reader without it copies, in the order shown.
-fn to_unicode_text(doc: &Document) -> String {
-    let page = pdfcraft_model::pages(doc).swap_remove(0);
-    let resources = doc.dict(page.dict.get(b"Resources").unwrap()).unwrap();
-    let fonts = doc.dict(resources.get(b"Font").unwrap()).unwrap();
-    glyphs_shown(doc)
-        .into_iter()
-        .filter_map(|(name, code)| {
-            let font = doc.dict(fonts.get(name.as_bytes())?)?;
-            pdfcraft_fonts::pdf::Metrics::from_dict(doc, &font).text_of(u32::from(code)).map(|t| t.into_owned())
-        })
-        .collect()
-}
-
 /// Edits `page`'s paragraph to `typed` and checks it reads back as typed and draws as the face
 /// draws it, all of it in the bundled Arabic outlines: nothing in the page's subset, `F1`.
 fn falls_back_for_the_run(face: &pdfcraft_fonts::CraftFont, mut page: Document, typed: &str) {
@@ -1532,33 +1517,35 @@ fn kept_arabic_in_a_subset_whose_joining_lookups_are_past_its_lookup_list_falls_
     isolated_only_falls_back_for_the_run(face, joining_gsub(false));
 }
 
-/// A subset that kept a form the page never showed (initial seen), which its ToUnicode doesn't
-/// name: the run keeps the subset's program but is embedded with it again, with its own
-/// ToUnicode, not shown in the page's codes, which would copy only through `ActualText`.
+/// A subset that kept a form the page never drew (initial seen): nothing on the page shows the
+/// program gives it rightly, so the whole run is drawn in the bundled face.
 #[test]
-fn arabic_in_a_form_the_to_unicode_lacks_keeps_its_program_with_its_own_to_unicode() {
+fn arabic_in_a_form_the_page_never_drew_falls_back_for_the_run() {
     let Some(face) = arabic_face() else { return };
     let typed = "سلم عليكم";
     let forms: Vec<usize> = pdfcraft_fonts::source_shaping::shape(face.bytes, typed).unwrap().glyphs.iter().map(|g| g.id.to_u32() as usize).collect();
-    let mut page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| {
         let keep: BTreeSet<usize> = keep.iter().copied().chain(forms.iter().copied()).collect();
         subset(face.bytes, &keep, true)
     });
-    let edit = replace_block(&mut page, 0, 0, typed).unwrap();
-    assert_eq!(edit.substituted, None);
-    let (reopened, _) = saved(&page);
-    let read: Vec<String> = text_blocks(&reopened, 0).unwrap().into_iter().map(|b| b.text).collect();
-    assert_eq!(read, [typed]);
-    let shown = glyphs_shown(&reopened);
-    assert!(!shown.is_empty() && !shown.iter().any(|(font, _)| font == "F1"), "shown in the page's codes: {shown:?}");
-    let sorted = |text: &str| -> Vec<char> {
-        let mut chars: Vec<char> = text.chars().filter(|c| !c.is_whitespace()).collect();
-        chars.sort_unstable();
-        chars
-    };
-    assert_eq!(sorted(&to_unicode_text(&reopened)), sorted(typed), "the ToUnicode names every glyph shown");
-    let drawn = difference(&ink(&reopened), &ink(&producer_page(face.bytes, "NotoSansArabic", typed, true)));
-    assert!(drawn <= DRAWN, "{drawn:.3} of the ink differs from the typed text's");
+    falls_back_for_the_run(face, page, typed);
+}
+
+/// A subset whose GSUB gives lam its medial form where it starts a join and its initial form where
+/// it joins on both sides: each of lam's forms is still distinct, so the bundled face's checks pass,
+/// but the page drew them the other way round. The whole run is drawn in the bundled face.
+#[test]
+fn a_subset_whose_gsub_swaps_two_forms_the_page_drew_falls_back_for_the_run() {
+    let Some(face) = arabic_face() else { return };
+    let lam = usize::from(nominal(face.bytes, '\u{0644}'));
+    let initial = shaped_glyph(face.bytes, "\u{0644}\u{0640}", '\u{0644}');
+    let medial = shaped_glyph(face.bytes, "\u{0640}\u{0644}\u{0640}", '\u{0644}');
+    assert_ne!(initial, medial);
+    let mut gsub = tables(face.bytes)[b"GSUB"].to_vec();
+    assert!(rewrite_feature_sequence(&mut gsub, b"init", lam, initial, medial) > 0, "init makes initial lam by multiple substitution");
+    assert!(rewrite_feature_sequence(&mut gsub, b"medi", lam, medial, initial) > 0, "medi makes medial lam by multiple substitution");
+    let page = producer_page_with(face.bytes, "NotoSansArabic", ORIGINAL, |keep| with_table(&subset(face.bytes, keep, true), b"GSUB", gsub));
+    falls_back_for_the_run(face, page, KEPT);
 }
 
 /// A bracket typed as a word of its own: in the row it is mirrored to the glyph the page shows,
