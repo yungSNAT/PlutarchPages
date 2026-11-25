@@ -39,7 +39,7 @@ permissions:
 jobs:
   windows-arm64:
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@82f995029cffa611fea46e4dddb0ba2627190003 # main, 31 October 2026
+    uses: storytold/craft-common-actions/.github/workflows/windows-arm64.yml@1754016e67ca9b74dfa4cf4678b2ac3548e9840f # main, 31 October 2026
     with:
       app-name: pdfcraft
       app-dir: PlutarchPages
