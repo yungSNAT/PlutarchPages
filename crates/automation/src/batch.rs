@@ -429,8 +429,9 @@ impl Folder {
 /// - a held folder whose entry is held in turn can no longer be emptied, so never converted (NTFS
 ///   and ReFS refuse a reparse point on a folder with an entry); an anchor file held without
 ///   delete sharing does the same for the output folder whilst the file is named by path;
-/// - the bytes are written through a handle held without delete sharing, so the file cannot be
-///   moved whilst they are written; it must not have been turned into a link whilst it was
+/// - the bytes are written through a handle held without delete or write sharing, so the file
+///   cannot be moved or written by another process meanwhile, then read back under a handle that
+///   shares no writing until the file is named; it must not have been turned into a link whilst it was
 ///   empty, and the name taken must then hold that file;
 /// - clean-up deletes only what publish made, each by its own handle, never by name.
 ///
@@ -598,11 +599,11 @@ impl Folder {
         Err(failed("no free temporary name in the output folder"))
     }
 
-    /// `made` held without delete sharing, once it is shown to be in the output folder.
+    /// `made` held without delete or write sharing, once it is shown to be in the output folder.
+    /// Fails if another process already has it open for writing.
     fn pin(&self, made: &Made, access: winx::file::AccessMode) -> Result<File> {
-        use winx::file::ShareMode;
         let (_, leaf_at) = self.leaf()?;
-        let pinned = Made::reopen(made.get()?, access, ShareMode::FILE_SHARE_READ | ShareMode::FILE_SHARE_WRITE).map_err(failed)?;
+        let pinned = Made::reopen(made.get()?, access, winx::file::ShareMode::FILE_SHARE_READ).map_err(failed)?;
         Self::placed_in(&pinned, leaf_at)?;
         Ok(pinned)
     }
@@ -628,14 +629,29 @@ impl Folder {
         let mut file = self.pin(&temp, winx::file::AccessMode::GENERIC_READ | winx::file::AccessMode::GENERIC_WRITE)?;
         file.write_all(bytes).map_err(failed)?;
         file.sync_all().map_err(failed)?;
+        drop(file);
+        // The rename needs delete sharing, so a second handle that still shares no writing holds
+        // the file until it is named; a writer that got in between makes this fail.
+        let mut held = Made::reopen(
+            temp.get()?,
+            winx::file::AccessMode::GENERIC_READ,
+            winx::file::ShareMode::FILE_SHARE_READ | winx::file::ShareMode::FILE_SHARE_DELETE,
+        )
+        .map_err(failed)?;
         // Whilst it was empty another process could turn it into a link, which the pin opened as
         // itself: the bytes went into the link and its name would read as the target. Once it
         // has data, no symbolic link can be set on it.
-        if file.metadata().map_err(failed)?.file_attributes() & REPARSE_POINT != 0 {
+        if held.metadata().map_err(failed)?.file_attributes() & REPARSE_POINT != 0 {
             return Err(failed("the file was turned into a link whilst it was written; nothing was kept"));
         }
-        drop(file);
-        self.take_name(temp, names)
+        let mut written = Vec::with_capacity(bytes.len());
+        held.read_to_end(&mut written).map_err(failed)?;
+        if written != bytes {
+            return Err(failed("the file was changed whilst it was written; nothing was kept"));
+        }
+        let named = self.take_name(temp, names);
+        drop(held);
+        named
     }
 
     /// Give `temp` the first free name, then check by its handle that the name holds it.
@@ -1097,6 +1113,23 @@ public static class InPlaceJunction {
         assert!(error.contains("link"), "{error}");
         assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
         assert_eq!(std::fs::read(outside.join("x")).unwrap(), b"victim");
+    }
+
+    /// Another process holds the temporary file open for writing before it is pinned: it could
+    /// change the bytes, or empty the file and turn it into a link, so the publish fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_file_another_process_can_write_is_not_published() {
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let before = names(&out);
+        let temp = folder.make_temporary().unwrap();
+        let [name] = names(&out).into_iter().filter(|n| !before.contains(n)).collect::<Vec<_>>().try_into().unwrap();
+        let writer = std::fs::OpenOptions::new().write(true).open(out.join(&name)).unwrap();
+        assert!(folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).is_err());
+        assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
+        drop(writer);
     }
 
     /// An empty file can be turned into a link at any time, so no empty output is made.

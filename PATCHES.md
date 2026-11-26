@@ -319,7 +319,7 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   checked by its own handle to be in its held parent and deleted by that handle if not; an anchor
   file held without delete sharing keeps the output folder non-empty (a folder with an entry cannot
   become a reparse point) whilst the temporary file, written through a handle that shares no
-  delete, is renamed by path. An empty output is refused, as only a file with data refuses a
+  delete or write and read back under one that shares no write, is renamed by path. An empty output is refused, as only a file with data refuses a
   symbolic link. Not covered: an empty file or folder made through a relative
   symbolic link before it is deleted by handle, which stays if another process fills or holds it;
   a file another process puts at the temporary name, which can take the output name (that output
