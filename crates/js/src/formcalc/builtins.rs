@@ -349,7 +349,17 @@ impl Interp<'_> {
                     .into(),
                 )
             }
-            "timefmt" | "localtimefmt" => Val::Str("HH:MM:SS".into()),
+            "timefmt" | "localtimefmt" => {
+                let style = if args.is_empty() { 0.0 } else { self.arg_num(args, 0)? };
+                Val::Str(
+                    match style as i32 {
+                        1 => "h:MM A",
+                        3 | 4 => "h:MM:SS A Z",
+                        _ => "h:MM:SS A",
+                    }
+                    .into(),
+                )
+            }
             "num2time" | "num2gmtime" => {
                 let ms = self.arg_num(args, 0)?;
                 if !ms.is_finite() || ms < 0.0 {
