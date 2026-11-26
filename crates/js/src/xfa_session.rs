@@ -257,3 +257,6 @@ mod native {
 }
 
 pub use native::XfaSession;
+
+#[cfg(test)]
+mod fork_tests;

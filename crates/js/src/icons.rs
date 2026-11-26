@@ -57,3 +57,6 @@ pub(crate) fn set(_: &JsValue, args: &[JsValue], name: &FieldKey, c: &mut Contex
     })?;
     Ok(JsValue::undefined())
 }
+
+#[cfg(test)]
+mod fork_tests;

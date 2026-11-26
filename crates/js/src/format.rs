@@ -795,3 +795,6 @@ pub(crate) fn printx(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResu
 /// Bytes `util.printd` has scanned for runs of a format character, for tests that bound its work.
 #[cfg(test)]
 pub(crate) static PRINTD_SCANNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(test)]
+mod fork_tests;

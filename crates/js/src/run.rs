@@ -422,3 +422,6 @@ fn set_event(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResult<JsVal
     host(ctx)?.borrow_mut().current_event = args.first().cloned().unwrap_or_default();
     Ok(JsValue::undefined())
 }
+
+#[cfg(test)]
+mod fork_tests;

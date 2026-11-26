@@ -372,3 +372,6 @@ fn flatten(n: &XfaNode, parent: Option<usize>, out: &mut Vec<HNode>, depth: usiz
     }
     Some(idx)
 }
+
+#[cfg(test)]
+mod fork_tests;

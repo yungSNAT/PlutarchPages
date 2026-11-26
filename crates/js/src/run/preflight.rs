@@ -301,3 +301,6 @@ pub(super) fn refuse(source: &str) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod fork_tests;

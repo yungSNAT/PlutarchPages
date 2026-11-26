@@ -451,6 +451,8 @@ pub(super) fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 mod tests {
     use super::*;
 
+    mod fork_tests;
+
     #[test]
     fn unary_not_does_not_swallow_following_bang() {
         assert_eq!(parse("not !1"), Ok(vec![Stmt::Expr(Expr::Not(Box::new(Expr::Not(Box::new(Expr::Num(1.0))))))]));
