@@ -124,3 +124,17 @@ fn calls_and_blocks_past_the_depth_limit_are_errors() {
     assert!(interp.block(&[]).is_err_and(|e| e == TOO_DEEP));
     assert_eq!(interp.depth, 0);
 }
+
+#[test]
+fn text_against_a_number_compares_as_numbers() {
+    // XFA 3.3 FormCalc relational and equality expressions: only 2 strings compare as text;
+    // otherwise both operands are promoted to numbers, and text that is not a number is 0.
+    let root = sample_form();
+    let run = |s: &str| run_on(&root, "form1[0].target[0]", s, Limits::default()).result;
+    assert_eq!(run("\"abc\" > 5").as_deref(), Some("0"));
+    assert_eq!(run("5 < \"abc\"").as_deref(), Some("0"));
+    assert_eq!(run("\"abc\" < 5").as_deref(), Some("1"));
+    assert_eq!(run("\"abc\" == 0").as_deref(), Some("1"));
+    assert_eq!(run("0 <> \"abc\"").as_deref(), Some("0"));
+    assert_eq!(run("\"abc\" >= -1").as_deref(), Some("1"));
+}
