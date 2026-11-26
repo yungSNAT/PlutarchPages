@@ -124,3 +124,34 @@ fn gray_conversion_converts_a_form_once_for_pages_sharing_its_resources() {
     let report = pdfcraft_optimize::convert_to_gray(&mut doc, None).unwrap();
     assert_eq!((report.pages, report.forms, report.images), (3, 1, 1));
 }
+
+#[test]
+fn cleanup_can_cancel_while_scanning_decoded_content() {
+    use pdfcraft_optimize::{Stage, optimize_with_progress};
+
+    let settings = Settings { merge_fragments: false, flate_unencoded: false, lzw_to_flate: false, ..Settings::default() };
+    // The page reaches the clean-up progress interval without naming its unused resource.
+    let content = " ".repeat(64 << 20);
+    for continue_cleanup in [false, true] {
+        let mut doc = Document::new_empty();
+        let unused = form(&mut doc, None, "");
+        let page = page(&mut doc, &[("Unused", unused)], &content);
+        let mut cleanup_checks = 0;
+        let result = optimize_with_progress(&mut doc, &settings, &mut |stage| {
+            if stage != Stage::CleanUp {
+                return true;
+            }
+            cleanup_checks += 1;
+            cleanup_checks == 1 || continue_cleanup
+        });
+
+        assert_eq!(cleanup_checks, 2);
+        if continue_cleanup {
+            assert_eq!(result.unwrap().unused_xobjects, 1);
+            assert!(page_xobjects(&doc, page).is_empty());
+        } else {
+            assert!(matches!(result, Err(OptimizeError::Cancelled)));
+            assert_eq!(page_xobjects(&doc, page), ["Unused"]);
+        }
+    }
+}

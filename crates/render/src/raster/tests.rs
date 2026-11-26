@@ -11913,3 +11913,17 @@ fn a_to_unicode_cmap_reads_its_mappings_past_a_token_it_cannot_parse() {
     let unclosed = format!("{body}{}{}", "(".repeat(4096), "x".repeat(1 << 16));
     assert!(CMap::parse(unclosed.as_bytes(), |_| None).is_some_and(|c| c.lookup_bf_string(0x48).is_some()));
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn retired_threads_report_unfinished_until_the_worker_is_released() {
+    let (release, blocked) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || blocked.recv().unwrap());
+    let mut retiring = super::Retiring(vec![worker]);
+    assert!(!retiring.exited());
+    assert_eq!(retiring.running(), 1);
+
+    release.send(()).unwrap();
+    retiring.0.pop().unwrap().join().unwrap();
+    assert!(retiring.exited());
+}

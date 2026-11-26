@@ -2,6 +2,8 @@ use super::*;
 use pdfcraft_cos::{SaveOptions, write_full};
 use pdfcraft_testkit::Pdf;
 use std::sync::Arc;
+
+mod fork_tests;
 fn fixture(content: &str, attrs: &str, extra: &[&str]) -> Document {
     fixture_with("4 0 R", content, attrs, extra)
 }
