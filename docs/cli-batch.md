@@ -46,7 +46,10 @@ For `batch`, existing output names are never replaced, even by concurrent batch 
 `book.pdf`, `book (2).pdf`, and so on. A temporary file in the destination folder
 is published without overwriting. Sources are never moved or deleted. An output
 folder inside an input folder is excluded from discovery, including on reruns.
-The output folder cannot equal or contain a selected input folder.
+The output folder cannot equal or contain a selected input folder. Each output is written
+through its folder as opened, one folder at a time from the top: a folder on the way that is a
+symbolic link or junction, even one made after the paths were checked, fails that file and
+nothing is written. On macOS every folder above the output folder must also be readable.
 
 The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not give this guarantee yet.
 
