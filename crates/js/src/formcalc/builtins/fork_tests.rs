@@ -74,3 +74,17 @@ fn financial_and_unit_builtins_cover_all_arms() {
     let uv: f64 = ok("UnitValue(\"2.54cm\", \"pc\")").parse().unwrap_or(0.0);
     assert!((uv - 6.0).abs() < 1e-6, "uv={uv}");
 }
+
+#[test]
+fn time_formats_follow_the_en_us_styles() {
+    // XFA 3.3 FormCalc TimeFmt and Designer's en_US time patterns: default and medium h:MM:SS A,
+    // short h:MM A, long and full h:MM:SS A Z; an invalid style gives the default.
+    assert_eq!(ok("TimeFmt()"), "h:MM:SS A");
+    assert_eq!(ok("TimeFmt(0)"), "h:MM:SS A");
+    assert_eq!(ok("TimeFmt(1)"), "h:MM A");
+    assert_eq!(ok("TimeFmt(2)"), "h:MM:SS A");
+    assert_eq!(ok("TimeFmt(3)"), "h:MM:SS A Z");
+    assert_eq!(ok("TimeFmt(4)"), "h:MM:SS A Z");
+    assert_eq!(ok("TimeFmt(9)"), "h:MM:SS A");
+    assert_eq!(ok("LocalTimeFmt(1)"), "h:MM A");
+}
