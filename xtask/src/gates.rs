@@ -119,6 +119,8 @@ pub fn ci(_: &[String]) -> anyhow::Result<()> {
         ("pdf-deps", Box::new(|| crate::pdf_deps::run(&root()).map_err(anyhow::Error::msg))),
         ("clippy", Box::new(|| run_args(&["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]))),
         ("cli-no-default-features", Box::new(|| run_args(&["check", "-p", "pdfcraft-cli", "--no-default-features"]))),
+        // Off by default, so the workspace clippy never builds it or its tests.
+        ("ocr-arabic", Box::new(|| run_args(&["clippy", "-p", "pdfcraft-ocr", "--features", "arabic", "--all-targets", "--", "-D", "warnings"]))),
         ("test", Box::new(|| test(&[]))),
         ("craft-pdf", Box::new(vendored_craft_pdf)),
         ("i18n-report", Box::new(|| i18n_report(&["--workspace".to_string()]))),

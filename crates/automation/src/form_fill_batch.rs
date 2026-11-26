@@ -255,11 +255,12 @@ fn output_names(rows: &[RowResult<Row>], stem: &str, verbose: bool) -> Vec<RowRe
         }
     }
     for rows in by_name.values().filter(|rows| rows.len() > 1) {
+        let count = rows.len();
         for &i in rows {
-            let others: Vec<String> = rows.iter().filter(|&&j| j != i).map(|j| format!("row {}", j + 1)).collect();
+            let other = if i == rows[0] { rows[1] } else { rows[0] };
             if let Some(name) = names.get_mut(i) {
                 let shown = if verbose { format!(" {:?}", name.as_deref().unwrap_or_default()) } else { String::new() };
-                *name = Err(format!("the file name{shown} is also given by {}", others.join(", ")));
+                *name = Err(format!("the file name{shown} is also given by row {} ({count} rows share it)", other + 1));
             }
         }
     }

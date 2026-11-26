@@ -1785,17 +1785,16 @@ fn strokes(w: u32, h: u32) -> Vec<u8> {
 /// The one-bit samples (true for white) a Group 4 image stream decodes to, through an
 /// independent decoder.
 fn g4_rows(s: &Stream) -> Vec<Vec<bool>> {
-    struct Rows(Vec<Vec<bool>>, Vec<bool>, usize);
+    struct Rows(Vec<Vec<bool>>, usize);
     impl hayro_ccitt::Decoder for Rows {
-        fn push_pixel(&mut self, white: bool) {
-            self.1.push(white);
-        }
-        fn push_pixel_chunk(&mut self, white: bool, chunks: u32) {
-            self.1.extend(std::iter::repeat_n(white, chunks as usize * 8));
-        }
-        fn next_line(&mut self) {
-            let mut row = std::mem::take(&mut self.1);
-            row.truncate(self.2);
+        // A row starts white and changes colour at each position; the pixels from an even-indexed
+        // change up to the next one (or the row's end) are black.
+        fn push_row(&mut self, changes: &[u32]) {
+            let mut row = vec![true; self.1];
+            for run in changes.chunks(2) {
+                let end = run.get(1).map_or(self.1, |&e| e as usize);
+                row[run[0] as usize..end].fill(false);
+            }
             self.0.push(row);
         }
     }
@@ -1807,9 +1806,9 @@ fn g4_rows(s: &Stream) -> Vec<Vec<bool>> {
         end_of_line: false,
         rows_are_byte_aligned: false,
         encoding: hayro_ccitt::EncodingMode::Group4,
-        invert_black: false,
+        strict: true,
     };
-    let mut out = Rows(Vec::new(), Vec::new(), w as usize);
+    let mut out = Rows(Vec::new(), w as usize);
     hayro_ccitt::decode(&s.raw, &mut out, &mut hayro_ccitt::DecoderContext::new(settings)).unwrap();
     out.0
 }
@@ -1878,6 +1877,30 @@ fn black_and_white_images_are_stored_at_one_bit() {
         [(Some(8), Some(b"FlateDecode".to_vec())), (Some(8), Some(b"FlateDecode".to_vec())), (Some(8), Some(b"FlateDecode".to_vec()))]
     );
     assert_eq!(kept[3], (Some(1), Some(b"FlateDecode".to_vec())), "Group 4 isn't smaller for 2 × 2");
+}
+
+/// Group 4 keeps black that touches a row's edges: a row that starts black, one that ends black
+/// and one that is black all through decode to the picture's bits.
+#[test]
+fn group4_keeps_black_at_row_edges() {
+    let (w, h) = (1200u32, 240u32);
+    let mut bits = strokes(w, h);
+    let stride = (w as usize).div_ceil(8);
+    let mut black = |x: usize, y: usize| bits[y * stride + x / 8] &= !(0x80 >> (x % 8));
+    for y in 0..h as usize {
+        black(0, y);
+        if y % 2 == 0 {
+            black(w as usize - 1, y);
+        }
+    }
+    (0..w as usize).for_each(|x| black(x, 7));
+    let white = |x: usize, y: usize| bits[y * stride + x / 8] & (0x80 >> (x % 8)) != 0;
+    let expected: Vec<Vec<bool>> = (0..h as usize).map(|y| (0..w as usize).map(|x| white(x, y)).collect()).collect();
+    let png = png_of(w, h, TestPngColor::Grayscale, TestPngDepth::One, &bits, None, None);
+    let doc = reopen(&from_images(&[("edges.png".to_string(), png)]).unwrap());
+    let s = image_stream(&doc, 0);
+    assert_eq!(s.dict.name(b"Filter"), Some(&b"CCITTFaxDecode"[..]));
+    assert_eq!(g4_rows(&s), expected);
 }
 
 /// The pixels of an exported PNG (RGB), as true for white.

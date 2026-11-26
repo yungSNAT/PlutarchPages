@@ -9,8 +9,8 @@
 
 use std::path::Path;
 
-use rten::ctc::CtcDecoder;
 use rten_imageproc::RectF;
+use rten_sequence::ctc::CtcDecoder;
 use rten_tensor::prelude::*;
 use rten_tensor::{NdTensor, Tensor};
 

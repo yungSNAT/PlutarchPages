@@ -229,15 +229,16 @@ fn ci_runs_the_steps_in_order() {
     s.script("bin/git", r#"PATH="$REAL_PATH" exec git "$@""#);
     let out = s.xtask(&["ci"], &[("FAKE_FAIL", "--all-features")]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(stdout(&out).contains("CI: 10 passed, FAILED at `fork-check`"), "{}\n{}", stdout(&out), stderr(&out));
+    assert!(stdout(&out).contains("CI: 11 passed, FAILED at `fork-check`"), "{}\n{}", stdout(&out), stderr(&out));
     let steps: Vec<String> = s.log().lines().filter(|l| !l.starts_with("metadata")).map(String::from).collect();
-    assert_eq!(steps.len(), 9, "{steps:#?}");
+    assert_eq!(steps.len(), 10, "{steps:#?}");
     assert_eq!(
-        steps[..8],
+        steps[..9],
         [
             "fmt --all -- --check",
             "clippy --workspace --all-targets -- -D warnings",
             "check -p pdfcraft-cli --no-default-features",
+            "clippy -p pdfcraft-ocr --features arabic --all-targets -- -D warnings",
             "nextest --version",
             "nextest run --no-fail-fast --workspace --lib --bins --tests",
             "test --workspace --doc",
@@ -245,7 +246,7 @@ fn ci_runs_the_steps_in_order() {
             "test --workspace --lib --quiet -- i18n::tests::translation_gaps_report --exact --nocapture",
         ]
     );
-    assert!(steps[8].starts_with("check --target wasm32-unknown-unknown --keep-going -p pdfcraft-"), "{}", steps[8]);
+    assert!(steps[9].starts_with("check --target wasm32-unknown-unknown --keep-going -p pdfcraft-"), "{}", steps[9]);
 }
 
 #[test]

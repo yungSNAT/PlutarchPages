@@ -2865,4 +2865,34 @@ mod tests {
         assert_eq!(split_thai_scripts("ก\u{0301} ab\u{0301}"), vec!["ก\u{0301} ", "ab\u{0301}"]);
         assert_eq!(split_thai_scripts("ab\u{0301} ก\u{0301}"), vec!["ab\u{0301} ", "ก\u{0301}"]);
     }
+
+    /// A program that draws dal and waw as one ligature, where the bundled face draws them apart:
+    /// the 2 faces cluster the word differently, so the page's glyphs can't show the bundled face's
+    /// form of each letter, and the program is refused. With the program on both sides the same
+    /// page passes, so the refusal is the clustering's.
+    #[test]
+    fn a_word_the_program_ligates_but_the_bundled_face_draws_apart_is_refused() {
+        use skrifa::MetadataProvider as _;
+        let Some(face) = crate::CRAFT_FONTS.iter().find(|f| f.family == "Noto Sans Arabic") else {
+            eprintln!("skipping: built without the craft-fonts Arabic face (set CRAFT_FONTS_DIR)");
+            return;
+        };
+        let glyph = |c: char| FontRef::new(face.bytes).unwrap().charmap().map(c).unwrap().to_u32() as u16;
+        let (dal, waw, reh) = (glyph('\u{062f}'), glyph('\u{0648}'), glyph('\u{0631}'));
+        // The liga lookup under `arab`: dal then waw, in logical order, become reh's glyph.
+        let mut gsub = minimal_liga_gsub(dal, waw, reh);
+        let at = gsub.windows(4).position(|w| w == b"thai").unwrap();
+        gsub[at..at + 4].copy_from_slice(b"arab");
+        let program = with_table(face.bytes, b"GSUB", gsub);
+        let word = "\u{062f}\u{0648}";
+        let own = FontRef::new(&program).unwrap();
+        let data = ShaperData::new(&own);
+        assert_eq!(rtl_clusters(&data.shaper(&own).build(), word), [(0, u32::from(reh))], "the program ligates the word");
+        let reference = FontRef::new(face.bytes).unwrap();
+        let data = ShaperData::new(&reference);
+        assert_eq!(rtl_clusters(&data.shaper(&reference).build(), word).len(), 2, "the bundled face draws 2 letters");
+        let page = [vec![(u32::from(reh), word.to_owned())]];
+        assert!(drawn_like_page(&program, &program, &page, word));
+        assert!(!drawn_like_page(&program, face.bytes, &page, word));
+    }
 }
