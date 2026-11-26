@@ -56,14 +56,16 @@ in place whilst it is empty (a junction, mount point or symbolic link) gets noth
 through it: each file and folder the batch makes is checked by its own handle to be in the folder
 it was made for, and one made elsewhere is deleted again by that handle before any byte is
 written. So a process allowed to make symbolic links (Developer Mode, the privilege, or an
-administrator) can still have an empty file or folder appear outside for that moment, and it can
-stay if that process puts something in the folder or holds it open. The bytes are written through
+administrator) can still have an empty file or folder appear for that moment anywhere on that drive
+the batch itself may create, and it can stay if that process puts something in the folder or
+holds it open. The bytes are written through
 a handle that keeps the file from being moved, and whilst the file is named the output folder
 briefly holds a second `.tmp` file, which keeps the folder from being turned into a link. The file
 is named by path: if another process puts its own file at the temporary name just before that, its
 file can take the output name, and that output then fails and the file is left alone. Clean-up
 deletes only files and folders the batch made, each by its own handle. Network folders (UNC paths
-and drives mapped to a share) are not covered by these checks. On macOS and other systems without
+and drives mapped to a share) are not covered by these checks, nor is a process of the same user
+redefining a drive letter whilst the batch runs. On macOS and other systems without
 `O_PATH` the output folder and every folder above it must also be readable, and a folder that has
 to be made needs a writable parent.
 

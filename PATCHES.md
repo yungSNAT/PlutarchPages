@@ -319,8 +319,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   checked by its own handle to be in its held parent and deleted by that handle if not; an anchor
   file held without delete sharing keeps the output folder non-empty (a folder with an entry cannot
   become a reparse point) whilst the temporary file, written through a handle that shares no
-  delete, is renamed by path. Not covered: an empty file or folder made for a moment through a
-  relative symbolic link before it is deleted, and network folders. Tests in the same file. Keep it over upstream's
+  delete, is renamed by path. Not covered: an empty file or folder made through a relative
+  symbolic link before it is deleted by handle, which stays if another process fills or holds it;
+  a file another process puts at the temporary name, which can take the output name (that output
+  then fails and the file is left alone); and network folders. Tests in the same file. Keep it over upstream's
   `create_dir_all` and `tempfile` unless upstream makes publishing handle-relative.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and

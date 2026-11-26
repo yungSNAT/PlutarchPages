@@ -425,12 +425,13 @@ impl Folder {
 /// - nothing is taken on trust from where it was asked for: each folder held, and each file or
 ///   folder made relative to its held parent, must be an entry of that parent by the final path
 ///   of its own handle (`GetFinalPathNameByHandleW`); one made elsewhere is deleted again by its
-///   own handle and the publish fails;
+///   own handle, unless another process keeps it, and the publish fails;
 /// - a held folder whose entry is held in turn can no longer be emptied, so never converted (NTFS
 ///   and ReFS refuse a reparse point on a folder with an entry); an anchor file held without
 ///   delete sharing does the same for the output folder whilst the file is named by path;
 /// - the bytes are written through a handle held without delete sharing, so the file cannot be
-///   moved whilst they are written, and the name taken must then hold that file;
+///   moved whilst they are written; it must not have been turned into a link whilst it was
+///   empty, and the name taken must then hold that file;
 /// - clean-up deletes only what publish made, each by its own handle, never by name.
 ///
 /// Elsewhere (wasm) the folder is only made.
@@ -608,18 +609,29 @@ impl Folder {
 
     /// Write `bytes` to a temporary file in the folder, then give it the first free name.
     fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
-        use winx::file::AccessMode;
         // The anchor: whilst it is held the output folder has an entry nobody else can remove.
         let anchor = self.make_temporary()?;
-        let anchor_pin = self.pin(&anchor, AccessMode::GENERIC_READ)?;
-        let temp = self.make_temporary()?;
-        let named = self.pin(&temp, AccessMode::GENERIC_READ | AccessMode::GENERIC_WRITE).and_then(|mut file| {
-            file.write_all(bytes).map_err(failed)?;
-            file.sync_all().map_err(failed)
-        });
-        let named = named.and_then(|()| self.take_name(temp, names));
+        let anchor_pin = self.pin(&anchor, winx::file::AccessMode::GENERIC_READ)?;
+        let named = self.make_temporary().and_then(|temp| self.write_named(temp, bytes, names));
         drop(anchor_pin);
         named
+    }
+
+    /// Write `bytes` through a pin of `temp`, then name it.
+    fn write_named(&self, temp: Made, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        let mut file = self.pin(&temp, winx::file::AccessMode::GENERIC_READ | winx::file::AccessMode::GENERIC_WRITE)?;
+        file.write_all(bytes).map_err(failed)?;
+        file.sync_all().map_err(failed)?;
+        // Whilst it was empty another process could turn it into a link, which the pin opened as
+        // itself: the bytes went into the link and its name would read as the target. Once it
+        // has data, no symbolic link can be set on it.
+        if file.metadata().map_err(failed)?.file_attributes() & REPARSE_POINT != 0 {
+            return Err(failed("the file was turned into a link whilst it was written; nothing was kept"));
+        }
+        drop(file);
+        self.take_name(temp, names)
     }
 
     /// Give `temp` the first free name, then check by its handle that the name holds it.
@@ -1058,6 +1070,29 @@ public static class InPlaceJunction {
         assert!(error.contains("link"), "{error}");
         drop(made);
         assert!(names(&outside).is_empty(), "{:?}", names(&outside));
+    }
+
+    /// The empty temporary file is turned into a relative symbolic link to another file before it
+    /// is pinned and written: the output name would read as that file, so the publish fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_file_turned_into_a_link_before_it_is_written_is_not_published() {
+        let (_dir, base, outside) = sandbox();
+        std::fs::write(outside.join("x"), b"victim").unwrap();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let anchor = folder.make_temporary().unwrap();
+        let _pin = folder.pin(&anchor, winx::file::AccessMode::GENERIC_READ).unwrap();
+        let before = names(&out);
+        let temp = folder.make_temporary().unwrap();
+        let [name] = names(&out).into_iter().filter(|n| !before.contains(n)).collect::<Vec<_>>().try_into().unwrap();
+        if relative_symlink_in_place(&out.join(name), r"..\outside\x").is_none() {
+            return;
+        }
+        let error = folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
+        assert_eq!(std::fs::read(outside.join("x")).unwrap(), b"victim");
     }
 
     /// A held folder just made is turned in place into a relative symbolic link to `..\outside`;
