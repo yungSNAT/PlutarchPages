@@ -320,6 +320,62 @@ mod tests {
         assert!(discovery.walk(Path::new("absent"), Path::new(""), Path::new("output"), true, MAX_DEPTH + 1).unwrap_err().to_string().contains("64"));
     }
 
+    /// A link `at` to the folder `target`: a symlink on Unix, a junction on Windows (which needs
+    /// no privilege).
+    fn link_dir(at: &Path, target: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, at).unwrap();
+        #[cfg(windows)]
+        {
+            // Rebuilt from components so every separator is `\` (cmd reads `/x` as a switch).
+            let (link, target): (PathBuf, PathBuf) = (at.components().collect(), target.components().collect());
+            let status = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output().unwrap();
+            assert!(status.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&status.stderr));
+        }
+    }
+
+    /// The canonical temporary folder, as callers pass it, and a folder `outside` in it, named
+    /// as created (mklink takes it in that form).
+    fn sandbox() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        (dir, base, outside)
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn publish_refuses_an_output_folder_swapped_for_a_link() {
+        // The caller checked `base/out`; it was then replaced by a link out of the root.
+        let (_dir, base, outside) = sandbox();
+        link_dir(&base.join("out"), &outside);
+        let error = publish(&base.join("out/a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "nothing is written through the link");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn publish_refuses_a_link_above_the_output_folder() {
+        let (_dir, base, outside) = sandbox();
+        link_dir(&base.join("up"), &outside);
+        let error = publish(&base.join("up/new/sub/a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "no folder is made through the link");
+    }
+
+    #[test]
+    fn publish_makes_missing_folders_and_never_replaces_a_file() {
+        let (_dir, base, _) = sandbox();
+        let target = base.join("out/x/a.pdf");
+        assert_eq!(publish(&target, b"first").unwrap(), target);
+        assert_eq!(publish(&target, b"second").unwrap(), base.join("out/x/a (2).pdf"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
+        assert_eq!(std::fs::read(base.join("out/x/a (2).pdf")).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(base.join("out/x")).unwrap().count(), 2, "no temporary file is left");
+    }
+
     #[test]
     fn doc_batch_dry_run_lists_outputs_without_writing() {
         let dir = tempfile::tempdir().unwrap();
