@@ -614,6 +614,8 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
 mod tests {
     use super::*;
 
+    mod fork_tests;
+
     #[test]
     fn extensions_are_allowlisted() {
         assert_eq!(office_extension("Report.DOCX"), Some("docx"));
