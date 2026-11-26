@@ -77,7 +77,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `[3]` and `- 3 -` run. Known limit: a bare number in square brackets or between paired dashes
   that steps by one a page runs as a page number whatever its size (`[500]`, `[501]`;
   `- 500 -`, `- 501 -`), as neither shape marks an amount
-  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes).
+  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes). So do a
+  changing number with an en or em dash on one side only (`–5`, `5–`, `—5`, `– 5`) and one
+  with a minus inside square brackets (`[-5]`), as only `-` and `−` count as a minus and
+  the one-sided check reads the bracket first.
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in
