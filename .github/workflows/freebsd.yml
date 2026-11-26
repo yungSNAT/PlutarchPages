@@ -37,6 +37,6 @@ permissions:
 jobs:
   freebsd:
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@88148a57ef09ef407d73c0f385e04cc7f4c2720a # main, 25 November 2026
+    uses: storytold/craft-common-actions/.github/workflows/freebsd.yml@4ec2a14646b538253fd5ebe109bf463a3d31b061 # main, 25 November 2026
     with:
       craft-fonts-ref: b076417b5880bd4154bd22f00695b1d28c6bea83
