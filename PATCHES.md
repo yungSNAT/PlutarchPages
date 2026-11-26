@@ -411,7 +411,11 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
 ## Taken ahead of the next merge
 
 These upstream commits are cherry-picked unchanged. The next merge brings the same lines, so it
-should not conflict on them: delete the entry then. None since the `b192e36f` merge.
+should not conflict on them: delete the entry then.
+
+- Auto-tag marks running headers, footers and page numbers as pagination artifacts: upstream
+  #7810 (`6f1c601a`, 26 November 2026), picked as one commit against its first parent. Its lines
+  are upstream's; the following merge brings #8160 too (R4915).
 
 ## Merging upstream
 
