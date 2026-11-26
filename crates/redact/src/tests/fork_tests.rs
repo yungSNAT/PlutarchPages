@@ -1139,3 +1139,35 @@ fn a_large_courier_bar_under_a_narrow_mark_goes() {
 fn a_helvetica_accented_capital_under_a_mark_goes() {
     std14_glyph_under_a_mark_goes("Helvetica", 12.0, r"\311", [40.0, 108.0, 200.0, 120.0]);
 }
+
+/// An OCR-style invisible text layer (`3 Tr`) under a redaction box loses the covered word from
+/// the content, the extracted text and the saved bytes, as visible text does; the uncovered word
+/// stays invisible.
+#[test]
+fn an_invisible_text_layer_under_a_box_is_removed() {
+    // "SECRET PUBLIC" from x = 10 at 10 pt, 5 pt a glyph: SECRET spans x 10–40.
+    let mut doc = one_page(b"BT /F1 10 Tf 3 Tr 10 100 Td (SECRET PUBLIC) Tj ET", "", vec![]);
+    let before = pdfcraft_edit::text_lines(&doc, 0).unwrap();
+    assert!(before.iter().any(|line| line.text.contains("SECRET")), "the layer is extractable before: {before:?}");
+    assert_eq!(under(&mut doc, 0, &[[10.0, 95.0, 40.0, 110.0]]), 6, "the invisible glyphs are under the box");
+    mark(&mut doc, 0, &[[10.0, 95.0, 40.0, 110.0]], "");
+    let r = apply(&mut doc, None).unwrap();
+    assert_eq!((r.marks, r.glyphs), (1, 6), "{r:?}");
+    let c = content(&doc, 0);
+    assert!(!c.contains("SECRET") && c.contains("PUBLIC") && c.contains("3 Tr"), "{c}");
+    assert!(c.contains("0 0 0 rg") && c.contains("10 95 30 15 re f"), "the box is drawn: {c}");
+    assert_eq!(under(&mut doc, 0, &[[10.0, 95.0, 40.0, 110.0]]), 0, "nothing is left under the box");
+    let bytes = write_full(&doc, &SaveOptions::default()).unwrap();
+    let saved = Document::open(Arc::new(bytes.clone())).unwrap();
+    // Saved streams are compressed, so search every one of them decoded, and the raw bytes too.
+    assert!(content(&saved, 0).contains("PUBLIC"));
+    let holds = |d: &[u8]| d.windows(6).any(|w| w == b"SECRET");
+    assert!(!holds(&bytes), "the saved file still holds the word");
+    assert!(
+        !saved.scan_objects().any(|(_, o)| matches!(&*o, pdfcraft_cos::Object::Stream(s) if s.decoded().is_ok_and(|d| holds(&d)))),
+        "a saved stream still holds the word"
+    );
+    let lines = pdfcraft_edit::text_lines(&saved, 0).unwrap();
+    assert!(lines.iter().any(|line| line.text.contains("PUBLIC")), "{lines:?}");
+    assert!(!lines.iter().any(|line| line.text.contains("SECRET")), "the covered word is extractable: {lines:?}");
+}
