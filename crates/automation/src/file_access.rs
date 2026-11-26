@@ -506,7 +506,8 @@ mod tests {
     fn tools_do_not_touch_the_file_system_without_resolving_the_path() {
         // Helpers that are only called with a resolved path. `doc_batch` (batch.rs) resolves its
         // inputs and out_dir, walks only inside them (skipping links) and resolves every
-        // discovered file again before `process` reads it or `publish` writes it. `doc_bates_multi`
+        // discovered file again before `process` reads it or `publish` writes it (`open_checked`
+        // opens the checked output folder without following links). `doc_bates_multi`
         // resolves its paths before checking output collisions and using the probe helpers.
         const RESOLVED_BY_CALLER: &[&str] = &[
             "write_atomic",
@@ -519,6 +520,7 @@ mod tests {
             "linked",
             "walk",
             "publish",
+            "open_checked",
             "read_source",
             "check_unique_outputs",
             "probe_files_for_resolved_outputs",

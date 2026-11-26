@@ -45,5 +45,7 @@ flate2.workspace = true
 pdfcraft-model = { workspace = true }
 pdfcraft-xfa = { workspace = true }
 
-[target.'cfg(target_os = "macos")'.dev-dependencies]
+# Output folders held open and written through by descriptor (batch.rs `publish`); macOS tests
+# also read Finder tags with it.
+[target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }
