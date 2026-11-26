@@ -66,7 +66,7 @@ fn probe_reports_keep_status_output_and_truncation_distinct() {
 fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
     let dir = PrivateDir::new("macos-bundle").unwrap();
     let mut r = String::new();
-    super::super::write_bundle_report(&mut r, dir.path().join("absent.app")).unwrap();
+    super::super::write_bundle_report(&mut r, &dir.path().join("absent.app")).unwrap();
     assert!(r.contains("missing or not a directory"), "{r}");
 
     let empty_app = dir.path().join("Empty.app");
@@ -100,7 +100,7 @@ fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
     r.clear();
     super::super::write_bundle_report(&mut r, &full_app).unwrap();
     assert!(r.contains("architectures:"), "{r}");
-    assert!(super::super::bounded_entries(dir.path().join("no-such"), 4).is_err());
+    assert!(super::super::bounded_entries(&dir.path().join("no-such"), 4).is_err());
 
     r.clear();
     super::super::write_tool_report(&mut r, "git", "git", &["--version"]).unwrap();
@@ -119,7 +119,7 @@ fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
 fn pdf_report_decodes_metadata_and_limits_page_inspection() {
     let dir = PrivateDir::new("macos-pdf").unwrap();
     let mut r = String::new();
-    assert!(super::super::write_pdf_report(&mut r, dir.path().join("missing.pdf")).is_err());
+    assert!(super::super::write_pdf_report(&mut r, &dir.path().join("missing.pdf")).is_err());
 
     let bad_pdf = dir.path().join("bad.pdf");
     std::fs::write(&bad_pdf, b"not a pdf").unwrap();

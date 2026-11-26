@@ -203,6 +203,6 @@ mod tests {
         assert!(run(dir.path(), &[]).is_ok());
         assert!(run(dir.path(), &["bogus"]).unwrap_err().contains("usage:"));
         assert!(run(dir.path(), &["set", "bad-ver"]).is_err());
-        assert!(run(dir.path().join("missing"), &[]).unwrap_err().contains("read "));
+        assert!(run(&dir.path().join("missing"), &[]).unwrap_err().contains("read "));
     }
 }

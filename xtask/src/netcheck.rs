@@ -374,7 +374,7 @@ dependencies = ["leaf"]
         write_baseline(&path, &initial).unwrap();
         let saved = read_baseline(&path).unwrap();
         assert_eq!(saved.len(), 2);
-        assert!(read_baseline(dir.path().join("missing.json")).is_err());
+        assert!(read_baseline(&dir.path().join("missing.json")).is_err());
 
         // Path changed + one pair gone -> still passes and reports both.
         let moved_and_gone = vec![row("pdfcraft-cli", "tokio", true, "pdfcraft-cli -> b -> tokio")];
