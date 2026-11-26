@@ -125,6 +125,10 @@ fn repeats(window: &[Member<'_>], key: &str) -> bool {
         if offsets.iter().any(Option::is_none) || offsets.windows(2).any(|w| matches!(w, [a, b] if a != b)) {
             return false;
         }
+        // `(500)` stepping from the first page is a negative amount; `(1)` there is a page number.
+        if key.starts_with('(') && offsets.first().copied().flatten().is_none_or(|o| o > 1) {
+            return false;
+        }
         stepping = stepping.saturating_add(1);
     }
     stepping == 1
@@ -180,8 +184,14 @@ fn folded(text: &str) -> String {
 }
 
 /// A normalised key that is a page number alone or with its label: `#`, `page #`, `p. #`,
-/// `# of #`, `page # of #`, `#/#`, optionally in dashes or brackets.
+/// `# of #`, `page # of #`, `#/#`, optionally in dashes or brackets, but not
+/// with a minus on one side only.
 fn is_page_number(key: &str) -> bool {
+    // A minus on one side only (`-#`, `#-`) signs an amount; `- # -` decorates a page number.
+    let minus = |c: char| matches!(c, '-' | '\u{2212}');
+    if key.starts_with(minus) != key.ends_with(minus) {
+        return false;
+    }
     let bare = key.trim_matches(|c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '[' | ']' | '(' | ')' | ' '));
     matches!(bare, "#" | "page #" | "p. #" | "# of #" | "page # of #" | "#/#" | "# / #")
 }
@@ -493,6 +503,11 @@ mod tests {
             ["Total $1,001.00", "Total $1,002.00", "Total $1,003.00"],
             ["Item 1 Widgets 40.00", "Item 2 Widgets 40.00", "Item 3 Widgets 40.00"],
             ["$1", "$2", "$3"],
+            ["(500)", "(501)", "(502)"],
+            ["-500", "-501", "-502"],
+            ["\u{2212}500", "\u{2212}501", "\u{2212}502"],
+            ["500-", "501-", "502-"],
+            ["-1", "-2", "-3"],
         ] {
             let pages: Vec<Vec<Evidence>> = texts.iter().map(|t| vec![line(t, 60.0)]).collect();
             assert_eq!(run(&pages, Some(10.0)), [[None], [None], [None]], "{texts:?}");
@@ -560,6 +575,9 @@ mod tests {
         assert_eq!(run(&pages, Some(10.0)), [vec![Some(Edge::Bottom)], vec![], vec![Some(Edge::Bottom)]]);
         let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("- {n} -"), 30.0)]).collect();
         assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "- n -");
+        // A bracketed page number runs when it starts at most at the page's own position.
+        let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("({n})"), 30.0)]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "(n)");
         // A page number inside other words fails towards content: only page words may label it.
         let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("Annual report 2026, page {n}"), 760.0)]).collect();
         assert!(run(&pages, Some(10.0)).iter().flatten().all(Option::is_none));
