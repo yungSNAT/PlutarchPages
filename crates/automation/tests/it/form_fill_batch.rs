@@ -166,7 +166,12 @@ fn a_calculated_field_the_form_overrides_fails_its_row() {
     let error = report["rows"][0]["error"].as_str().unwrap();
     assert!(error.contains("Total") && error.contains("calculates") && !error.contains("999"), "{error}");
     assert_eq!(files_in(&dir.path().join("out")), vec!["form-2.pdf"]);
-    assert!(filled(&mut a, &dir.path().join("out/form-2.pdf"))["Total"].as_str().is_some_and(|t| t.starts_with("20")));
+    let total = filled(&mut a, &dir.path().join("out/form-2.pdf"))["Total"].as_str().unwrap_or_default().to_string();
+    assert!(total.starts_with("20"), "{total}");
+    // The value the form calculates, given as the form stores it, passes.
+    std::fs::write(dir.path().join("agree.csv"), format!("Total,Price,Qty\n{total},4,5\n")).unwrap();
+    let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "agree.csv", "out_dir": "agree" }));
+    assert_eq!(report["completed"], 1, "{report}");
     let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "verbose", "verbose": true }));
     assert!(report["rows"][0]["error"].as_str().unwrap().contains("999"), "{report}");
 }
@@ -346,6 +351,25 @@ fn paths_outside_the_root_are_refused() {
     fail(&mut a, json!({ "doc": doc, "data": "rows.csv", "out_dir": "../out" }));
     fail(&mut a, json!({ "doc": doc, "data": "../outside.csv", "out_dir": "out" }));
     assert!(!dir.path().join("out").exists() && !root.join("out").exists());
+}
+
+/// An output name that resolves through a link out of the root fails its row, and the error does
+/// not quote the name unless verbose.
+#[cfg(unix)]
+#[test]
+fn an_output_linked_out_of_the_root_fails_without_quoting_its_name() {
+    let dir = workdir();
+    let root: PathBuf = dir.path().join("root");
+    std::fs::create_dir_all(root.join("out")).unwrap();
+    let (mut a, doc) = form(&root);
+    std::fs::write(dir.path().join("outside.pdf"), b"outside").unwrap();
+    std::os::unix::fs::symlink(dir.path().join("outside.pdf"), root.join("out/Secret-link.pdf")).unwrap();
+    std::fs::write(root.join("rows.csv"), "File,Name\nSecret-link,Ada\n").unwrap();
+    let args = json!({ "doc": doc, "data": "rows.csv", "out_dir": "out", "name_column": "File" });
+    let report = call(&mut a, "form_fill_batch", args);
+    assert_eq!(report["failed"], 1, "{report}");
+    assert!(!report["rows"][0]["error"].as_str().unwrap().contains("ecret"), "{report}");
+    assert_eq!(std::fs::read(dir.path().join("outside.pdf")).unwrap(), b"outside");
 }
 
 #[test]

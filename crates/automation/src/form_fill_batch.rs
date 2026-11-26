@@ -74,11 +74,14 @@ impl Automation {
                 let (row, name) = (row?, name?);
                 let pdf = fill(&form_name, &bytes, password.as_deref(), javascript, &row, flatten, verbose)?;
                 let target = out.join(&name);
-                let target = self.resolve(target.to_str().ok_or("the output path is not UTF-8")?, true).map_err(|e| e.to_string())?;
+                // Path and write errors name the file, which the data gave: quoted only when verbose.
+                let quiet = |what: &str, e: crate::ToolError| if verbose { format!("{what}: {e}") } else { format!("{what} (verbose shows why)") };
+                let target = target.to_str().ok_or("the output path is not UTF-8")?;
+                let target = self.resolve(target, true).map_err(|e| quiet("the output path is not allowed", e))?;
                 if !target.starts_with(&out) {
                     return Err("the output path leaves out_dir".to_string());
                 }
-                let written = publish(&target, &pdf).map_err(|e| e.to_string())?;
+                let written = publish(&target, &pdf).map_err(|e| quiet("the file could not be written", e))?;
                 // A receipt: the SHA-256 of the bytes written, to check the file against later.
                 let sha256: String = Sha256::digest(pdf.as_slice()).iter().map(|b| format!("{b:02x}")).collect();
                 Ok((written, pdf.len(), sha256))
