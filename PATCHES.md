@@ -301,6 +301,14 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   in `crates/edit/src/text/blocks.rs` and `crates/engine/src/document.rs`, with smaller edits to
   `crates/edit/src/lib.rs` and `crates/engine/src/open.rs`. Keep it unless upstream caches the same
   pass. The change is generic, so it could go upstream.
+- Filling a form once per data row: the `form_fill_batch` tool and `pdfcraft-cli form-fill-batch`
+  write one filled PDF for each row of a CSV, tab-delimited or JSON file, each row all or nothing
+  (`crates/automation/src/form_fill_batch.rs`, `apps/pdfcraft-cli/src/form_fill.rs`,
+  `docs/cli-form-fill-batch.md`; tests in `crates/automation/tests/it/form_fill_batch.rs` and
+  `apps/pdfcraft-cli/tests/it/form_fill_batch.rs`). `table_records` in `crates/xfdf/src/lib.rs`
+  reads records up to a limit, and `import_table` shares its CSV reader (`csv_records`), now
+  stopping after the names and first row it takes (`crates/xfdf/src/tests/fork_tests.rs`). When upstream changes `import_table`'s CSV
+  reading, make the change in `csv_records`.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
   it stops LibreOffice once the files it writes anywhere in that folder pass the size limit (or

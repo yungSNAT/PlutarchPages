@@ -5019,9 +5019,11 @@ dependencies = [
  "pdfcraft-testkit",
  "pdfcraft-xfa",
  "rustix 1.1.6",
+ "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
+ "unicode-normalization",
 ]
 
 [[package]]

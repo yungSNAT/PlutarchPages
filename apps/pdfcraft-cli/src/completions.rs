@@ -9,7 +9,7 @@ use crate::options::{
     AUDIT_OPTIONS, CHECK_OPTIONS, COMBINE_OPTIONS, EXTRACT_OPTIONS, INFO_OPTIONS, OptionSpec, RENDER_OPTIONS, RUN_OPTIONS, SPLIT_OPTIONS,
     TEXT_OPTIONS, UI_OPTIONS, validate_options,
 };
-use crate::{CliError, batch};
+use crate::{CliError, batch, form_fill};
 
 const SHELLS: &[&str] = &["bash", "zsh", "fish", "powershell"];
 
@@ -50,6 +50,7 @@ const COMMANDS: &[CommandSpec] = &[
     CommandSpec { name: "check", summary: "Run robustness checks on PDFs", options: CHECK_OPTIONS, extra_options: &[] },
     CommandSpec { name: "audit", summary: "Report redaction risks", options: AUDIT_OPTIONS, extra_options: &[] },
     CommandSpec { name: "batch", summary: "Run batch steps on files or folders", options: batch::OPTIONS, extra_options: &[] },
+    CommandSpec { name: "form-fill-batch", summary: "Fill a form once per data row", options: form_fill::OPTIONS, extra_options: &[] },
     CommandSpec { name: "tools", summary: "List automation tools and schemas", options: &[], extra_options: &[] },
     CommandSpec { name: "run", summary: "Run an automation tool or script", options: RUN_OPTIONS, extra_options: &[] },
     #[cfg(feature = "mcp")]

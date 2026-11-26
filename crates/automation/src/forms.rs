@@ -227,7 +227,7 @@ fn number_option(n: &serde_json::Number) -> String {
 }
 
 /// A JSON value → the value for this field (booleans for check boxes, arrays for lists…).
-fn value_for(f: &FormField, v: &Value) -> Result<FieldValue> {
+pub(crate) fn value_for(f: &FormField, v: &Value) -> Result<FieldValue> {
     let wrong = |what: &str| ToolError::InvalidArgs(format!("{}: {what}", f.name));
     Ok(match (f.kind, v) {
         (FormFieldKind::CheckBox, Value::Bool(b)) => FieldValue::Check(*b),

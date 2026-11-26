@@ -522,6 +522,7 @@ mod tests {
             "read_source",
             "check_unique_outputs",
             "probe_files_for_resolved_outputs",
+            "read_data",
         ];
         let mut dirs = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
         let mut files = vec![];

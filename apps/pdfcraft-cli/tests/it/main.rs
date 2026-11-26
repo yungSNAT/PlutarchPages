@@ -9,6 +9,7 @@ mod completions;
 mod cpu_override;
 mod edit;
 mod extract;
+mod form_fill_batch;
 mod help;
 mod info_repairs;
 mod info_standards;
