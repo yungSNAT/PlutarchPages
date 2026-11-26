@@ -142,13 +142,15 @@ an empty `covered_text`: the audit hands out no text that copying would refuse.
 
 `doc_audit_redactions` and `pdfcraft-cli audit` return `findings` and `count` for
 page findings, plus `document_findings` and `document_count`. The CLI exits with
-an error for covered text, unapplied marks or an audit failure. `pdfcraft-cli audit
+an error for covered text, text hidden under white, unapplied marks, text in a stream
+nothing refers to (`unreferenced-text`, a document-level finding) or an audit failure.
+`pdfcraft-cli audit
 <redacted.pdf> --before <original.pdf>` (with `--before-password` for an encrypted
 original) also audits the original: the JSON line gains `leaks`, the count the exit
 status follows, and `before` (`file`, `leaks`), and stderr reads `leaks: N before ->
 M after`. The exit status still follows the redacted file alone; an original that
 can't be opened or audited is an error. Retained advances
-and document-level findings are advisory. Rectangles are
+and the other document-level findings are advisory. Rectangles are
 in points from the top-left of the displayed page (y down, after `/Rotate`).
 `AuditFinding::rect` stays in PDF user space. The library's `audit_redactions`
 entry point checks only covered text and unapplied marks.
