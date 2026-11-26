@@ -1,6 +1,6 @@
 use super::{Options, args, parse_args, pdf_registration};
 
-use crate::scratch::ScratchDir as ScratchDirectory;
+use crate::gates::PrivateDir;
 
 fn make_pdf(page_count: usize, with_info: bool) -> Vec<u8> {
     use lopdf::{Dictionary, Object, Stream, dictionary};
@@ -64,25 +64,25 @@ fn probe_reports_keep_status_output_and_truncation_distinct() {
 
 #[test]
 fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
-    let dir = ScratchDirectory::new("macos-bundle");
+    let dir = PrivateDir::new("macos-bundle").unwrap();
     let mut r = String::new();
-    super::super::write_bundle_report(&mut r, &dir.0.join("absent.app")).unwrap();
+    super::super::write_bundle_report(&mut r, dir.path().join("absent.app")).unwrap();
     assert!(r.contains("missing or not a directory"), "{r}");
 
-    let empty_app = dir.0.join("Empty.app");
+    let empty_app = dir.path().join("Empty.app");
     std::fs::create_dir_all(&empty_app).unwrap();
     r.clear();
     super::super::write_bundle_report(&mut r, &empty_app).unwrap();
     assert!(r.contains("Info.plist: missing") && r.contains("none under Contents/PlugIns"), "{r}");
 
-    let bin_app = dir.0.join("Bin.app");
+    let bin_app = dir.path().join("Bin.app");
     std::fs::create_dir_all(bin_app.join("Contents/PlugIns")).unwrap();
     std::fs::write(bin_app.join("Contents/Info.plist"), [0xff, 0xfe, 0x00]).unwrap();
     r.clear();
     super::super::write_bundle_report(&mut r, &bin_app).unwrap();
     assert!(r.contains("not UTF-8 XML") && r.contains("PlugIns directory is empty"), "{r}");
 
-    let full_app = dir.0.join("Full.app");
+    let full_app = dir.path().join("Full.app");
     std::fs::create_dir_all(full_app.join("Contents/MacOS")).unwrap();
     std::fs::create_dir_all(full_app.join("Contents/PlugIns")).unwrap();
     std::fs::write(full_app.join("Contents/PlugIns/b.appex"), b"").unwrap();
@@ -100,7 +100,7 @@ fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
     r.clear();
     super::super::write_bundle_report(&mut r, &full_app).unwrap();
     assert!(r.contains("architectures:"), "{r}");
-    assert!(super::super::bounded_entries(&dir.0.join("no-such"), 4).is_err());
+    assert!(super::super::bounded_entries(dir.path().join("no-such"), 4).is_err());
 
     r.clear();
     super::super::write_tool_report(&mut r, "git", "git", &["--version"]).unwrap();
@@ -117,27 +117,27 @@ fn bundle_report_distinguishes_missing_incomplete_and_populated_bundles() {
 
 #[test]
 fn pdf_report_decodes_metadata_and_limits_page_inspection() {
-    let dir = ScratchDirectory::new("macos-pdf");
+    let dir = PrivateDir::new("macos-pdf").unwrap();
     let mut r = String::new();
-    assert!(super::super::write_pdf_report(&mut r, &dir.0.join("missing.pdf")).is_err());
+    assert!(super::super::write_pdf_report(&mut r, dir.path().join("missing.pdf")).is_err());
 
-    let bad_pdf = dir.0.join("bad.pdf");
+    let bad_pdf = dir.path().join("bad.pdf");
     std::fs::write(&bad_pdf, b"not a pdf").unwrap();
     assert!(super::super::write_pdf_report(&mut r, &bad_pdf).is_err());
 
-    let zero_pdf = dir.0.join("zero.pdf");
+    let zero_pdf = dir.path().join("zero.pdf");
     std::fs::write(&zero_pdf, make_pdf(0, true)).unwrap();
     r.clear();
     super::super::write_pdf_report(&mut r, &zero_pdf).unwrap();
     assert!(r.contains("Title: Demo") && r.contains("Author: Au") && r.contains("…") && r.contains("text: no pages"), "{r}");
 
-    let one_pdf = dir.0.join("one.pdf");
+    let one_pdf = dir.path().join("one.pdf");
     std::fs::write(&one_pdf, make_pdf(1, false)).unwrap();
     r.clear();
     super::super::write_pdf_report(&mut r, &one_pdf).unwrap();
     assert!(r.contains("pages: 1") && r.contains("Title: <absent>") && r.contains("text:"), "{r}");
 
-    let many_pdf = dir.0.join("many.pdf");
+    let many_pdf = dir.path().join("many.pdf");
     std::fs::write(&many_pdf, make_pdf(33, false)).unwrap();
     r.clear();
     super::super::write_pdf_report(&mut r, &many_pdf).unwrap();
@@ -145,7 +145,7 @@ fn pdf_report_decodes_metadata_and_limits_page_inspection() {
 
     super::super::run(&args(&["--help"])).unwrap();
     super::super::run(&[]).unwrap();
-    let bundle_s = dir.0.to_string_lossy().into_owned();
+    let bundle_s = dir.path().to_string_lossy().into_owned();
     let pdf_s = one_pdf.to_string_lossy().into_owned();
     super::super::run(&args(&["--bundle", &bundle_s, "--pdf", &pdf_s])).unwrap();
 }

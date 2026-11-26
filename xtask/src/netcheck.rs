@@ -363,8 +363,8 @@ dependencies = ["leaf"]
 
     #[test]
     fn write_baseline_check_rows_and_run_cover_baseline_lifecycle() {
-        let dir = crate::scratch::ScratchDir::new("netcheck-baseline");
-        let path = dir.0.join("nested/baseline.json");
+        let dir = crate::gates::PrivateDir::new("netcheck-baseline").unwrap();
+        let path = dir.path().join("nested/baseline.json");
         let row = |pkg: &str, name: &str, reachable: bool, chain: &str| Row { package: pkg.into(), name: name.into(), reachable, path: chain.into() };
         let initial = vec![
             row("pdfcraft-cli", "tokio", true, "pdfcraft-cli -> a -> tokio"),
@@ -374,7 +374,7 @@ dependencies = ["leaf"]
         write_baseline(&path, &initial).unwrap();
         let saved = read_baseline(&path).unwrap();
         assert_eq!(saved.len(), 2);
-        assert!(read_baseline(&dir.0.join("missing.json")).is_err());
+        assert!(read_baseline(dir.path().join("missing.json")).is_err());
 
         // Path changed + one pair gone -> still passes and reports both.
         let moved_and_gone = vec![row("pdfcraft-cli", "tokio", true, "pdfcraft-cli -> b -> tokio")];

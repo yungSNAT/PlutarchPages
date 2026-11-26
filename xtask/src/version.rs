@@ -198,11 +198,11 @@ mod tests {
         let no_eol = "[workspace.package]\nversion = \"0.1.0\"";
         assert_eq!(replace(no_eol, "0.2.0").unwrap(), "[workspace.package]\nversion = \"0.2.0\"");
 
-        let dir = crate::scratch::ScratchDir::new("version-run");
-        std::fs::write(dir.0.join("Cargo.toml"), MANIFEST).unwrap();
-        assert!(run(&dir.0, &[]).is_ok());
-        assert!(run(&dir.0, &["bogus"]).unwrap_err().contains("usage:"));
-        assert!(run(&dir.0, &["set", "bad-ver"]).is_err());
-        assert!(run(&dir.0.join("missing"), &[]).unwrap_err().contains("read "));
+        let dir = crate::gates::PrivateDir::new("version-run").unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), MANIFEST).unwrap();
+        assert!(run(dir.path(), &[]).is_ok());
+        assert!(run(dir.path(), &["bogus"]).unwrap_err().contains("usage:"));
+        assert!(run(dir.path(), &["set", "bad-ver"]).is_err());
+        assert!(run(dir.path().join("missing"), &[]).unwrap_err().contains("read "));
     }
 }

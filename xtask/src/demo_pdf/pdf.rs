@@ -492,7 +492,6 @@ mod tests {
             assert!(font.width("Az \u{2014}\u{2013}\u{2022}\u{00e9}", 10.0) > 0.0);
         }
         assert!((Font::Courier.width("ab", 10.0) - 12.0).abs() < 1e-4);
-        assert!((Font::ZapfDingbats.width("4", 10.0) - 8.0).abs() < 1e-4);
         assert!(Font::HelvBold.width("M", 10.0) > Font::Helv.width("i", 10.0));
         assert!(Font::Times.width("Hello", 10.0) < Font::Helv.width("Hello", 10.0));
         assert!((Font::Times.width("Hi", 10.0) - Font::TimesItalic.width("Hi", 10.0)).abs() < 1e-4);

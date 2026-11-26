@@ -334,16 +334,16 @@ mod tests {
         assert_eq!(pdfs(), checkout().join("test").join("pdfs"));
         let _ = state().expect("state check succeeds");
 
-        let dir = crate::scratch::ScratchDir::new("corpus-git-init");
-        run(git(&dir.0).args(["--version"]), "git version").unwrap();
-        assert!(run(git(&dir.0).args(["--no-such-flag"]), "bad git").is_err());
-        let ver = capture(git(&dir.0).args(["--version"]), "git version").unwrap();
+        let dir = crate::gates::PrivateDir::new("corpus-git-init").unwrap();
+        run(git(dir.path()).args(["--version"]), "git version").unwrap();
+        assert!(run(git(dir.path()).args(["--no-such-flag"]), "bad git").is_err());
+        let ver = capture(git(dir.path()).args(["--version"]), "git version").unwrap();
         assert!(ver.contains("git version"), "{ver}");
-        assert!(capture(git(&dir.0).args(["--no-such-flag"]), "bad git").is_err());
+        assert!(capture(git(dir.path()).args(["--no-such-flag"]), "bad git").is_err());
 
-        init(&dir.0).unwrap();
-        assert_eq!(capture(git(&dir.0).args(["config", "--get", "core.autocrlf"]), "autocrlf").unwrap(), "false");
-        assert_eq!(capture(git(&dir.0).args(["config", "--get", "core.eol"]), "eol").unwrap(), "lf");
-        assert_eq!(capture(git(&dir.0).args(["remote", "get-url", "origin"]), "origin").unwrap(), "https://github.com/mozilla/pdf.js.git");
+        init(dir.path()).unwrap();
+        assert_eq!(capture(git(dir.path()).args(["config", "--get", "core.autocrlf"]), "autocrlf").unwrap(), "false");
+        assert_eq!(capture(git(dir.path()).args(["config", "--get", "core.eol"]), "eol").unwrap(), "lf");
+        assert_eq!(capture(git(dir.path()).args(["remote", "get-url", "origin"]), "origin").unwrap(), "https://github.com/mozilla/pdf.js.git");
     }
 }

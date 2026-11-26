@@ -1518,8 +1518,8 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         assert!(!t.workspace_manifests.is_empty());
         assert!(t.get("xtask/src/main.rs").is_some());
 
-        let dir = crate::scratch::ScratchDir::new("fork-check-baseline");
-        let dir_canon = dir.0.canonicalize().unwrap();
+        let dir = crate::gates::PrivateDir::new("fork-check-baseline").unwrap();
+        let dir_canon = dir.path().canonicalize().unwrap();
         std::fs::create_dir_all(dir_canon.join("xtask/baselines")).unwrap();
         write_baseline(&dir_canon, "first\n").unwrap();
         assert_eq!(std::fs::read_to_string(dir_canon.join(COLOUR_BASELINE)).unwrap(), "first\n");
@@ -1530,9 +1530,9 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
         std::fs::create_dir(dir_canon.join(COLOUR_BASELINE)).unwrap();
         assert!(write_baseline(&dir_canon, "bad\n").unwrap_err().to_string().contains("regular file"));
 
-        let ws = crate::scratch::ScratchDir::new("fork-check-resolve");
-        std::fs::write(ws.0.join("Cargo.toml"), "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n").unwrap();
-        assert!(resolve_craft_pdf(&ws.0, "Cargo.toml").is_err());
+        let ws = crate::gates::PrivateDir::new("fork-check-resolve").unwrap();
+        std::fs::write(ws.path().join("Cargo.toml"), "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n").unwrap();
+        assert!(resolve_craft_pdf(ws.path(), "Cargo.toml").is_err());
     }
 
     #[test]

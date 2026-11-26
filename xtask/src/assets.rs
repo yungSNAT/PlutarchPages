@@ -822,15 +822,17 @@ mod tests {
         ] {
             assert!(problems.contains(needle), "missing {needle:?} in:\n{problems}");
         }
+        // A mirror that repeats its own URL is refused on its own count, not only through the http mirror.
+        assert!(problems.contains("ok.dat: mirror_url must be a distinct HTTPS URL"), "{problems}");
     }
 
     #[test]
     fn fetch_all_uses_verified_cache_and_rejects_bad_filenames() {
-        let dir = crate::scratch::ScratchDir::new("assets-fetch-all");
+        let dir = crate::gates::PrivateDir::new("assets-fetch-all").unwrap();
         let payload = b"cached-model-bytes";
         let lic = b"MIT licence text";
-        std::fs::write(dir.0.join("cached.rten"), payload).unwrap();
-        std::fs::write(dir.0.join("cached.rten.LICENCE.txt"), lic).unwrap();
+        std::fs::write(dir.path().join("cached.rten"), payload).unwrap();
+        std::fs::write(dir.path().join("cached.rten.LICENCE.txt"), lic).unwrap();
         let m = Manifest {
             fetched: vec![Fetched {
                 file: "cached.rten".into(),
@@ -848,13 +850,13 @@ mod tests {
             }],
             ..Default::default()
         };
-        let paths = fetch_all(&m, &dir.0, "model").unwrap();
-        assert_eq!(paths, vec![dir.0.join("cached.rten")]);
+        let paths = fetch_all(&m, dir.path(), "model").unwrap();
+        assert_eq!(paths, vec![dir.path().join("cached.rten")]);
 
         let mut bad_entry = m.fetched.into_iter().next().unwrap();
         bad_entry.file = "../escape.rten".into();
         let bad = Manifest { fetched: vec![bad_entry], ..Default::default() };
-        assert!(fetch_all(&bad, &dir.0, "model").unwrap_err().to_string().contains("invalid fetched asset filename"));
+        assert!(fetch_all(&bad, dir.path(), "model").unwrap_err().to_string().contains("invalid fetched asset filename"));
     }
 
     #[test]

@@ -914,18 +914,18 @@ mod tests {
             assert!(run(&args).is_err(), "{bad:?}");
         }
 
-        let dir = crate::scratch::ScratchDir::new("fuzz-minimize");
-        let probe = dir.0.join("sample.pdf");
+        let dir = crate::gates::PrivateDir::new("fuzz-minimize").unwrap();
+        let probe = dir.path().join("sample.pdf");
         std::fs::write(&probe, b"abcd").unwrap();
 
         let (outcome, what) = run_one(Path::new("git"), &probe, Duration::from_secs(5));
         assert_eq!(outcome, Outcome::Crash);
         assert!(!what.is_empty());
 
-        let shrunk = minimize(Path::new("git"), &dir.0, b"abcd".to_vec(), Outcome::Crash, &what, Duration::from_secs(5));
+        let shrunk = minimize(Path::new("git"), dir.path(), b"abcd".to_vec(), Outcome::Crash, &what, Duration::from_secs(5));
         assert!(shrunk.is_empty(), "{shrunk:?}");
 
-        let kept = minimize(Path::new("git"), &dir.0, b"ab".to_vec(), Outcome::Crash, "unrelated-signature", Duration::from_secs(5));
+        let kept = minimize(Path::new("git"), dir.path(), b"ab".to_vec(), Outcome::Crash, "unrelated-signature", Duration::from_secs(5));
         assert_eq!(kept, b"ab");
     }
 }

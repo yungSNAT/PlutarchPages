@@ -475,26 +475,26 @@ mod tests {
         assert!(run(&["--write".into()]).is_err());
         run(&[]).unwrap();
 
-        let dir = crate::scratch::ScratchDir::new("license-validate");
-        std::fs::write(dir.0.join("LICENSES.toml"), "document = []\nbundled = []\n").unwrap();
-        std::fs::write(dir.0.join("ATTRIBUTION.toml"), "").unwrap();
-        std::fs::create_dir_all(dir.0.join("crates/ocr/src")).unwrap();
+        let dir = crate::gates::PrivateDir::new("license-validate").unwrap();
+        std::fs::write(dir.path().join("LICENSES.toml"), "document = []\nbundled = []\n").unwrap();
+        std::fs::write(dir.path().join("ATTRIBUTION.toml"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join("crates/ocr/src")).unwrap();
         std::fs::write(
-            dir.0.join("crates/ocr/src/ocrs.rs"),
+            dir.path().join("crates/ocr/src/ocrs.rs"),
             "pub const DETECTION_MODEL: &str = \"det.rten\";\npub const RECOGNITION_MODEL: &str = \"rec.rten\";\n",
         )
         .unwrap();
-        let err = validate(&dir.0).unwrap_err();
+        let err = validate(dir.path()).unwrap_err();
         assert!(err.to_string().contains("source licensing errors"), "{err:#}");
     }
 
     #[test]
     fn check_and_ocr_metadata_cover_remaining_validation_branches() {
-        let dir = crate::scratch::ScratchDir::new("license-branches");
+        let dir = crate::gates::PrivateDir::new("license-branches").unwrap();
         let document = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "vendor/hayro-interpret/assets/LICENSE_FOXIT"]
             .into_iter()
             .map(|p| {
-                let path = dir.0.join(p);
+                let path = dir.path().join(p);
                 std::fs::create_dir_all(path.parent().unwrap()).unwrap();
                 std::fs::write(&path, "synthetic licence text\n").unwrap();
                 Document {
@@ -531,7 +531,7 @@ mod tests {
             sha256: Some("0".repeat(64)),
             adobe_data: false,
         });
-        let problems = check(&dir.0, &docs, &m);
+        let problems = check(dir.path(), &docs, &m);
         let joined = problems.join("\n");
         for needle in [
             "invalid document origin",
