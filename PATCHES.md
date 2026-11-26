@@ -86,7 +86,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   (`Annual report, page 3`) stays content here. Code `repeats` in
   `crates/a11y/src/autotag_running.rs`, with tests `differing_amounts_at_the_same_height_stay_content`,
   `the_same_line_without_an_amount_still_repeats`, `total_2000_on_every_page_runs_as_a_year` and
-  `page_numbers_that_step_with_the_page_are_still_artifacts` there.
+  `page_numbers_that_step_with_the_page_are_still_artifacts` in
+  `crates/a11y/src/autotag_running/tests/fork_tests.rs`.
 
 ## Only here
 
