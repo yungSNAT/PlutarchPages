@@ -1,9 +1,12 @@
 //! The fork's tests of the oracle subprocess capture.
 
 use std::process::Command;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use super::super::{capture_oracle_image, run_capture_bytes};
+use super::super::capture_oracle_image;
+#[cfg(unix)]
+use super::super::run_capture_bytes;
 
 /// An oracle that writes a valid 1 by 1 PGM image and exits with `exit_code`.
 fn oracle(exit_code: u8) -> Command {
