@@ -411,7 +411,13 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
 ## Taken ahead of the next merge
 
 These upstream commits are cherry-picked unchanged. The next merge brings the same lines, so it
-should not conflict on them: delete the entry then. None since the `b192e36f` merge.
+should not conflict on them: delete the entry then.
+
+- A redaction refusal names its page: upstream #7009 (`10d0e155`, 26 November 2026), picked as one
+  commit against its first parent. Its lines are upstream's; the one conflict, in
+  `crates/redact/src/interp.rs`, was 2 sides adding functions at the same place, so both are kept
+  (the fork's `record_form_draw` and `marks_of_other_draws`, upstream's `form_data`). The
+  following merge brings #8160 too (R4915).
 
 ## Merging upstream
 
