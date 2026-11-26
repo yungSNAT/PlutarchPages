@@ -410,9 +410,9 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
 
 ## Taken ahead of the next merge
 
-These upstream commits are cherry-picked unchanged. The next merge brings the same lines; where
-an entry names a conflict, take the fork's side there, as the pick's lines are already in it.
-Delete the entry then.
+These upstream commits are cherry-picked unchanged unless an entry names a fork change. The next
+merge brings the same lines; where an entry names a conflict, keep the fork's lines there, and any
+upstream change inside the hunk, as the pick's lines are already in it. Delete the entry then.
 
 - A redaction refusal names its page: upstream #7009 (`10d0e155`, 26 November 2026), picked as one
   commit against its first parent. Its lines are upstream's; the one conflict, in
@@ -421,7 +421,8 @@ Delete the entry then.
   following merge brings #8160 too (R4915), and conflicts in 2 places it otherwise would not:
   `crates/redact/src/lib.rs` at `redact_page_content(...).map_err(|e| e.on_page(pi + 1))` beside
   the fork's collecting pass, and `crates/redact/src/interp.rs` at the `error` field of `Output` beside
-  the fork's `Shared` and `Cleared`. Take the fork's side in both.
+  the fork's `Shared` and `Cleared`. In both, keep the fork's lines and any upstream change
+  inside the hunk.
 
 ## Merging upstream
 
