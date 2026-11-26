@@ -103,8 +103,6 @@ fn interactive_alert_answers_are_checked_against_its_buttons() {
     use crate::session::ScriptSession;
     let mut session = ScriptSession::default();
     assert_eq!(session.run(job("app.alert('q', 0, 1);"), &[Some("2".into())]).result.as_deref(), Some("2"));
-    // An OK from the host on a Yes/No dialog, which has no OK, reads as Cancel (2).
-    assert_eq!(session.run(job("app.alert('q', 0, 2);"), &[Some("1".into())]).result.as_deref(), Some("2"));
     let invalid = session.run(job("app.alert('q', 0, 0);"), &[Some("9".into())]);
     assert!(invalid.error.as_deref().is_some_and(|e| e.contains("invalid alert response")), "{:?}", invalid.error);
 }

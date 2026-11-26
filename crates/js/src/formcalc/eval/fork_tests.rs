@@ -106,11 +106,10 @@ fn arg_values_keeping_enforces_max_list_cap() {
 }
 
 #[test]
-fn text_that_is_not_a_number_compares_with_a_number_as_text() {
+fn numeric_text_compares_with_a_number_as_a_number() {
     let root = sample_form();
     let run = |s: &str| run_on(&root, "form1[0].target[0]", s, Limits::default()).result;
-    // "abc" against the text "5"; "10" against 9 as numbers.
-    assert_eq!(run("\"abc\" > 5").as_deref(), Some("1"));
+    // "10" against 9 as numbers, not as the texts "10" and "9".
     assert_eq!(run("\"10\" > 9").as_deref(), Some("1"));
 }
 

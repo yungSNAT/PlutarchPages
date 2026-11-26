@@ -37,15 +37,15 @@ mod native {
 
     /// Run `script`, turned away whilst a retired worker finishes and exits; then a new worker takes it.
     fn run_once_stopped(session: &mut ScriptSession, script: &str) -> Outcome {
-        let mut out = session.run(basic_job(script), &[]);
-        for _ in 0..1_000_000 {
-            if !out.error.as_deref().is_some_and(|e| e.contains("still stopping") || e.contains("another script is active")) {
-                break;
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let out = session.run(basic_job(script), &[]);
+            let busy = out.error.as_deref().is_some_and(|e| e.contains("still stopping") || e.contains("another script is active"));
+            if !busy || std::time::Instant::now() >= deadline {
+                return out;
             }
-            std::thread::yield_now();
-            out = session.run(basic_job(script), &[]);
+            std::thread::sleep(Duration::from_millis(1));
         }
-        out
     }
 
     #[test]
@@ -80,8 +80,8 @@ mod native {
     #[test]
     fn a_script_past_its_limit_is_abandoned_and_the_worker_retired() {
         let mut session = ScriptSession::default();
-        // A limit of 1 ns lapses long before the loop can finish.
-        let out = session.run_with_limit(basic_job("var s = 0; for (var i = 0; i < 50000; i++) s += i; s;"), &[], Duration::from_nanos(1));
+        // Any job outlasts a limit of 1 ns.
+        let out = session.run_with_limit(basic_job("1;"), &[], Duration::from_nanos(1));
         assert!(out.execution_refused);
         assert!(out.error.as_deref().is_some_and(|e| e.contains("did not complete")));
         let next = run_once_stopped(&mut session, "2;");

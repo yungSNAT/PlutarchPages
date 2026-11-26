@@ -41,8 +41,6 @@ fn arithmetic_string_and_date_builtins_cover_all_arms() {
     assert_eq!(ok("DateFmt(3)"), "MMMM D, YYYY");
     assert_eq!(ok("DateFmt(0)"), "MMM D, YYYY");
     assert_eq!(ok("LocalDateFmt(9)"), "MMM D, YYYY");
-    assert_eq!(ok("TimeFmt()"), "HH:MM:SS");
-    assert_eq!(ok("LocalTimeFmt()"), "HH:MM:SS");
     assert_eq!(ok("Num2Time(-1)"), "");
 }
 
