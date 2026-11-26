@@ -868,4 +868,64 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn flag_rng_fxhash_and_mutate_cover_all_mutation_arms() {
+        let argv: Vec<String> = ["--time", "42", "--tail"].iter().map(|s| (*s).to_owned()).collect();
+        assert_eq!(flag(&argv, "--time"), Some("42"));
+        assert_eq!(flag(&argv, "--missing"), None);
+        assert_eq!(flag(&argv, "--tail"), None);
+
+        let mut rng = Rng(1);
+        assert_eq!(rng.below(0), 0);
+        assert!(rng.below(7) < 7);
+        assert_ne!(fxhash(b"a"), fxhash(b"b"));
+        assert_eq!(fxhash(b"same"), fxhash(b"same"));
+
+        let base = feature_rich_seed();
+        let other = object_stream_seed();
+        let empty_mut = mutate(&mut rng, &[], &[]);
+        assert!(!empty_mut.is_empty());
+        let mut saw_diff = false;
+        for _ in 0..256 {
+            let out = mutate(&mut rng, &base, &other);
+            if out != base {
+                saw_diff = true;
+            }
+        }
+        assert!(saw_diff);
+    }
+
+    #[test]
+    fn seeds_child_command_run_one_minimize_and_flag_validation() {
+        let all_seeds = seeds();
+        assert!(all_seeds.len() >= 6);
+        // Linux and FreeBSD wrap the child in `sh` to cap its address space; elsewhere it runs as is.
+        let child = child_command(Path::new("pdfcraft-cli"));
+        if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+            assert_eq!(child.get_program(), "sh");
+            assert_eq!(child.get_args().last(), Some(std::ffi::OsStr::new("pdfcraft-cli")));
+        } else {
+            assert_eq!(child.get_program(), "pdfcraft-cli");
+        }
+
+        for bad in [["--time", "nope"], ["--iterations", "nope"], ["--seed", "nope"], ["--jobs", "nope"], ["--timeout", "nope"]] {
+            let args: Vec<String> = bad.iter().map(|s| (*s).to_owned()).collect();
+            assert!(run(&args).is_err(), "{bad:?}");
+        }
+
+        let dir = crate::scratch::ScratchDir::new("fuzz-minimize");
+        let probe = dir.0.join("sample.pdf");
+        std::fs::write(&probe, b"abcd").unwrap();
+
+        let (outcome, what) = run_one(Path::new("git"), &probe, Duration::from_secs(5));
+        assert_eq!(outcome, Outcome::Crash);
+        assert!(!what.is_empty());
+
+        let shrunk = minimize(Path::new("git"), &dir.0, b"abcd".to_vec(), Outcome::Crash, &what, Duration::from_secs(5));
+        assert!(shrunk.is_empty(), "{shrunk:?}");
+
+        let kept = minimize(Path::new("git"), &dir.0, b"ab".to_vec(), Outcome::Crash, "unrelated-signature", Duration::from_secs(5));
+        assert_eq!(kept, b"ab");
+    }
 }

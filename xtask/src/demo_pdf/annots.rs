@@ -562,3 +562,116 @@ pub fn embedded_file(doc: &mut Document, file_name: &str, mime: &str, data: &[u8
         "EF" => dictionary! { "F" => ef, "UF" => ef },
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use lopdf::{Document, Object, dictionary};
+
+    use super::{Annotator, Kind, LinkTarget, Rect, embedded_file};
+    use crate::demo_pdf::pdf::{Fonts, Stamp};
+
+    #[test]
+    fn rect_normalises_and_parses_pdf_arrays() {
+        let r = Rect::new(50.0, 40.0, 10.0, 20.0);
+        assert_eq!((r.x0, r.y0, r.x1, r.y1), (10.0, 20.0, 50.0, 40.0));
+        assert_eq!((r.w(), r.h()), (40.0, 20.0));
+
+        let xy = Rect::xywh(5.0, 6.0, 15.0, 25.0);
+        assert_eq!((xy.w(), xy.h()), (15.0, 25.0));
+
+        let parsed = Rect::from_obj(&r.obj()).unwrap();
+        assert_eq!((parsed.x0, parsed.y0, parsed.x1, parsed.y1), (10.0, 20.0, 50.0, 40.0));
+        assert!(Rect::from_obj(&Object::Integer(1)).is_none());
+        assert!(Rect::from_obj(&Object::Array(vec![1.0.into(), 2.0.into()])).is_none());
+    }
+
+    #[test]
+    fn kind_from_marker_maps_all_known_kinds_and_rejects_unknown() {
+        let cases = [
+            ("highlight", Kind::Highlight),
+            ("underline", Kind::Underline),
+            ("strikeout", Kind::StrikeOut),
+            ("squiggly", Kind::Squiggly),
+            ("caret", Kind::Caret),
+            ("note", Kind::Note),
+            ("freetext", Kind::FreeText),
+            ("line", Kind::Line),
+            ("square", Kind::Square),
+            ("circle", Kind::Circle),
+            ("polygon", Kind::Polygon),
+            ("polyline", Kind::PolyLine),
+            ("ink", Kind::Ink),
+            ("stamp", Kind::Stamp),
+            ("attach", Kind::Attachment),
+        ];
+        for (marker, expected) in cases {
+            assert_eq!(Kind::from_marker(marker), Some(expected));
+        }
+        assert_eq!(Kind::from_marker("unknown"), None);
+    }
+
+    #[test]
+    fn annotator_builds_every_kind_with_appearances() {
+        let mut doc = Document::with_version("1.7");
+        let page = doc.add_object(dictionary! { "Type" => "Page" });
+        let fonts = Fonts::add_to(&mut doc);
+        let mut ann = Annotator::new(fonts, Stamp::from_unix(1_790_000_000));
+        let box_rect = Rect::new(50.0, 100.0, 230.0, 160.0);
+
+        let all = [
+            (Kind::Highlight, b"Highlight".as_slice(), 0),
+            (Kind::Underline, b"Underline".as_slice(), 0),
+            (Kind::StrikeOut, b"StrikeOut".as_slice(), 0),
+            (Kind::Squiggly, b"Squiggly".as_slice(), 0),
+            (Kind::Caret, b"Caret".as_slice(), 0),
+            (Kind::Note, b"Text".as_slice(), 3),
+            (Kind::FreeText, b"FreeText".as_slice(), 0),
+            (Kind::Line, b"Line".as_slice(), 0),
+            (Kind::Square, b"Square".as_slice(), 0),
+            (Kind::Circle, b"Circle".as_slice(), 0),
+            (Kind::Polygon, b"Polygon".as_slice(), 0),
+            (Kind::PolyLine, b"PolyLine".as_slice(), 0),
+            (Kind::Ink, b"Ink".as_slice(), 0),
+            (Kind::Stamp, b"Stamp".as_slice(), 0),
+            (Kind::Attachment, b"FileAttachment".as_slice(), 0),
+        ];
+
+        for (kind, subtype, extra_len) in all {
+            let self_id = doc.new_object_id();
+            let built = ann.build(&mut doc, page, self_id, kind, box_rect);
+            assert_eq!(built.dict.get(b"Subtype").unwrap().as_name().unwrap(), subtype);
+            assert!(built.dict.has(b"AP"));
+            assert_eq!(built.extra.len(), extra_len);
+            doc.objects.insert(self_id, Object::Dictionary(built.dict));
+        }
+    }
+
+    #[test]
+    fn simple_note_links_and_embedded_file_build_valid_objects() {
+        let mut doc = Document::with_version("1.7");
+        let page = doc.add_object(dictionary! { "Type" => "Page" });
+        let fonts = Fonts::add_to(&mut doc);
+        let now = Stamp::from_unix(1_790_000_000);
+        let mut ann = Annotator::new(fonts, now.clone());
+
+        let note_id = ann.simple_note(&mut doc, page, 500.0, 700.0, "Standalone note");
+        let note_dict = doc.get_dictionary(note_id).unwrap();
+        assert_eq!(note_dict.get(b"Subtype").unwrap().as_name().unwrap(), b"Text");
+        assert!(note_dict.has(b"Popup"));
+
+        let r = Rect::new(10.0, 20.0, 110.0, 35.0);
+        let page_link = ann.link(&mut doc, page, r, LinkTarget::Page(page));
+        assert!(doc.get_dictionary(page_link).unwrap().has(b"Dest"));
+
+        let uri_link = ann.link(&mut doc, page, r, LinkTarget::Uri("https://example.com/"));
+        let action = doc.get_dictionary(uri_link).unwrap().get(b"A").unwrap().as_dict().unwrap();
+        assert_eq!(action.get(b"S").unwrap().as_name().unwrap(), b"URI");
+
+        let fs = embedded_file(&mut doc, "hello.txt", "text/plain", b"hello", "greeting", &now);
+        let fs_dict = doc.get_dictionary(fs).unwrap();
+        assert_eq!(fs_dict.get(b"Type").unwrap().as_name().unwrap(), b"Filespec");
+        let ef_id = fs_dict.get(b"EF").unwrap().as_dict().unwrap().get(b"F").unwrap().as_reference().unwrap();
+        let ef_stream = doc.get_object(ef_id).unwrap().as_stream().unwrap();
+        assert_eq!(ef_stream.content, b"hello");
+    }
+}

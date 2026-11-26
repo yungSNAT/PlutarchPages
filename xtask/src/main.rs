@@ -15,6 +15,8 @@ mod macos_integration;
 mod netcheck;
 mod parity;
 mod pdf_deps;
+#[cfg(test)]
+mod scratch;
 mod screenshots;
 mod upstream_drift;
 mod version;

@@ -341,4 +341,51 @@ dependencies = ["leaf"]
         // The gate's own rule: a pair that went away or moved is reported, not a failure.
         check_rows(&found, &reviewed).expect("every reachable pair is in the baseline");
     }
+
+    #[test]
+    fn parse_lockfile_ignores_malformed_and_orphan_dependency_lines() {
+        let text = concat!(
+            "# comment\n",
+            "dependencies = [\"orphan\"]\n",
+            "dependencies = [\n",
+            "  unquoted,\n",
+            "  \"still-orphan\",\n",
+            "]\n",
+            "[[package]]\n",
+            "name = \"solo\"\n",
+            "dependencies = [\n",
+            "  not-a-quote\n",
+            "]\n",
+        );
+        let graph = parse_lockfile(text).unwrap();
+        assert_eq!(graph.get("solo"), Some(&BTreeSet::new()));
+    }
+
+    #[test]
+    fn write_baseline_check_rows_and_run_cover_baseline_lifecycle() {
+        let dir = crate::scratch::ScratchDir::new("netcheck-baseline");
+        let path = dir.0.join("nested/baseline.json");
+        let row = |pkg: &str, name: &str, reachable: bool, chain: &str| Row { package: pkg.into(), name: name.into(), reachable, path: chain.into() };
+        let initial = vec![
+            row("pdfcraft-cli", "tokio", true, "pdfcraft-cli -> a -> tokio"),
+            row("pdfcraft-cli", "curl", false, ""),
+            row("pdfcraft-engine", "hyper", true, "pdfcraft-engine -> hyper"),
+        ];
+        write_baseline(&path, &initial).unwrap();
+        let saved = read_baseline(&path).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(read_baseline(&dir.0.join("missing.json")).is_err());
+
+        // Path changed + one pair gone -> still passes and reports both.
+        let moved_and_gone = vec![row("pdfcraft-cli", "tokio", true, "pdfcraft-cli -> b -> tokio")];
+        check_rows(&moved_and_gone, &saved).unwrap();
+
+        // A newly reachable pair not in the baseline fails.
+        let added = vec![row("pdfcraft-cli", "reqwest", true, "pdfcraft-cli -> reqwest")];
+        let err = check_rows(&added, &saved).unwrap_err();
+        assert!(err.to_string().contains("reachable network crate pair"), "{err:#}");
+
+        // Read-only run on the committed lockfile and baseline passes.
+        run(&[]).unwrap();
+    }
 }

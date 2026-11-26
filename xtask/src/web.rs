@@ -142,4 +142,31 @@ mod tests {
         assert!(add_worker_meta(html, "pdfcraft-ocr-worker-\"x_loader.js").is_err());
         assert!(add_worker_meta("<body></body>", "pdfcraft-ocr-worker_loader.js").is_err());
     }
+
+    #[test]
+    fn worker_link_hashes_files_updates_html_and_rejects_missing_dir() {
+        let dir = crate::scratch::ScratchDir::new("web-worker-link");
+        let w = trunk_output(b"\0asm payload");
+        std::fs::write(dir.0.join(format!("{STEM}.js")), &w.js).unwrap();
+        std::fs::write(dir.0.join(format!("{STEM}_bg.wasm")), &w.wasm).unwrap();
+        std::fs::write(dir.0.join(format!("{STEM}_loader.js")), &w.loader).unwrap();
+        std::fs::write(dir.0.join("index.html"), "<html>\n  <head>\n    <title>Test</title>\n  </head>\n  <body></body>\n</html>\n").unwrap();
+
+        worker_link(&[dir.0.to_string_lossy().into_owned()]).unwrap();
+
+        assert!(!dir.0.join(format!("{STEM}.js")).exists());
+        assert!(!dir.0.join(format!("{STEM}_bg.wasm")).exists());
+        assert!(!dir.0.join(format!("{STEM}_loader.js")).exists());
+        let expected = w.hashed().unwrap();
+        for (name, bytes) in &expected.files {
+            assert_eq!(std::fs::read(dir.0.join(name)).unwrap(), *bytes);
+        }
+        let html = std::fs::read_to_string(dir.0.join("index.html")).unwrap();
+        assert!(html.contains(&format!("<meta name=\"{META}\" content=\"./{}\" />", expected.loader)), "{html}");
+
+        assert!(worker_link(&[dir.0.join("absent").to_string_lossy().into_owned()]).is_err());
+        if std::env::var_os("TRUNK_STAGING_DIR").is_none() {
+            assert!(worker_link(&[]).is_err());
+        }
+    }
 }

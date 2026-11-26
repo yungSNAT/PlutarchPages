@@ -1509,4 +1509,56 @@ pub const UPSTREAM: &str = "https://github.com/storytold/pdfcraft";
             fails(release_i18n, &[(build, "println!(\"cargo::rerun-if-env-changed=CRAFT_I18N_DIR\");"), release], "release.yml:4");
         }
     }
+
+    #[test]
+    fn tree_read_write_baseline_and_resolve_craft_pdf_work_offline() {
+        let root = crate::gates::root();
+        let checkout = root.canonicalize().unwrap();
+        let t = Tree::read(&root, &checkout, vec!["xtask/Cargo.toml".into(), "xtask/src/main.rs".into()]).unwrap();
+        assert!(!t.workspace_manifests.is_empty());
+        assert!(t.get("xtask/src/main.rs").is_some());
+
+        let dir = crate::scratch::ScratchDir::new("fork-check-baseline");
+        let dir_canon = dir.0.canonicalize().unwrap();
+        std::fs::create_dir_all(dir_canon.join("xtask/baselines")).unwrap();
+        write_baseline(&dir_canon, "first\n").unwrap();
+        assert_eq!(std::fs::read_to_string(dir_canon.join(COLOUR_BASELINE)).unwrap(), "first\n");
+        write_baseline(&dir_canon, "second\n").unwrap();
+        assert_eq!(std::fs::read_to_string(dir_canon.join(COLOUR_BASELINE)).unwrap(), "second\n");
+
+        std::fs::remove_file(dir_canon.join(COLOUR_BASELINE)).unwrap();
+        std::fs::create_dir(dir_canon.join(COLOUR_BASELINE)).unwrap();
+        assert!(write_baseline(&dir_canon, "bad\n").unwrap_err().to_string().contains("regular file"));
+
+        let ws = crate::scratch::ScratchDir::new("fork-check-resolve");
+        std::fs::write(ws.0.join("Cargo.toml"), "[package]\nname = \"bad\"\nversion = \"0.1.0\"\n").unwrap();
+        assert!(resolve_craft_pdf(&ws.0, "Cargo.toml").is_err());
+    }
+
+    #[test]
+    fn remaining_rule_edge_cases_cover_const_visitors_lex_and_escapes() {
+        let long = "x".repeat(150);
+        assert!(excerpt(&long).ends_with('…'));
+
+        // Parent exists without declaring this test file -> declared_for_tests hits `declarations.is_empty()`.
+        let undeclared = tree(&[("crates/a/src/lib.rs", "pub fn f() {}\n"), ("crates/a/src/foo_tests.rs", "fn t() {}\n")]);
+        assert!(!declared_for_tests(&undeclared, "crates/a/src/foo_tests.rs"));
+
+        // impl and trait UPDATE_APP const visitors.
+        let top = "pub const UPDATE_APP: App = App { repo: \"yungSNAT/PlutarchPages\" };\n";
+        let impl_ok = format!("{top}struct S; impl S {{ const UPDATE_APP: App = App {{ repo: \"yungSNAT/PlutarchPages\" }}; }}\n");
+        let trait_ok = format!("{top}trait T {{ const UPDATE_APP: App = App {{ repo: \"yungSNAT/PlutarchPages\" }}; }}\n");
+        let trait_bad = format!("{top}trait T {{ const UPDATE_APP: App; }}\n");
+        passes(update_source, &[(UPDATE_APP_FILE, impl_ok.as_str())]);
+        passes(update_source, &[(UPDATE_APP_FILE, trait_ok.as_str())]);
+        fails(update_source, &[(UPDATE_APP_FILE, trait_bad.as_str())], "UPDATE_APP");
+
+        // weak_hash_markers: unlexable file and file without Md5/Ripemd160.
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], "\"unterminated"), (WEAK_HASH_FILES[1], "fn ok() {}")], "doesn't lex");
+        fails(weak_hash_markers, &[(WEAK_HASH_FILES[0], "fn ok() {}"), (WEAK_HASH_FILES[1], "fn ok() {}")], "no MD5 or RIPEMD-160");
+
+        // unquoted_end backslash escape handling.
+        assert_eq!(unquoted_end(r#""a\"b" rest"#, |_, c| c == ' '), 6);
+        assert_eq!(unquoted_end(r#"a\ b c"#, |_, c| c == ' '), 4);
+    }
 }

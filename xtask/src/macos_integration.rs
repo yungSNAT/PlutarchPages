@@ -309,6 +309,8 @@ fn bounded_text(value: &str, limit: usize) -> String {
 mod tests {
     use super::{Options, parse_args, pdf_registration, plist_value};
 
+    mod fork_tests;
+
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
     }

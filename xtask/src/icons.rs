@@ -199,4 +199,10 @@ mod tests {
     fn a_name_missing_from_path_is_not_found() {
         assert!(!on_path("pdfcraft-no-such-tool-7f3a"));
     }
+
+    #[test]
+    fn run_rejects_unexpected_arguments() {
+        let err = run(&["--unexpected".into()]).unwrap_err();
+        assert!(err.to_string().contains("unexpected argument"), "{err:#}");
+    }
 }

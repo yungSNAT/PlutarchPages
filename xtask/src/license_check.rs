@@ -469,4 +469,97 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_file(outside).unwrap();
     }
+
+    #[test]
+    fn run_and_validate_cover_real_repo_and_error_paths() {
+        assert!(run(&["--write".into()]).is_err());
+        run(&[]).unwrap();
+
+        let dir = crate::scratch::ScratchDir::new("license-validate");
+        std::fs::write(dir.0.join("LICENSES.toml"), "document = []\nbundled = []\n").unwrap();
+        std::fs::write(dir.0.join("ATTRIBUTION.toml"), "").unwrap();
+        std::fs::create_dir_all(dir.0.join("crates/ocr/src")).unwrap();
+        std::fs::write(
+            dir.0.join("crates/ocr/src/ocrs.rs"),
+            "pub const DETECTION_MODEL: &str = \"det.rten\";\npub const RECOGNITION_MODEL: &str = \"rec.rten\";\n",
+        )
+        .unwrap();
+        let err = validate(&dir.0).unwrap_err();
+        assert!(err.to_string().contains("source licensing errors"), "{err:#}");
+    }
+
+    #[test]
+    fn check_and_ocr_metadata_cover_remaining_validation_branches() {
+        let dir = crate::scratch::ScratchDir::new("license-branches");
+        let document = ["LICENSE-MIT", "LICENSE-APACHE", "NOTICE", "vendor/hayro-interpret/assets/LICENSE_FOXIT"]
+            .into_iter()
+            .map(|p| {
+                let path = dir.0.join(p);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "synthetic licence text\n").unwrap();
+                Document {
+                    source: p.into(),
+                    destination: p.into(),
+                    sha256: assets::sha256_hex(b"synthetic licence text\n"),
+                    licences: match p {
+                        "LICENSE-MIT" => vec!["MIT".into(), "MIT".into(), "NotAllowed".into()],
+                        "LICENSE-APACHE" => vec!["Apache-2.0".into()],
+                        _ => vec![],
+                    },
+                    origin: (p == "NOTICE").then(|| "http://insecure.example".into()),
+                }
+            })
+            .collect();
+        let mut docs = Documents { document, bundled: vec![] };
+        docs.bundled.push(Bundled {
+            krate: "k".into(),
+            path: "p.ttf".into(),
+            licence: "MIT WITH extra".into(),
+            documents: vec!["LICENSE-MIT".into()],
+        });
+        docs.bundled.push(Bundled { krate: "k".into(), path: "p.ttf".into(), licence: "MIT".into(), documents: vec!["LICENSE-MIT".into()] });
+        let mut m = assets::Manifest::default();
+        m.asset.push(assets::Asset {
+            path: "assets/icons/x.svg".into(),
+            title: "x".into(),
+            author: "Lucide".into(),
+            source: "https://example.org".into(),
+            licence: "ISC".into(),
+            licence_file: "assets/icons/LICENSE-lucide.txt".into(),
+            kind: "icon".into(),
+            usage: "ui".into(),
+            sha256: Some("0".repeat(64)),
+            adobe_data: false,
+        });
+        let problems = check(&dir.0, &docs, &m);
+        let joined = problems.join("\n");
+        for needle in [
+            "invalid document origin",
+            "invalid or duplicate audited licence",
+            "duplicate bundled mapping",
+            "unsupported bundle licence",
+            "Lucide collection must credit ISC and Feather MIT",
+        ] {
+            assert!(joined.contains(needle), "missing {needle:?} in:\n{joined}");
+        }
+
+        let ocr_src = "pub const DETECTION_MODEL: &str = \"det.rten\";\npub const RECOGNITION_MODEL: &str = \"rec.rten\";\n";
+        let fetched = |file: &str| assets::Fetched {
+            file: file.into(),
+            url: "https://example.org/m".into(),
+            mirror_url: None,
+            title: "m".into(),
+            author: "a".into(),
+            source: "https://example.org/s".into(),
+            licence: "MIT".into(),
+            licence_url: "https://example.org/l".into(),
+            licence_sha256: "a".repeat(64),
+            kind: "model".into(),
+            usage: "ocr".into(),
+            sha256: "b".repeat(64),
+        };
+        let dup = assets::Manifest { fetched: vec![fetched("det.rten"), fetched("det.rten"), fetched("rec.rten")], ..Default::default() };
+        let ocr_probs = check_required_ocr_metadata(ocr_src, &dup).unwrap();
+        assert!(ocr_probs.iter().any(|p| p.contains("must have exactly one entry")), "{ocr_probs:?}");
+    }
 }

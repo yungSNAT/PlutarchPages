@@ -327,4 +327,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         assert!(manifest(&d).is_err(), "manifest of a missing directory is an error the caller reports");
     }
+
+    #[test]
+    fn paths_state_git_helpers_and_local_init_work() {
+        assert_eq!(checkout(), root().join("corpus").join("pdfjs"));
+        assert_eq!(pdfs(), checkout().join("test").join("pdfs"));
+        let _ = state().expect("state check succeeds");
+
+        let dir = crate::scratch::ScratchDir::new("corpus-git-init");
+        run(git(&dir.0).args(["--version"]), "git version").unwrap();
+        assert!(run(git(&dir.0).args(["--no-such-flag"]), "bad git").is_err());
+        let ver = capture(git(&dir.0).args(["--version"]), "git version").unwrap();
+        assert!(ver.contains("git version"), "{ver}");
+        assert!(capture(git(&dir.0).args(["--no-such-flag"]), "bad git").is_err());
+
+        init(&dir.0).unwrap();
+        assert_eq!(capture(git(&dir.0).args(["config", "--get", "core.autocrlf"]), "autocrlf").unwrap(), "false");
+        assert_eq!(capture(git(&dir.0).args(["config", "--get", "core.eol"]), "eol").unwrap(), "lf");
+        assert_eq!(capture(git(&dir.0).args(["remote", "get-url", "origin"]), "origin").unwrap(), "https://github.com/mozilla/pdf.js.git");
+    }
 }
