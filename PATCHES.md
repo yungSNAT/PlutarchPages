@@ -63,10 +63,11 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
 - **Auto-tag running text** never hides an amount, failing towards content. A band line on every
-  page is a header or footer only if it holds no amount (no currency sign, no `.` or `,` between
-  digits, no `Total`, `Subtotal`, `Balance`, `Amount`, `Due` or `Forward`), and a line whose
-  numbers change only if it reads as a page number with no other label (`3`, `iv`, `Page 3`,
-  `3 of 9`, `- 3 -`) and the number steps by one a page (any start, unnumbered pages skipped).
+  page is a header or footer only if it holds no currency sign of any script (Unicode category
+  Sc) and no digits other than years from 1900 to 2099 (`Annual report 2026`, `(c) 2026 Firm`
+  run; `300`, `(500)`, `AUD 500`, `GST 10%` don't). A line whose numbers change runs only if it
+  reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
+  number steps by one a page (any start, unnumbered pages skipped).
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in

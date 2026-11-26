@@ -17,3 +17,4 @@ pdfcraft-model = { workspace = true }
 pdfcraft-content = { workspace = true }
 pdfcraft-fonts = { workspace = true }
 thiserror.workspace = true
+unicode-general-category = "1.1"

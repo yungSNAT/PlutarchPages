@@ -91,7 +91,7 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
     texts_differ && heading_sized && worded
 }
 
-/// Fork guard, failing towards content. The same text on every page repeats unless it holds an
+/// Fork guard, failing towards content. The same text on every page repeats unless it may hold an
 /// amount ([`holds_amount`]). Text that changes repeats only as a page-number sequence: the key
 /// reads as a page number ([`is_page_number`]: no label but page words, no currency sign, decimal
 /// or separator), exactly one of its numbers changes, and that one steps with the page index (the
@@ -130,17 +130,14 @@ fn repeats(window: &[Member<'_>], key: &str) -> bool {
     stepping == 1
 }
 
-/// Words that label an amount.
-const AMOUNT_WORDS: [&str; 6] = ["total", "subtotal", "balance", "amount", "due", "forward"];
-
-/// Folded text that reads as an amount: a currency sign, digits on both sides of a `.` or `,`
-/// (`1,234.56`, `1.50`), or a word of [`AMOUNT_WORDS`] (`Total`, `Amount due`, `Balance`).
+/// Folded text that may be an amount, failing towards content: a currency sign of any script
+/// (Unicode category Sc), or a run of digits other than a year from 1900 to 2099. So `Annual
+/// report 2026` and `(c) 2026 Firm` can repeat, and `300`, `(500)`, `AUD 500` and `GST 10%` cannot.
 fn holds_amount(folded: &str) -> bool {
-    let chars: Vec<char> = folded.chars().collect();
-    let currency = chars.iter().any(|c| matches!(c, '$' | '\u{a2}'..='\u{a5}' | '\u{20a0}'..='\u{20cf}'));
-    let separated = chars.windows(3).any(|w| matches!(w, [a, '.' | ',', b] if a.is_ascii_digit() && b.is_ascii_digit()));
-    let worded = folded.split(|c: char| !c.is_alphanumeric()).any(|w| AMOUNT_WORDS.contains(&w));
-    currency || separated || worded
+    use unicode_general_category::{GeneralCategory, get_general_category};
+    let currency = folded.chars().any(|c| get_general_category(c) == GeneralCategory::CurrencySymbol);
+    let year = |run: &str| run.len() == 4 && run.parse::<u16>().is_ok_and(|y| (1900..=2099).contains(&y));
+    currency || folded.split(|c: char| !c.is_numeric()).any(|run| !run.is_empty() && !year(run))
 }
 
 /// The numbers [`normalise`] replaces by `#`, in order: each digit run, and a roman numeral standing
@@ -485,7 +482,28 @@ mod tests {
             assert_eq!(run(&pages, Some(10.0)), [[None], [None], [None]], "{texts:?}");
         }
         // The same amount on every page stays content.
-        for text in ["Total 55.00", "Amount due $1,234.56", "Balance 300", "Subtotal 12", "\u{20ac}40"] {
+        for text in [
+            "Total 55.00",
+            "Amount due $1,234.56",
+            "Balance 300",
+            "Subtotal 12",
+            "\u{20ac}40",
+            "(500)",
+            "-500",
+            "AUD 500",
+            "500 AUD",
+            "\u{ff04}500",
+            "\u{ffe5}500",
+            "Totals 300",
+            "1\u{202f}234",
+            "1'234",
+            "B/F 300",
+            "Summe 300",
+            "300",
+            "GST 10%",
+            "Invoice INV-1001",
+            "\u{0e3f}2026",
+        ] {
             let same = [vec![line(text, 60.0)], vec![line(text, 60.0)]];
             assert_eq!(run(&same, Some(10.0)), [[None], [None]], "{text}");
         }
@@ -495,7 +513,7 @@ mod tests {
 
     #[test]
     fn the_same_line_without_an_amount_still_repeats() {
-        for text in ["Annual report 2026", "(c) 2026 Firm", "Confidential"] {
+        for text in ["Annual report 2026", "(c) 2026 Firm", "Confidential", "1999 to 2026"] {
             let same = [vec![line(text, 760.0)], vec![line(text, 760.0)]];
             assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Top)], [Some(Edge::Top)]], "{text}");
         }
