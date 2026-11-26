@@ -194,6 +194,21 @@ fn errors_quote_no_cell_unless_verbose() {
 }
 
 #[test]
+fn repeated_names_report_one_conflict_and_leave_unique_rows_usable() {
+    let dir = workdir();
+    let (mut a, doc) = form(dir.path());
+    let csv = "File,Name\ncopy,Ada\nCOPY,Bo\ncopy,Cy\none,Dee\n";
+    std::fs::write(dir.path().join("rows.csv"), csv).unwrap();
+    let report = call(&mut a, "form_fill_batch", json!({ "doc": doc, "data": "rows.csv", "out_dir": "out", "name_column": "File" }));
+    assert_eq!(report["completed"], 1, "{report}");
+    assert_eq!(report["failed"], 3, "{report}");
+    for (i, other) in [2, 1, 1].into_iter().enumerate() {
+        assert_eq!(report["rows"][i]["error"], format!("the file name is also given by row {other} (3 rows share it)"));
+    }
+    assert_eq!(files_in(&dir.path().join("out")), vec!["one.pdf"]);
+}
+
+#[test]
 fn a_column_that_names_no_field_fails_every_row() {
     let dir = workdir();
     let (mut a, doc) = form(dir.path());

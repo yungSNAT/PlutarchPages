@@ -15,7 +15,8 @@ pdfcraft-cli form-fill-batch form.pdf --data rows.json --out-dir filled --name-c
 ## Data
 
 - **CSV or tab-delimited text**: the first row names the fields, as Export Data
-  writes it. Quoted cells may hold commas, doubled quotes and line breaks. Blank
+  writes it. In CSV, quoted cells may hold commas, doubled quotes and line breaks.
+  In tab-delimited text, each line is one row and each tab starts a new cell. Blank
   lines are skipped. A check box cell is empty or `Off` (cleared) or one of the
   box's on states; anything else, `yes` or `1` included, fails the row. A
   multi-select list cell joins its options with `, `.
