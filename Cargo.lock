@@ -5267,6 +5267,7 @@ dependencies = [
  "pdfcraft-fonts",
  "rten",
  "rten-imageproc",
+ "rten-sequence",
  "rten-tensor",
  "serde_json",
  "sha2 0.11.1",

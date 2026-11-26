@@ -1879,6 +1879,30 @@ fn black_and_white_images_are_stored_at_one_bit() {
     assert_eq!(kept[3], (Some(1), Some(b"FlateDecode".to_vec())), "Group 4 isn't smaller for 2 × 2");
 }
 
+/// Group 4 keeps black that touches a row's edges: a row that starts black, one that ends black
+/// and one that is black all through decode to the picture's bits.
+#[test]
+fn group4_keeps_black_at_row_edges() {
+    let (w, h) = (1200u32, 240u32);
+    let mut bits = strokes(w, h);
+    let stride = (w as usize).div_ceil(8);
+    let mut black = |x: usize, y: usize| bits[y * stride + x / 8] &= !(0x80 >> (x % 8));
+    for y in 0..h as usize {
+        black(0, y);
+        if y % 2 == 0 {
+            black(w as usize - 1, y);
+        }
+    }
+    (0..w as usize).for_each(|x| black(x, 7));
+    let white = |x: usize, y: usize| bits[y * stride + x / 8] & (0x80 >> (x % 8)) != 0;
+    let expected: Vec<Vec<bool>> = (0..h as usize).map(|y| (0..w as usize).map(|x| white(x, y)).collect()).collect();
+    let png = png_of(w, h, TestPngColor::Grayscale, TestPngDepth::One, &bits, None, None);
+    let doc = reopen(&from_images(&[("edges.png".to_string(), png)]).unwrap());
+    let s = image_stream(&doc, 0);
+    assert_eq!(s.dict.name(b"Filter"), Some(&b"CCITTFaxDecode"[..]));
+    assert_eq!(g4_rows(&s), expected);
+}
+
 /// The pixels of an exported PNG (RGB), as true for white.
 fn exported_white(png_data: &[u8]) -> Vec<bool> {
     let img = craft_image_codecs::decode_as_with(craft_image_codecs::Format::Png, png_data, &craft_image_codecs::DecodeOptions::default()).unwrap();

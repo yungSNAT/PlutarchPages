@@ -17,6 +17,7 @@ ocrs = { version = "0.14.0", default-features = false, features = ["rten"] }
 rten = { version = "0.28.0", default-features = false, features = ["onnx_format", "rten_format"] }
 rten-imageproc = "0.28.0"
 rten-tensor = { version = "0.28.0", optional = true }
+rten-sequence = { version = "0.28.0", optional = true }
 serde_json.workspace = true
 sha2 = "0.11"
 thiserror.workspace = true
@@ -28,7 +29,7 @@ craft-image-codecs = { workspace = true }
 [features]
 # Arabic lines for the ocrs engine (src/arabic.rs): PaddleOCR's Arabic recogniser, whose files
 # `cargo xtask models --arabic` fetches. Off by default.
-arabic = ["dep:rten-tensor"]
+arabic = ["dep:rten-tensor", "dep:rten-sequence"]
 
 [dev-dependencies]
 tempfile = "3.27"
