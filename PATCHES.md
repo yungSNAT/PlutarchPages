@@ -72,9 +72,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   (`Total 2000`) or signed another way (`[2026]`, `（2026）`, `–2026`, `- 2026`, `2026-`,
   `Balance 2000 CR`). A line whose numbers change runs only if it
   reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
-  number steps by one a page (any start, unnumbered pages skipped; in round brackets, starting
-  at most at the page's own position, so `(500)`, `(501)` stay content; a minus on one side
-  only, `-3` or `3-`, is a sign, not a page number).
+  number steps by one a page (any start, unnumbered pages skipped). Round brackets and a minus on
+  one side only (`(3)`, `-3`, `3-`) mark an amount, so such a changing number stays content;
+  `[3]` and `- 3 -` run.
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in
