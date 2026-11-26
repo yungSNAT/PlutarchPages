@@ -100,7 +100,7 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
 /// them as footers. Known limit: a bare number in square brackets or between paired dashes that
 /// steps by one a page runs as a page number whatever its size (`[500]`, `[501]`; `- 500 -`,
 /// `- 501 -`), as neither shape marks an amount. So do a changing number with an en or em dash
-/// on one side only (`–5`, `5–`, `—5`, `– 5`) and one with a minus inside square brackets
+/// on one side only (`–5`, `5–`, `—5`, `– 5`) and one with a `-` inside square brackets
 /// (`[-5]`): [`is_page_number`] counts only `-` and U+2212 as a minus, before the brackets go.
 fn repeats(window: &[Member<'_>], key: &str) -> bool {
     let Some(first) = window.first().map(|m| folded(&m.evidence.text)) else {
