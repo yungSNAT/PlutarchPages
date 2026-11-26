@@ -1,3 +1,6 @@
+// Copyright 2026 Ryan Duguid
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use super::*;
 
 /// Fork guard (PATCHES.md, 'Stricter than upstream on purpose'): amounts in a band are content.
