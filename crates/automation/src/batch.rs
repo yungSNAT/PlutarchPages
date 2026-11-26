@@ -770,7 +770,28 @@ mod tests {
     /// Returns what the script said: `ok`, or the Windows error.
     #[cfg(windows)]
     fn convert_in_place(dir: &Path, target: &str, access: u32) -> String {
-        const SCRIPT: &str = r#"param([string]$Dir, [string]$Target, [uint32]$Access)
+        reparse_in_place(dir, target, access, false)
+    }
+
+    /// Sets a relative directory symbolic link (`SYMLINK_FLAG_RELATIVE`, `target` such as
+    /// `..\outside`) on the existing folder `dir` in place, as [`convert_in_place`] does a junction.
+    /// `None`, with a message, when this user may not make symbolic links.
+    #[cfg(windows)]
+    fn relative_symlink_in_place(dir: &Path, target: &str) -> Option<()> {
+        match reparse_in_place(dir, target, FILE_WRITE_ATTRIBUTES, true).as_str() {
+            "ok" => Some(()),
+            // ERROR_PRIVILEGE_NOT_HELD: no SeCreateSymbolicLinkPrivilege and no Developer Mode.
+            "fsctl failed 1314" => {
+                eprintln!("skipping: this user cannot make symbolic links");
+                None
+            }
+            said => panic!("{said}"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn reparse_in_place(dir: &Path, target: &str, access: u32, relative_symlink: bool) -> String {
+        const SCRIPT: &str = r#"param([string]$Dir, [string]$Target, [uint32]$Access, [string]$Kind)
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -781,17 +802,32 @@ public static class InPlaceJunction {
     static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool DeviceIoControl(SafeFileHandle h, uint code, byte[] inBuf, int inLen, IntPtr outBuf, int outLen, out int returned, IntPtr overlapped);
-    public static string Make(string dir, string target, uint access) {
+    public static string Make(string dir, string target, uint access, string kind) {
         SafeFileHandle h = CreateFileW(dir, access, 7, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
         if (h.IsInvalid) return "open failed " + Marshal.GetLastWin32Error();
-        byte[] sub = Encoding.Unicode.GetBytes("\\??\\" + target);
-        int pathLen = sub.Length + 4;
-        byte[] buf = new byte[16 + pathLen];
-        BitConverter.GetBytes(0xA0000003u).CopyTo(buf, 0);
-        BitConverter.GetBytes((ushort)(8 + pathLen)).CopyTo(buf, 4);
-        BitConverter.GetBytes((ushort)sub.Length).CopyTo(buf, 10);
-        BitConverter.GetBytes((ushort)(sub.Length + 2)).CopyTo(buf, 12);
-        sub.CopyTo(buf, 16);
+        byte[] buf;
+        if (kind == "symrel") {
+            // IO_REPARSE_TAG_SYMLINK: a 20-byte header (with Flags), then the names.
+            byte[] name = Encoding.Unicode.GetBytes(target);
+            buf = new byte[20 + 2 * name.Length];
+            BitConverter.GetBytes(0xA000000Cu).CopyTo(buf, 0);
+            BitConverter.GetBytes((ushort)(12 + 2 * name.Length)).CopyTo(buf, 4);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 10);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 12);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 14);
+            BitConverter.GetBytes(1u).CopyTo(buf, 16);
+            name.CopyTo(buf, 20);
+            name.CopyTo(buf, 20 + name.Length);
+        } else {
+            byte[] sub = Encoding.Unicode.GetBytes("\\??\\" + target);
+            int pathLen = sub.Length + 4;
+            buf = new byte[16 + pathLen];
+            BitConverter.GetBytes(0xA0000003u).CopyTo(buf, 0);
+            BitConverter.GetBytes((ushort)(8 + pathLen)).CopyTo(buf, 4);
+            BitConverter.GetBytes((ushort)sub.Length).CopyTo(buf, 10);
+            BitConverter.GetBytes((ushort)(sub.Length + 2)).CopyTo(buf, 12);
+            sub.CopyTo(buf, 16);
+        }
         int r;
         bool ok = DeviceIoControl(h, 0x000900A4, buf, buf.Length, IntPtr.Zero, 0, out r, IntPtr.Zero);
         int err = Marshal.GetLastWin32Error();
@@ -800,7 +836,7 @@ public static class InPlaceJunction {
     }
 }
 '@
-[InPlaceJunction]::Make($Dir, $Target, $Access)
+[InPlaceJunction]::Make($Dir, $Target, $Access, $Kind)
 "#;
         // pwsh refuses a `\\?\` script path, which the canonical sandbox has.
         let script = PathBuf::from(win(&dir.with_file_name("in-place-junction.ps1")).trim_start_matches(r"\\?\"));
@@ -811,6 +847,7 @@ public static class InPlaceJunction {
             .arg(win(dir))
             .arg(target)
             .arg(access.to_string())
+            .arg(if relative_symlink { "symrel" } else { "junction" })
             .output()
             .unwrap();
         let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -889,22 +926,111 @@ public static class InPlaceJunction {
         assert!(names(&outside.join("inner")).is_empty());
     }
 
-    /// Another process moves the temporary file away and puts its own file at the temporary name;
-    /// the name taken then holds the other file, so it is given back and the publish fails.
+    /// Moves each temporary file of `out` that another process can move into `to`, and puts a
+    /// file of its own at that name.
+    #[cfg(windows)]
+    fn swap_temporaries(out: &Path, to: &Path) {
+        for name in names(out) {
+            if std::fs::rename(out.join(&name), to.join(&name)).is_ok() {
+                std::fs::write(out.join(&name), b"theirs").unwrap();
+            }
+        }
+    }
+
+    /// Another process moves the temporary file away and puts its own file at the temporary name
+    /// just before it is named: the rename then gives the other file the output name. The publish
+    /// fails, leaves that file alone and removes only the file it made.
     #[cfg(windows)]
     #[test]
     fn a_temporary_file_swapped_before_it_is_named_is_not_published() {
-        let (_dir, base, _) = sandbox();
+        let (_dir, base, outside) = sandbox();
         let out = base.join("out");
         let folder = Folder::open_checked(&out).unwrap();
-        let (temp, mut file) = folder.make_temporary().unwrap();
-        file.write_all(b"ours").unwrap();
-        std::fs::rename(out.join(&temp.1), base.join("moved")).unwrap();
-        std::fs::write(out.join(&temp.1), b"theirs").unwrap();
-        let error = folder.take_name(temp, &file, [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap_err().to_string();
+        let taken = std::iter::once(()).map(|()| {
+            swap_temporaries(&out, &outside);
+            std::ffi::OsString::from("a.pdf")
+        });
+        let error = folder.publish(b"ours", taken).unwrap_err().to_string();
         assert!(error.contains("replaced"), "{error}");
-        assert!(!out.join("a.pdf").exists(), "the other file keeps no output name");
-        assert_eq!(std::fs::read(base.join("moved")).unwrap(), b"ours");
+        assert_eq!(std::fs::read(out.join("a.pdf")).unwrap(), b"theirs", "the other file is not removed");
+        assert!(names(&outside).is_empty(), "the file made is not kept: {:?}", names(&outside));
+    }
+
+    /// A failed publish removes only what it made: a file another process put at a temporary name
+    /// survives, and the folder is left holding only that file.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_put_at_a_temporary_name_survives_a_failed_publish() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let taken = std::iter::once(()).filter_map(|()| {
+            swap_temporaries(&out, &outside);
+            None::<std::ffi::OsString>
+        });
+        let error = folder.publish(b"ours", taken).unwrap_err().to_string();
+        assert!(error.contains("occupied"), "{error}");
+        let left: Vec<Vec<u8>> = names(&out).iter().map(|name| std::fs::read(out.join(name)).unwrap()).collect();
+        assert_eq!(left, [b"theirs".to_vec()]);
+        assert!(names(&outside).is_empty(), "the file made is not kept: {:?}", names(&outside));
+    }
+
+    /// Whilst the file is named, another process moves out every entry of the output folder it
+    /// can: the anchor stays, so the folder cannot be turned into a link.
+    #[cfg(windows)]
+    #[test]
+    fn the_output_folder_keeps_an_entry_whilst_the_file_is_named() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let said = std::cell::RefCell::new(String::new());
+        let taken = std::iter::once(()).map(|()| {
+            for name in names(&out) {
+                let _ = std::fs::rename(out.join(&name), outside.join(&name));
+            }
+            *said.borrow_mut() = convert_in_place(&out, &win(&outside), FILE_WRITE_ATTRIBUTES);
+            std::ffi::OsString::from("a.pdf")
+        });
+        let _ = folder.publish(b"%PDF-1.7", taken);
+        assert_eq!(said.into_inner(), "fsctl failed 145");
+    }
+
+    /// A held folder just made is turned in place into a relative symbolic link to `..\outside`;
+    /// a relative create resolves that against the folder itself, so it lands in `outside`.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_just_made_and_turned_into_a_relative_symlink_gets_no_folder_made_through_it() {
+        let (_dir, base, outside) = sandbox();
+        let made = base.join("new");
+        let mut folder = Folder::open_checked(&made).unwrap();
+        if relative_symlink_in_place(&made, r"..\outside").is_none() {
+            return;
+        }
+        let error = folder.enter_checked("sub".as_ref()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside).is_empty(), "made outside the checked folder: {:?}", names(&outside));
+    }
+
+    /// The held output folder `b\out` is turned into a relative symbolic link to `..\outside`, and
+    /// a junction `outside` beside `b` leads to `b\outside`, so the folder reached by path
+    /// (`b\..\outside`) and the one reached relative to the held folder (`out\..\outside`) are the
+    /// same: every check that compares the two agrees, and the file must still not land there.
+    #[cfg(windows)]
+    #[test]
+    fn a_held_output_folder_turned_into_a_relative_symlink_gets_nothing_published_through_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join(r"b\outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        link_dir(&dir.path().join("outside"), &outside);
+        let out = dir.path().canonicalize().unwrap().join(r"b\out");
+        let folder = Folder::open_checked(&out).unwrap();
+        if relative_symlink_in_place(&out, r"..\outside").is_none() {
+            return;
+        }
+        let result = folder.publish(b"%PDF-1.7 ours", [std::ffi::OsString::from("a.pdf")].into_iter());
+        assert!(names(&outside).is_empty(), "written outside the checked folder: {:?} ({result:?})", names(&outside));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
     }
 
     #[cfg(windows)]
