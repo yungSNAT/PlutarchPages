@@ -49,3 +49,9 @@ pdfcraft-xfa = { workspace = true }
 # also read Finder tags with it.
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }
+
+# Output folders on Windows: made and opened relative to a held folder, and compared by file
+# identity (batch.rs `publish`).
+[target.'cfg(windows)'.dependencies]
+fs_at = "0.2"
+same-file = "1"

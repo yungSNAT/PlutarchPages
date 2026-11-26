@@ -309,6 +309,16 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   reads records up to a limit, and `import_table` shares its CSV reader (`csv_records`), now
   stopping after the names and first row it takes (`crates/xfdf/src/tests/fork_tests.rs`). When upstream changes `import_table`'s CSV
   reading, make the change in `csv_records`.
+- Batch output through the folder as opened: `publish` in `crates/automation/src/batch.rs` (used by
+  `doc_batch` and `form_fill_batch`) opens the output folder one name at a time from the root,
+  refusing links, and makes and names each file relative to it, so a folder swapped for a link
+  after the path check cannot redirect the write. Unix uses `rustix` `openat`. Windows has no
+  handle-relative create in std and the workspace forbids `unsafe`, so it uses `fs_at` (made
+  relative to a held folder) and `same-file` (file identity): each folder is held without
+  `FILE_SHARE_DELETE`, then found again relative to its parent, and an anchor file keeps the output
+  folder non-empty (NTFS will not turn a folder with an entry into a junction) whilst the
+  temporary file is renamed by path. Tests in the same file. Keep it over upstream's
+  `create_dir_all` and `tempfile` unless upstream makes publishing handle-relative.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
   it stops LibreOffice once the files it writes anywhere in that folder pass the size limit (or

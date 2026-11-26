@@ -80,13 +80,13 @@ normalisation, as Windows and macOS file systems compare them, so `Café` compos
 and decomposed clash. Each file is written atomically and never replaces an
 existing file: a taken name gets a number, `kept (2).pdf`, as in `batch`, and the output
 folder is opened as `batch` opens it (no links on the way; on Windows a volume mounted at a folder is
-refused too, with the same limit; on macOS
+refused too; on macOS
 and other systems without `O_PATH` the output folder and the folders above it must be readable,
 and a folder that has to be made needs a writable parent).
 
 Each file is staged as a temporary file in the output folder and renamed into
 place. If the process is killed or the power fails mid-row, that staging file
-(named `.tmp` and random characters) can remain; delete it. The files already
+(named `.tmp` and random characters; on Windows 2 such files) can remain; delete it. The files already
 published stay but the report is lost: rerun the rows that have no file in the
 folder.
 
