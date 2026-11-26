@@ -131,13 +131,28 @@ fn repeats(window: &[Member<'_>], key: &str) -> bool {
 }
 
 /// Folded text that may be an amount, failing towards content: a currency sign of any script
-/// (Unicode category Sc), or a run of digits other than a year from 1900 to 2099. So `Annual
-/// report 2026` and `(c) 2026 Firm` can repeat, and `300`, `(500)`, `AUD 500` and `GST 10%` cannot.
+/// (Unicode category Sc), or a run of digits other than a year in ASCII digits from 1900 to 2099
+/// with no minus sign directly before it and no bracket directly around it. So `Annual report 2026`
+/// and `(c) 2026 Firm` can repeat, and `300`, `(500)`, `-2026`, `(2026)`, `AUD 500` and `GST 10%`
+/// cannot. Digits of other scripts (`٢٠٢٦`, `２０２６`) never read as a year, so they count as an
+/// amount. Known limit: an unsigned amount from 1900 to 2099 (`Total 2000`) reads as a year.
 fn holds_amount(folded: &str) -> bool {
-    use unicode_general_category::{GeneralCategory, get_general_category};
-    let currency = folded.chars().any(|c| get_general_category(c) == GeneralCategory::CurrencySymbol);
-    let year = |run: &str| run.len() == 4 && run.parse::<u16>().is_ok_and(|y| (1900..=2099).contains(&y));
-    currency || folded.split(|c: char| !c.is_numeric()).any(|run| !run.is_empty() && !year(run))
+    use icu_properties::{CodePointMapData, props::GeneralCategory};
+    let category = CodePointMapData::<GeneralCategory>::new();
+    let currency = folded.chars().any(|c| category.get(c) == GeneralCategory::CurrencySymbol);
+    let chars: Vec<(usize, char)> = folded.char_indices().collect();
+    let year = |run: &[(usize, char)]| {
+        let (Some(&(start, _)), Some(&(last, c))) = (run.first(), run.last()) else {
+            return false;
+        };
+        let end = last.saturating_add(c.len_utf8());
+        let (Some(before), Some(text), Some(after)) = (folded.get(..start), folded.get(start..end), folded.get(end..)) else {
+            return false;
+        };
+        let signed = before.ends_with(['-', '\u{2212}', '(']) || after.starts_with(')');
+        text.len() == 4 && text.bytes().all(|b| b.is_ascii_digit()) && !signed && text.parse::<u16>().is_ok_and(|y| (1900..=2099).contains(&y))
+    };
+    currency || chars.chunk_by(|a, b| a.1.is_numeric() == b.1.is_numeric()).any(|run| run.first().is_some_and(|(_, c)| c.is_numeric()) && !year(run))
 }
 
 /// The numbers [`normalise`] replaces by `#`, in order: each digit run, and a roman numeral standing
@@ -503,6 +518,10 @@ mod tests {
             "GST 10%",
             "Invoice INV-1001",
             "\u{0e3f}2026",
+            "-2026",
+            "\u{2212}2026",
+            "(2026)",
+            "Balance (1999)",
         ] {
             let same = [vec![line(text, 60.0)], vec![line(text, 60.0)]];
             assert_eq!(run(&same, Some(10.0)), [[None], [None]], "{text}");
@@ -517,6 +536,13 @@ mod tests {
             let same = [vec![line(text, 760.0)], vec![line(text, 760.0)]];
             assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Top)], [Some(Edge::Top)]], "{text}");
         }
+    }
+
+    /// The known limit: an unsigned amount from 1900 to 2099 repeated on every page reads as a year.
+    #[test]
+    fn total_2000_on_every_page_runs_as_a_year() {
+        let same = [vec![line("Total 2000", 760.0)], vec![line("Total 2000", 760.0)]];
+        assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Top)], [Some(Edge::Top)]]);
     }
 
     #[test]
