@@ -62,12 +62,16 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   step until a save (`Editor::held`). Code in `crates/redact/src/elsewhere.rs` and `metadata.rs`
   and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
-- **Auto-tag running text** marks a band line whose numbers change from page to page as a header
-  or footer only when they read as page numbers: one number changes, by one a page (any start,
-  unnumbered pages skipped), and the rest stay the same. Upstream matches any digits, so differing
-  amounts in the bottom band (`1,234.56`, `Total 7,890.12`) become footer artifacts that screen
-  readers skip. Code `repeats` in `crates/a11y/src/autotag_running.rs`; tests
-  `differing_amounts_at_the_same_height_stay_content` and
+- **Auto-tag running text** never hides an amount, failing towards content. A band line on every
+  page is a header or footer only if it holds no amount (no currency sign, no `.` or `,` between
+  digits, no `Total`, `Subtotal`, `Balance`, `Amount`, `Due` or `Forward`), and a line whose
+  numbers change only if it reads as a page number with no other label (`3`, `iv`, `Page 3`,
+  `3 of 9`, `- 3 -`) and the number steps by one a page (any start, unnumbered pages skipped).
+  Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
+  page, become footer artifacts that screen readers skip. A page number beside other words
+  (`Annual report, page 3`) stays content here. Code `repeats` in
+  `crates/a11y/src/autotag_running.rs`, with tests `differing_amounts_at_the_same_height_stay_content`,
+  `the_same_line_without_an_amount_still_repeats` and
   `page_numbers_that_step_with_the_page_are_still_artifacts` there.
 
 ## Only here
@@ -417,13 +421,15 @@ take upstream's side, keep only the fork's tests that upstream's don't cover, th
 
 ## Taken ahead of the next merge
 
-These upstream commits are cherry-picked unchanged. The next merge brings the same lines, so it
-should not conflict on them: delete the entry then.
+These upstream commits are cherry-picked unchanged unless an entry names a fork change. The next
+merge brings the same lines; where an entry names a conflict, keep the fork's lines there, and any
+upstream change inside the hunk, as the pick's lines are already in it. Delete the entry then.
 
 - Auto-tag marks running headers, footers and page numbers as pagination artifacts: upstream
   #7810 (`6f1c601a`, 26 November 2026), picked as one commit against its first parent. Its lines
-  are upstream's apart from the running-text guard above; the following merge brings #8160 too
-  (R4915).
+  are upstream's apart from the fork change 'Auto-tag running text' above (in
+  `crates/a11y/src/autotag_running.rs`: keep it when the merge brings upstream's version); the
+  following merge brings #8160 too (R4915).
 
 ## Merging upstream
 

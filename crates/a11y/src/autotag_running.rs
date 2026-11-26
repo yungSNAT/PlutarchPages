@@ -10,7 +10,7 @@
 //! Every object in some qualifying span of distances counts, so spans that overlap and spans that
 //! lie apart are each marked. Position alone never makes running text.
 //! A text object whose extent is not known (see [`Evidence::extent`]) is never running text.
-//! Fork: text that changes from page to page runs only as a page-number sequence ([`repeats`]).
+//! Fork: an amount never runs, and text that changes runs only as page numbers ([`repeats`]).
 
 use std::collections::HashMap;
 
@@ -91,19 +91,21 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
     texts_differ && heading_sized && worded
 }
 
-/// Fork guard: a group whose text changes repeats only as a page-number sequence. Every member has
-/// the same count of numbers, exactly one of them changes, and it steps with the page index (the
-/// same offset on every member, so numbering may start anywhere and skip unnumbered pages); the
-/// others stay the same. The key must read as a page number or keep a word. So differing amounts at
-/// the same height (`1,234.56`, `Total 7,890.12`) stay content; upstream marks them as footers.
+/// Fork guard, failing towards content. The same text on every page repeats unless it holds an
+/// amount ([`holds_amount`]). Text that changes repeats only as a page-number sequence: the key
+/// reads as a page number ([`is_page_number`]: no label but page words, no currency sign, decimal
+/// or separator), exactly one of its numbers changes, and that one steps with the page index (the
+/// same offset on every member, so numbering may start anywhere and skip unnumbered pages). So
+/// `Total 100`, `Total 101` and an `Amount due` line on every page stay content; upstream marks
+/// them as footers.
 fn repeats(window: &[Member<'_>], key: &str) -> bool {
     let Some(first) = window.first().map(|m| folded(&m.evidence.text)) else {
         return false;
     };
     if window.iter().all(|m| folded(&m.evidence.text) == first) {
-        return true;
+        return !holds_amount(&first);
     }
-    if !is_page_number(key) && !key.chars().any(char::is_alphabetic) {
+    if !is_page_number(key) {
         return false;
     }
     let Some(rows) = window.iter().map(|m| Some((i128::try_from(m.page).ok()?, numbers(&m.evidence.text)?))).collect::<Option<Vec<_>>>() else {
@@ -126,6 +128,19 @@ fn repeats(window: &[Member<'_>], key: &str) -> bool {
         stepping = stepping.saturating_add(1);
     }
     stepping == 1
+}
+
+/// Words that label an amount.
+const AMOUNT_WORDS: [&str; 6] = ["total", "subtotal", "balance", "amount", "due", "forward"];
+
+/// Folded text that reads as an amount: a currency sign, digits on both sides of a `.` or `,`
+/// (`1,234.56`, `1.50`), or a word of [`AMOUNT_WORDS`] (`Total`, `Amount due`, `Balance`).
+fn holds_amount(folded: &str) -> bool {
+    let chars: Vec<char> = folded.chars().collect();
+    let currency = chars.iter().any(|c| matches!(c, '$' | '\u{a2}'..='\u{a5}' | '\u{20a0}'..='\u{20cf}'));
+    let separated = chars.windows(3).any(|w| matches!(w, [a, '.' | ',', b] if a.is_ascii_digit() && b.is_ascii_digit()));
+    let worded = folded.split(|c: char| !c.is_alphanumeric()).any(|w| AMOUNT_WORDS.contains(&w));
+    currency || separated || worded
 }
 
 /// The numbers [`normalise`] replaces by `#`, in order: each digit run, and a roman numeral standing
@@ -458,9 +473,32 @@ mod tests {
         // Two members on one page cannot both be its page number.
         let doubled = [vec![amount("3"), amount("8")], vec![amount("4")]];
         assert_eq!(run(&doubled, Some(10.0)), [vec![None, None], vec![None]]);
-        // The same line on every page is still a repeat.
-        let same = [vec![line("Total 55.00", 60.0)], vec![line("Total 55.00", 60.0)]];
-        assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Bottom)], [Some(Edge::Bottom)]]);
+        // A labelled number that steps by one a page is still an amount or a row, not a page number.
+        for texts in [
+            ["Total 100", "Total 101", "Total 102"],
+            ["Total 1.50", "Total 2.50", "Total 3.50"],
+            ["Total $1,001.00", "Total $1,002.00", "Total $1,003.00"],
+            ["Item 1 Widgets 40.00", "Item 2 Widgets 40.00", "Item 3 Widgets 40.00"],
+            ["$1", "$2", "$3"],
+        ] {
+            let pages: Vec<Vec<Evidence>> = texts.iter().map(|t| vec![line(t, 60.0)]).collect();
+            assert_eq!(run(&pages, Some(10.0)), [[None], [None], [None]], "{texts:?}");
+        }
+        // The same amount on every page stays content.
+        for text in ["Total 55.00", "Amount due $1,234.56", "Balance 300", "Subtotal 12", "\u{20ac}40"] {
+            let same = [vec![line(text, 60.0)], vec![line(text, 60.0)]];
+            assert_eq!(run(&same, Some(10.0)), [[None], [None]], "{text}");
+        }
+        let same = [vec![amount("1,234.56")], vec![amount("1,234.56")]];
+        assert_eq!(run(&same, Some(10.0)), [[None], [None]]);
+    }
+
+    #[test]
+    fn the_same_line_without_an_amount_still_repeats() {
+        for text in ["Annual report 2026", "(c) 2026 Firm", "Confidential"] {
+            let same = [vec![line(text, 760.0)], vec![line(text, 760.0)]];
+            assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Top)], [Some(Edge::Top)]], "{text}");
+        }
     }
 
     #[test]
@@ -475,9 +513,11 @@ mod tests {
         // Pages 1 and 3 numbered, page 2 not: the number still steps by the page index.
         let pages = vec![vec![number("7")], Vec::new(), vec![number("9")]];
         assert_eq!(run(&pages, Some(10.0)), [vec![Some(Edge::Bottom)], vec![], vec![Some(Edge::Bottom)]]);
-        // A labelled header beside its page number: the label stays, the number steps.
+        let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("- {n} -"), 30.0)]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "- n -");
+        // A page number inside other words fails towards content: only page words may label it.
         let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("Annual report 2026, page {n}"), 760.0)]).collect();
-        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Top)));
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(Option::is_none));
         assert_eq!(numbers("Page xiv of 20"), Some(vec![20]), "a numeral not standing alone is a word");
         assert_eq!(numbers("Page xiv"), Some(vec![14]));
         assert_eq!(numbers("p. 1,234.5"), Some(vec![1, 234, 5]));
