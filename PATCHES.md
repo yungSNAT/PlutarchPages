@@ -322,7 +322,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   delete, is renamed by path. Not covered: an empty file or folder made through a relative
   symbolic link before it is deleted by handle, which stays if another process fills or holds it;
   a file another process puts at the temporary name, which can take the output name (that output
-  then fails and the file is left alone); and network folders. Tests in the same file. Keep it over upstream's
+  then fails and the file is left alone); and network folders. This closes the link escapes the
+  tests demonstrate; it is not a by-construction guarantee, which would need `OBJ_DONT_REPARSE` on
+  every relative open and a rename by handle. Tests in the same file. Keep it over upstream's
   `create_dir_all` and `tempfile` unless upstream makes publishing handle-relative.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
