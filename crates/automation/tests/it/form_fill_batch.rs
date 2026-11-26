@@ -244,6 +244,8 @@ fn unsafe_or_misleading_names_fail_their_rows() {
         "report\u{202e}fdp.exe",
         "zero\u{200b}width",
         "bom\u{feff}",
+        "tag\u{e0041}",
+        "filler\u{3164}",
         "star*",
         "pipe|",
         "quote\"",

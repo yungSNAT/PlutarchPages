@@ -38,8 +38,9 @@ run as they do when typing. A row fails, and nothing is written for it, when it
 names a field the form lacks, gives a value the form refuses (a format or
 validation failure, an option the field does not list, a read-only field), gives
 a calculated field a value the form then calculates differently, or has the wrong
-number of cells. An empty cell for a calculated field leaves the calculation to
-the form. The other rows go on. The command exits with status 1 when any row
+number of cells. A calculated field's value must match the form's result as the
+form stores it, character for character (`6` and `6.00` differ); an empty cell
+leaves the calculation to the form. The other rows go on. The command exits with status 1 when any row
 failed.
 
 A field the row does not name keeps the form's value, unsaved edits included.
@@ -52,10 +53,11 @@ form with many calculated fields fills slowly, row by row.
 
 ## Errors and personal data
 
-Rows often hold personal data, so a row's error names the row, the field and the
-reason it can state without the value, and never quotes a cell or a file name
-from the data. Add `--verbose` (`"verbose": true` through `run` or MCP) to see
-the value and the form's full reason.
+Rows often hold personal data, so a row's error names the row and the field and
+never quotes a cell or a file name from the data. When the form refuses a value,
+the reason itself may quote it, so the error says only that the form refused it,
+even for reasons such as a read-only field or a length limit. Add `--verbose`
+(`"verbose": true` through `run` or MCP) to see the value and the form's reason.
 
 ## Output names
 

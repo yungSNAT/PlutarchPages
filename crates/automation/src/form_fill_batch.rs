@@ -264,9 +264,14 @@ fn output_names(rows: &[RowResult<Row>], stem: &str, verbose: bool) -> Vec<RowRe
 }
 
 /// Characters that change how a name displays without showing: bidirectional controls,
-/// zero-width characters and the like, which can make `report‮fdp.exe` look like another name.
+/// zero-width characters, Hangul fillers, tag characters and the like, with which one name can
+/// display as another.
 fn hidden(c: char) -> bool {
-    matches!(c, '\u{00AD}' | '\u{061C}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}' | '\u{FFF9}'..='\u{FFFB}')
+    matches!(
+        c,
+        '\u{00AD}' | '\u{034F}' | '\u{061C}' | '\u{115F}' | '\u{1160}' | '\u{180E}' | '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}' | '\u{3164}' | '\u{FEFF}' | '\u{FFA0}' | '\u{FFF9}'..='\u{FFFB}' | '\u{E0000}'..='\u{E007F}'
+    )
 }
 
 /// Refuse a file name that could leave the output folder, that some file system cannot hold or
