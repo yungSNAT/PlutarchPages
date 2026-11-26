@@ -317,6 +317,19 @@ const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't 
 #[cfg(unix)]
 struct Folder(std::os::fd::OwnedFd);
 
+/// A temporary name in a [`Folder`], removed on drop unless a rename already took it.
+#[cfg(unix)]
+struct Temp<'a>(&'a std::os::fd::OwnedFd, String, bool);
+
+#[cfg(unix)]
+impl Drop for Temp<'_> {
+    fn drop(&mut self) {
+        if !self.2 {
+            let _ = rustix::fs::unlinkat(self.0, self.1.as_str(), rustix::fs::AtFlags::empty());
+        }
+    }
+}
+
 #[cfg(unix)]
 impl Folder {
     fn open_checked(dir: &Path) -> Result<Self> {
@@ -360,18 +373,9 @@ impl Folder {
 
     /// Write `bytes` to a temporary file in the folder, then give it the first free name.
     fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
-        use rustix::fs::{AtFlags, Mode, OFlags, linkat, openat, unlinkat};
+        use rustix::fs::{AtFlags, Mode, OFlags, linkat, openat};
         use rustix::io::Errno;
         use std::hash::BuildHasher;
-        /// Removes the temporary name unless a rename already took it.
-        struct Temp<'a>(&'a std::os::fd::OwnedFd, String, bool);
-        impl Drop for Temp<'_> {
-            fn drop(&mut self) {
-                if !self.2 {
-                    let _ = unlinkat(self.0, self.1.as_str(), AtFlags::empty());
-                }
-            }
-        }
         let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let mut made = None;
         for _ in 0..64 {
