@@ -83,6 +83,7 @@ pdfcraft-cli extract <in.pdf> --pages 1,3,5-8 --out out.pdf    (pages and ranges
 pdfcraft-cli split   <in.pdf> (--every N | --before 3,7) [--out-dir DIR]
 pdfcraft-cli check  <files or dirs…> [--timeout 20] [--dpi 36] [--json out.json]
 pdfcraft-cli audit  <file.pdf> [--password PW]            report redaction risks (fails on covered text, unapplied marks or unreferenced text)
+                   [--before ORIGINAL.pdf [--before-password PW]]  also count the original's, and print 'leaks: N before -> M after'
 pdfcraft-cli batch <files or dirs...> --steps convert,ocr,optimize --out-dir DIR
                       [--recursive] [--root DIR] [--stop-on-error]
                       [--ppi 150] [--quality 60] [--dpi 300] [--language en] [--ocr-all-pages]

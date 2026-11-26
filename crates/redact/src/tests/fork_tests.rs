@@ -1008,17 +1008,33 @@ fn an_indirect_string_keeps_its_place() {
     assert!(!save_refuses(&doc_with(fields, "", &looped, ""), &["Project Bluefin"]));
 }
 
-/// A walk cut short at its cap is listed as its own place, which its category clears, not as
-/// an object nothing clears (Alcuin round 2, S2).
-#[test]
-fn a_name_tree_too_deep_to_walk_is_listed_as_an_attachment() {
-    // Past the walk's depth cap (`MAX_NAME_TREE_DEPTH`, 32).
-    let levels = 36;
+/// An attachments name tree `levels` deep through `/Kids` references, whose one leaf lists `leaf`.
+fn deep_attachments(levels: usize, leaf: &str) -> Document {
     let mut extra: Vec<String> = (0..levels).map(|i| format!("<< /Kids [{} 0 R] >>", i + 5)).collect();
-    extra.push("<< /Names [(a.txt) << /Type /Filespec /F (a.txt) >>] >>".to_string());
+    extra.push(format!("<< /Names [({leaf}) << /Type /Filespec /F ({leaf}) >>] >>"));
     let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
-    let doc = doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "");
-    let left = crate::survivors(&doc, &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
+    doc_with("/Names << /EmbeddedFiles 4 0 R >>", "", &extra, "")
+}
+
+/// A deep attachments tree is read to its leaves, as clean-up reads it, rather than refused at a
+/// depth of 32: an attachment that doesn't hold the text lets the save through, and one that does
+/// is listed as an attachment.
+#[test]
+fn a_deep_name_tree_is_read_to_its_leaves() {
+    let removed = || crate::Removed::new(vec!["Project Bluefin".to_string()], true);
+    let left = crate::survivors(&deep_attachments(40, "a.txt"), &removed());
+    assert!(!left.refuses(), "{:?}", left.items);
+    let left = crate::survivors(&deep_attachments(40, "Project Bluefin.txt"), &removed());
+    assert!(left.refuses());
+    assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
+}
+
+/// A walk cut short at its node budget is listed as its own place, which its category clears, not
+/// as an object nothing clears (Alcuin round 2, S2).
+#[test]
+fn a_name_tree_past_the_walk_budget_is_listed_as_an_attachment() {
+    // Past the walk's node budget (`MAX_NAME_TREE_NODES`, 100,000).
+    let left = crate::survivors(&deep_attachments(100_001, "a.txt"), &crate::Removed::new(vec!["Project Bluefin".to_string()], true));
     assert!(left.refuses());
     assert!(left.items.iter().all(|s| s.place == crate::Place::Attachment), "{:?}", left.items);
 }
@@ -1084,4 +1100,42 @@ fn deeply_held_xmp_refuses_a_save_and_metadata_removal_clears_it() {
         .expect("a thread starts")
         .join()
         .expect("no stack overflow");
+}
+
+/// One glyph of a standard-14 font named without a descriptor, drawn at `size` pt on baseline 100,
+/// goes when `rect` covers its ink above the face's published ascender. Such a font's glyph box is
+/// the generic 0.9 / -0.25 em; a box from the face's ascender and descender would keep it.
+fn std14_glyph_under_a_mark_goes(face: &str, size: f64, shown: &str, rect: [f64; 4]) {
+    let ops = format!("BT /F1 {size} Tf 50 100 Td ({shown}) Tj ET");
+    let mut doc = pdf(vec![
+        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec(),
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_vec(),
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>".to_vec(),
+        stream("", ops.as_bytes()),
+        format!("<< /Type /Font /Subtype /Type1 /BaseFont /{face} /Encoding /WinAnsiEncoding >>").into_bytes(),
+    ]);
+    mark(&mut doc, 0, &[rect], "");
+    let r = apply(&mut doc, None).unwrap();
+    let c = content(&doc, 0);
+    assert_eq!(r.glyphs, 1, "{face} {size} pt ({shown}): the glyph under the mark goes: {c}");
+    assert!(!c.contains(&format!("({shown})")), "{face} {size} pt: the page still shows ({shown}): {c}");
+}
+
+/// Courier's bar reaches above Courier's ascender: a mark from 0.6 em up covers it.
+#[test]
+fn a_courier_bar_under_a_mark_above_the_ascender_goes() {
+    std14_glyph_under_a_mark_goes("Courier", 20.0, "|", [40.0, 112.0, 200.0, 140.0]);
+}
+
+/// At 72 pt, a mark 46 to 54 pt above the baseline covers part of Courier's bar and none of the
+/// box Courier's ascender gives.
+#[test]
+fn a_large_courier_bar_under_a_narrow_mark_goes() {
+    std14_glyph_under_a_mark_goes("Courier", 72.0, "|", [40.0, 146.0, 200.0, 154.0]);
+}
+
+/// An accented capital reaches above Helvetica's ascender: a mark from 8 pt up covers its accent.
+#[test]
+fn a_helvetica_accented_capital_under_a_mark_goes() {
+    std14_glyph_under_a_mark_goes("Helvetica", 12.0, r"\311", [40.0, 108.0, 200.0, 120.0]);
 }

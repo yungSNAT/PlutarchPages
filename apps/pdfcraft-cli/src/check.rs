@@ -13,6 +13,16 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
     let password = flag(args, "--password");
     let doc = pdfcraft_cos::Document::open_with_password(bytes.clone(), password).map_err(|e| format!("{path}: {e}"))?;
     let report = pdfcraft_audit::audit_document(&doc).map_err(|e| format!("{path}: {e}"))?;
+    // The same count for the file before it was redacted, to show what the redaction took out.
+    let before = match flag(args, "--before") {
+        Some(original) => {
+            let doc = pdfcraft_cos::Document::open_with_password(read(original)?, flag(args, "--before-password"))
+                .map_err(|e| format!("{original}: {e}"))?;
+            let report = pdfcraft_audit::audit_document(&doc).map_err(|e| format!("{original}: {e}"))?;
+            Some((original, leaks(&report)))
+        }
+        None => None,
+    };
     // Rectangles in points from the top-left of the displayed page, as `doc_audit_redactions`
     // reports them; the page geometry is read only when there is something to place.
     let info = if report.page_findings.is_empty() {
@@ -21,10 +31,7 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
         let render_password = pdfcraft_engine::render_password_for(bytes.clone(), password);
         Some(inspect(bytes, render_password.as_deref()).map_err(|e| format!("{path}: {e}"))?)
     };
-    use pdfcraft_audit::FindingKind::{CoveredText, HiddenUnderWhite, UnappliedMark};
-    // Text in a stream nothing refers to is still in the file: it fails the audit as covered text does.
-    let unreferenced = report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>();
-    let failures = report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | HiddenUnderWhite | UnappliedMark)).count() + unreferenced;
+    let failures = leaks(&report);
     let items: Vec<serde_json::Value> = report
         .page_findings
         .into_iter()
@@ -39,11 +46,25 @@ pub(crate) fn audit(args: &[String]) -> Result<(), CliError> {
         })
         .collect();
     let document: Vec<_> = report.document_findings.iter().map(|f| serde_json::json!({ "kind": f.kind, "count": f.count })).collect();
-    println!(
-        "{}",
-        serde_json::json!({ "file": path, "findings": items, "count": items.len(), "document_findings": document, "document_count": document.len() })
-    );
+    let mut line =
+        serde_json::json!({ "file": path, "findings": items, "count": items.len(), "document_findings": document, "document_count": document.len() });
+    if let Some((original, before)) = before {
+        line["leaks"] = failures.into();
+        line["before"] = serde_json::json!({ "file": original, "leaks": before });
+    }
+    println!("{line}");
+    if let Some((_, before)) = before {
+        eprintln!("leaks: {before} before -> {failures} after");
+    }
     if failures == 0 { Ok(()) } else { Err(format!("audit: {failures} potential redaction leak finding(s)").into()) }
+}
+
+/// The findings that fail the audit: covered text, text hidden under white, unapplied marks, and
+/// text in a stream nothing refers to, which is still in the file as covered text is.
+fn leaks(report: &pdfcraft_audit::AuditReport) -> usize {
+    use pdfcraft_audit::FindingKind::{CoveredText, HiddenUnderWhite, UnappliedMark};
+    let unreferenced = report.document_findings.iter().filter(|f| f.kind == "unreferenced-text").map(|f| f.count).sum::<usize>();
+    report.page_findings.iter().filter(|f| matches!(f.kind, CoveredText | HiddenUnderWhite | UnappliedMark)).count() + unreferenced
 }
 
 /// Child-process body for `check`: prints one JSON line.
