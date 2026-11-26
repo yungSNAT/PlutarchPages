@@ -1158,10 +1158,15 @@ fn an_invisible_text_layer_under_a_box_is_removed() {
     assert!(c.contains("0 0 0 rg") && c.contains("10 95 30 15 re f"), "the box is drawn: {c}");
     assert_eq!(under(&mut doc, 0, &[[10.0, 95.0, 40.0, 110.0]]), 0, "nothing is left under the box");
     let bytes = write_full(&doc, &SaveOptions::default()).unwrap();
-    let saved = Document::open(Arc::new(bytes)).unwrap();
-    // Saved content is compressed, so search it decoded.
-    let c = content(&saved, 0);
-    assert!(!c.contains("SECRET") && c.contains("PUBLIC"), "the saved page content still holds the word: {c}");
+    let saved = Document::open(Arc::new(bytes.clone())).unwrap();
+    // Saved streams are compressed, so search every one of them decoded, and the raw bytes too.
+    assert!(content(&saved, 0).contains("PUBLIC"));
+    let holds = |d: &[u8]| d.windows(6).any(|w| w == b"SECRET");
+    assert!(!holds(&bytes), "the saved file still holds the word");
+    assert!(
+        !saved.scan_objects().any(|(_, o)| matches!(&*o, pdfcraft_cos::Object::Stream(s) if s.decoded().is_ok_and(|d| holds(&d)))),
+        "a saved stream still holds the word"
+    );
     let lines = pdfcraft_edit::text_lines(&saved, 0).unwrap();
     assert!(lines.iter().any(|line| line.text.contains("PUBLIC")), "{lines:?}");
     assert!(!lines.iter().any(|line| line.text.contains("SECRET")), "the covered word is extractable: {lines:?}");
