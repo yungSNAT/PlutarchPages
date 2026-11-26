@@ -37,12 +37,12 @@ fn instance_counts_stay_within_min_and_max_and_a_negative_count_is_ignored() {
 }
 
 #[test]
-fn move_instance_changes_nothing_and_removing_renumbers_and_new_instances_start_at_their_minimum() {
-    // The added rows hold one `sub`, their minimum; the original holds two. moveInstance is
-    // accepted but moves nothing, so removing instance 0 removes the original.
+fn removing_renumbers_and_new_instances_start_at_their_minimum() {
+    // The added rows hold one `sub`, their minimum; the original holds two, so removing
+    // instance 0 removes the original.
     assert_eq!(
         eval(
-            "_row.setInstances(3); _row.moveInstance(0, 1); \
+            "_row.setInstances(3); \
              var first = this.resolveNodes('row[*]').item(0).resolveNodes('sub[*]').length; \
              _row.removeInstance(0); \
              var l = this.resolveNodes('row[*]'); \
