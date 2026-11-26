@@ -419,40 +419,64 @@ impl Folder {
 /// Windows: every folder from the drive root down is held open without `FILE_SHARE_DELETE`, so
 /// none can be renamed, moved or deleted until the file is named, and each is opened as itself
 /// (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link, including a volume mounted at a
-/// folder. A held folder can still be turned into a junction in place, but NTFS refuses that
-/// once the folder has an entry, so:
+/// folder. A held folder can still be turned into a link in place whilst it is empty, and a
+/// relative symbolic link set that way is followed by a create relative to the folder, so:
 ///
-/// - each folder is pinned by its path and then found again relative to its held parent
-///   (`fs_at`, `NtCreateFile` with the parent as `RootDirectory`, which fails rather than follow
-///   a parent turned into a junction); the two must be the same folder, so the pinned folder is
-///   an entry of its parent, which can then never be emptied or converted;
-/// - missing folders and the files in the output folder are made relative to their held parent;
-/// - an anchor file, made and pinned the same way, keeps the output folder non-empty whilst the
-///   temporary file is renamed by path, and the name taken must then hold the file written.
+/// - nothing is taken on trust from where it was asked for: each folder held, and each file or
+///   folder made relative to its held parent, must be an entry of that parent by the final path
+///   of its own handle (`GetFinalPathNameByHandleW`); one made elsewhere is deleted again by its
+///   own handle and the publish fails;
+/// - a held folder whose entry is held in turn can no longer be emptied, so never converted (NTFS
+///   and ReFS refuse a reparse point on a folder with an entry); an anchor file held without
+///   delete sharing does the same for the output folder whilst the file is named by path;
+/// - the bytes are written through a handle held without delete sharing, so the file cannot be
+///   moved whilst they are written, and the name taken must then hold that file;
+/// - clean-up deletes only what publish made, each by its own handle, never by name.
 ///
 /// Elsewhere (wasm) the folder is only made.
 #[cfg(windows)]
 struct Folder {
     path: PathBuf,
-    /// From the drive root down; the last is the output folder.
-    held: Vec<File>,
+    /// From the drive root down, each with its final path; the last is the output folder.
+    held: Vec<(File, PathBuf)>,
 }
 
-/// A name made in the output folder, removed relative to it on drop unless taken.
+/// A file or folder publish made, deleted by its own handle on drop unless kept.
 #[cfg(windows)]
-struct Made<'a>(&'a File, std::ffi::OsString, bool);
+struct Made(Option<File>);
 
-/// Remove the entry `name` of the held folder `folder`, relative to it, never following a link.
 #[cfg(windows)]
-fn remove_entry(folder: &File, name: &std::ffi::OsStr) {
-    let _ = fs_at::OpenOptions::default().unlink_at(folder, name);
+impl Made {
+    fn get(&self) -> Result<&File> {
+        self.0.as_ref().ok_or_else(|| failed("the file made was already closed"))
+    }
+
+    /// Close the handle and keep what it refers to.
+    fn keep(mut self) {
+        self.0 = None;
+    }
+
+    /// A second handle to the same file (no name is looked up).
+    fn reopen(file: &File, access: winx::file::AccessMode, share: winx::file::ShareMode) -> std::io::Result<File> {
+        use std::os::windows::io::AsHandle;
+        winx::file::reopen_file(file.as_handle(), access, share, winx::file::Flags::FILE_FLAG_OPEN_REPARSE_POINT)
+    }
 }
 
 #[cfg(windows)]
-impl Drop for Made<'_> {
+impl Drop for Made {
     fn drop(&mut self) {
-        if !self.2 {
-            remove_entry(self.0, &self.1);
+        use fs_at::os::windows::FileExt;
+        use winx::file::{AccessMode, ShareMode};
+        if let Some(file) = self.0.take() {
+            let all = ShareMode::FILE_SHARE_READ | ShareMode::FILE_SHARE_WRITE | ShareMode::FILE_SHARE_DELETE;
+            // Directly when the handle has DELETE access (a folder made), else through a second
+            // handle to the same file that has it.
+            if let Err((file, _)) = file.delete_by_handle()
+                && let Ok(deleting) = Self::reopen(&file, AccessMode::DELETE, all)
+            {
+                let _ = deleting.delete_by_handle();
+            }
         }
     }
 }
@@ -462,6 +486,7 @@ impl Folder {
     const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
     const BACKUP_SEMANTICS: u32 = 0x0200_0000;
     const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const READ_ATTRIBUTES: u32 = 0x80;
 
     /// `path` opened as itself, by path, without `FILE_SHARE_DELETE`.
     fn hold_path(path: &Path) -> std::io::Result<File> {
@@ -484,13 +509,15 @@ impl Folder {
         }
     }
 
-    /// True when `pinned` (held by path) is the entry `name` of `parent`, found relative to it.
-    fn is_held_entry(parent: &File, name: &std::ffi::OsStr, pinned: &File, dir: bool) -> Result<bool> {
-        let mut options = fs_at::OpenOptions::default();
-        options.read(true).follow(false);
-        let found = if dir { options.open_dir_at(parent, name) } else { options.open_at(parent, name) }.map_err(Self::refused)?;
-        let same = |file: &File| file.try_clone().and_then(same_file::Handle::from_file);
-        Ok(same(pinned).map_err(failed)? == same(&found).map_err(failed)?)
+    /// Where `file` is now, by its own handle, which must be an entry of the held folder whose
+    /// final path is `parent`.
+    fn placed_in(file: &File, parent: &Path) -> Result<PathBuf> {
+        let at = winx::file::get_file_path(file).map_err(failed)?;
+        if at.file_name().is_some() && at.parent() == Some(parent) { Ok(at) } else { Err(failed(LINKED_FOLDER)) }
+    }
+
+    fn leaf(&self) -> Result<&(File, PathBuf)> {
+        self.held.last().ok_or_else(|| failed("output folder is not absolute"))
     }
 
     fn open_checked(dir: &Path) -> Result<Self> {
@@ -505,7 +532,8 @@ impl Folder {
                     if !root.metadata().map_err(failed)?.is_dir() {
                         return Err(failed(LINKED_FOLDER));
                     }
-                    folder.held.push(root);
+                    let at = winx::file::get_file_path(&root).map_err(failed)?;
+                    folder.held.push((root, at));
                 }
                 Component::Normal(name) => folder.enter_checked(name)?,
                 Component::CurDir | Component::ParentDir => return Err(failed(LINKED_FOLDER)),
@@ -519,13 +547,20 @@ impl Folder {
 
     /// Hold the folder `name` in the current one, making it there if it is missing.
     fn enter_checked(&mut self, name: &std::ffi::OsStr) -> Result<()> {
-        let parent = self.held.last().ok_or_else(|| failed("output folder is not absolute"))?;
+        let (parent, parent_at) = self.leaf()?;
         let path = self.path.join(name);
         let pinned = match Self::hold_path(&path) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 match fs_at::OpenOptions::default().mkdir_at(parent, name) {
-                    Err(e) if e.kind() != std::io::ErrorKind::AlreadyExists => return Err(Self::refused(e)),
-                    _ => {}
+                    Ok(made) => {
+                        // Made through a parent turned into a relative symbolic link, it is
+                        // elsewhere: `made` deletes it again.
+                        let made = Made(Some(made));
+                        Self::placed_in(made.get()?, parent_at)?;
+                        made.keep();
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(Self::refused(e)),
                 }
                 Self::hold_path(&path)
             }
@@ -533,25 +568,28 @@ impl Folder {
         }
         .map_err(failed)?;
         // Not a directory, or a name surrogate (symbolic link, junction or mount point); or the
-        // path no longer leads through the held parent.
-        if !pinned.metadata().map_err(failed)?.is_dir() || !Self::is_held_entry(parent, name, &pinned, true)? {
+        // path no longer leads to an entry of the held parent.
+        if !pinned.metadata().map_err(failed)?.is_dir() {
             return Err(failed(LINKED_FOLDER));
         }
-        self.held.push(pinned);
+        let at = Self::placed_in(&pinned, parent_at)?;
+        self.held.push((pinned, at));
         self.path = path;
         Ok(())
     }
 
-    /// A new file with a free temporary name, made relative to the output folder.
-    fn make_temporary(&self) -> Result<(Made<'_>, File)> {
+    /// A new, empty file with a free temporary name, made relative to the output folder; the
+    /// handle reads attributes only and shares everything, so it pins nothing.
+    fn make_temporary(&self) -> Result<Made> {
+        use fs_at::os::windows::OpenOptionsExt;
         use std::hash::BuildHasher;
-        let leaf = self.held.last().ok_or_else(|| failed("output folder is not absolute"))?;
+        let (leaf, _) = self.leaf()?;
         for _ in 0..64 {
             let name = format!(".tmp{:016x}", std::collections::hash_map::RandomState::new().hash_one(0u8));
             let mut options = fs_at::OpenOptions::default();
-            options.read(true).write(fs_at::OpenOptionsWriteMode::Write).create_new(true);
+            options.create_new(true).desired_access(Self::READ_ATTRIBUTES);
             match options.open_at(leaf, &name) {
-                Ok(file) => return Ok((Made(leaf, name.into(), false), file)),
+                Ok(file) => return Ok(Made(Some(file))),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(Self::refused(e)),
             }
@@ -559,39 +597,49 @@ impl Folder {
         Err(failed("no free temporary name in the output folder"))
     }
 
+    /// `made` held without delete sharing, once it is shown to be in the output folder.
+    fn pin(&self, made: &Made, access: winx::file::AccessMode) -> Result<File> {
+        use winx::file::ShareMode;
+        let (_, leaf_at) = self.leaf()?;
+        let pinned = Made::reopen(made.get()?, access, ShareMode::FILE_SHARE_READ | ShareMode::FILE_SHARE_WRITE).map_err(failed)?;
+        Self::placed_in(&pinned, leaf_at)?;
+        Ok(pinned)
+    }
+
     /// Write `bytes` to a temporary file in the folder, then give it the first free name.
     fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
-        let leaf = self.held.last().ok_or_else(|| failed("output folder is not absolute"))?;
-        // Pinned whilst the temporary file is named: the folder keeps an entry no one can remove.
-        let (anchor, anchor_file) = self.make_temporary()?;
-        drop(anchor_file);
-        let pin = Self::hold_path(&self.path.join(&anchor.1)).map_err(failed)?;
-        if !Self::is_held_entry(leaf, &anchor.1, &pin, false)? {
-            return Err(failed(LINKED_FOLDER));
-        }
-        let (temp, mut file) = self.make_temporary()?;
-        file.write_all(bytes).map_err(failed)?;
-        file.sync_all().map_err(failed)?;
-        let named = self.take_name(temp, &file, names);
-        drop((pin, file));
+        use winx::file::AccessMode;
+        // The anchor: whilst it is held the output folder has an entry nobody else can remove.
+        let anchor = self.make_temporary()?;
+        let anchor_pin = self.pin(&anchor, AccessMode::GENERIC_READ)?;
+        let temp = self.make_temporary()?;
+        let named = self.pin(&temp, AccessMode::GENERIC_READ | AccessMode::GENERIC_WRITE).and_then(|mut file| {
+            file.write_all(bytes).map_err(failed)?;
+            file.sync_all().map_err(failed)
+        });
+        let named = named.and_then(|()| self.take_name(temp, names));
+        drop(anchor_pin);
         named
     }
 
-    /// Give `temp` (open as `file`) the first free name, then check that the name holds `file`.
-    fn take_name(&self, mut temp: Made<'_>, file: &File, names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
-        let leaf = self.held.last().ok_or_else(|| failed("output folder is not absolute"))?;
+    /// Give `temp` the first free name, then check by its handle that the name holds it.
+    fn take_name(&self, temp: Made, names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        let (_, leaf_at) = self.leaf()?;
+        let at = Self::placed_in(temp.get()?, leaf_at)?;
+        let from = self.path.join(at.file_name().ok_or_else(|| failed(LINKED_FOLDER))?);
         for name in names {
             let candidate = self.path.join(&name);
-            // `MoveFileExW` without replacing. The name is removed by `temp`, not by `tempfile`.
-            let path = tempfile::TempPath::try_from_path(self.path.join(&temp.1)).map_err(failed)?;
+            // `MoveFileExW` without replacing, by path: every folder on it is held and has an
+            // entry, so none can be a link. The name is never removed by `tempfile`.
+            let path = tempfile::TempPath::try_from_path(&from).map_err(failed)?;
             match path.persist_noclobber(&candidate) {
                 Ok(()) => {
-                    temp.2 = true;
-                    if matches!(Self::is_held_entry(leaf, &name, file, false), Ok(true)) {
+                    if winx::file::get_file_path(temp.get()?).is_ok_and(|now| now == leaf_at.join(&name)) {
+                        temp.keep();
                         return Ok(name);
                     }
-                    // Another file was put at the temporary name and named: take the name back.
-                    remove_entry(leaf, &name);
+                    // Another file was put at the temporary name and took the name; it is left
+                    // alone, and `temp` deletes ours wherever it went.
                     return Err(failed("the file was replaced whilst it was being named; nothing was kept"));
                 }
                 Err(e) => {
@@ -993,6 +1041,23 @@ public static class InPlaceJunction {
         });
         let _ = folder.publish(b"%PDF-1.7", taken);
         assert_eq!(said.into_inner(), "fsctl failed 145");
+    }
+
+    /// A file made in the output folder is moved out before it is pinned: the pin reports where
+    /// the file now is, so it is refused, and the file is then deleted by its handle.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_moved_out_before_it_is_pinned_is_refused_and_deleted() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let made = folder.make_temporary().unwrap();
+        let [name] = names(&out).try_into().unwrap();
+        std::fs::rename(out.join(&name), outside.join(&name)).unwrap();
+        let error = folder.pin(&made, winx::file::AccessMode::GENERIC_READ).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        drop(made);
+        assert!(names(&outside).is_empty(), "{:?}", names(&outside));
     }
 
     /// A held folder just made is turned in place into a relative symbolic link to `..\outside`;

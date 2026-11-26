@@ -314,10 +314,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   refusing links, and makes and names each file relative to it, so a folder swapped for a link
   after the path check cannot redirect the write. Unix uses `rustix` `openat`. Windows has no
   handle-relative create in std and the workspace forbids `unsafe`, so it uses `fs_at` (made
-  relative to a held folder) and `same-file` (file identity): each folder is held without
-  `FILE_SHARE_DELETE`, then found again relative to its parent, and an anchor file keeps the output
-  folder non-empty (NTFS will not turn a folder with an entry into a junction) whilst the
-  temporary file is renamed by path. Tests in the same file. Keep it over upstream's
+  relative to a held folder, deleted by handle) and `winx` (`GetFinalPathNameByHandleW`,
+  `ReOpenFile`): each folder is held without `FILE_SHARE_DELETE`; each file and folder made is
+  checked by its own handle to be in its held parent and deleted by that handle if not; an anchor
+  file held without delete sharing keeps the output folder non-empty (a folder with an entry cannot
+  become a reparse point) whilst the temporary file, written through a handle that shares no
+  delete, is renamed by path. Not covered: an empty file or folder made for a moment through a
+  relative symbolic link before it is deleted, and network folders. Tests in the same file. Keep it over upstream's
   `create_dir_all` and `tempfile` unless upstream makes publishing handle-relative.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and

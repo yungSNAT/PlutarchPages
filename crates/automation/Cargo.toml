@@ -50,8 +50,8 @@ pdfcraft-xfa = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }
 
-# Output folders on Windows: made and opened relative to a held folder, and compared by file
-# identity (batch.rs `publish`).
+# Output folders on Windows: made relative to a held folder, reopened and placed by handle, and
+# deleted by handle (batch.rs `publish`).
 [target.'cfg(windows)'.dependencies]
 fs_at = "0.2"
-same-file = "1"
+winx = "0.36"

@@ -48,14 +48,24 @@ is published without overwriting. Sources are never moved or deleted. An output
 folder inside an input folder is excluded from discovery, including on reruns.
 The output folder cannot equal or contain a selected input folder. The output folder is opened
 one folder at a time from the top, and a folder on the way that is a symbolic link or junction
-fails that file and nothing is written. Each output is then made in the folder as opened and
-named only there, so this holds even for a link made after the paths were checked, including,
-on Windows, a held folder turned into a junction or volume mount point in place. On Windows each
-folder is also held open until the file is named, so none can be renamed, moved or deleted
-meanwhile; a volume mounted at a folder is refused; and whilst the file is named the output folder
-briefly holds a second `.tmp` file, which keeps it from being turned into a link. On macOS
-and other systems without `O_PATH` the output folder and every folder above it must also be
-readable, and a folder that has to be made needs a writable parent.
+fails that file and nothing is written. On Unix each output is then made and named through the
+folder as opened, so this holds even for a link made after the paths were checked. On Windows each
+folder is held open until the file is named, so none can be renamed, moved or deleted meanwhile,
+and a volume mounted at a folder is refused. A held folder that another process turns into a link
+in place whilst it is empty (a junction, mount point or symbolic link) gets nothing written
+through it: each file and folder the batch makes is checked by its own handle to be in the folder
+it was made for, and one made elsewhere is deleted again by that handle before any byte is
+written. So a process allowed to make symbolic links (Developer Mode, the privilege, or an
+administrator) can still have an empty file or folder appear outside for that moment, and it can
+stay if that process puts something in the folder or holds it open. The bytes are written through
+a handle that keeps the file from being moved, and whilst the file is named the output folder
+briefly holds a second `.tmp` file, which keeps the folder from being turned into a link. The file
+is named by path: if another process puts its own file at the temporary name just before that, its
+file can take the output name, and that output then fails and the file is left alone. Clean-up
+deletes only files and folders the batch made, each by its own handle. Network folders (UNC paths
+and drives mapped to a share) are not covered by these checks. On macOS and other systems without
+`O_PATH` the output folder and every folder above it must also be readable, and a folder that has
+to be made needs a writable parent.
 
 The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not give this guarantee yet.
 

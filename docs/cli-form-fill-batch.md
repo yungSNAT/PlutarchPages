@@ -86,7 +86,7 @@ and a folder that has to be made needs a writable parent).
 
 Each file is staged as a temporary file in the output folder and renamed into
 place. If the process is killed or the power fails mid-row, that staging file
-(named `.tmp` and random characters; on Windows 2 such files) can remain; delete it. The files already
+(named `.tmp` and random characters; on Windows 2 such files) can remain; delete them. The files already
 published stay but the report is lost: rerun the rows that have no file in the
 folder.
 
