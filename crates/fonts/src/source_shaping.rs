@@ -509,6 +509,115 @@ pub fn joins_arabic(program: &[u8], reference: &[u8], text: &str) -> bool {
     })
 }
 
+/// The most text, in bytes, [`drawn_like_page`] reads from a page's words.
+const MAX_PAGE_WORDS: usize = 1 << 16;
+
+/// Whether `program` draws the Arabic runs of `text` as the page drew the same characters in the
+/// same place. `drawn` holds the words the page shows in this font, each glyph as it is drawn
+/// (left to right) with its id and the text the font's ToUnicode gives it. A word reads right to
+/// left, so its text is its glyphs' text in reverse. `program` must shape every word into the
+/// glyphs the page drew, cluster by cluster: a GSUB that gives a letter another form than the one
+/// the page shows, though each form is distinct, fails here, which [`joins_arabic`] can't see.
+/// Then each cluster of `text`'s runs must be one the page drew: the same characters, in the
+/// joining form `reference` gives them there, in the same glyphs. A form the page never shows
+/// fails, as do a word or run the two faces cluster differently and more than [`MAX_PAGE_WORDS`]
+/// bytes of words; each only costs the page's font.
+pub fn drawn_like_page(program: &[u8], reference: &[u8], drawn: &[Vec<(u32, String)>], text: &str) -> bool {
+    use std::collections::{HashMap, HashSet};
+    let (Ok(own), Ok(reference)) = (FontRef::new(program), FontRef::new(reference)) else { return false };
+    let joins = |c: char| matches!(u32::from(c), 0x0600..=0x06ff | 0x0750..=0x077f | 0x0870..=0x08ff | 0x200c | 0x200d);
+    // A word whose glyphs name no text can't be read back, so it tells nothing either way.
+    let words: HashSet<&Vec<(u32, String)>> = drawn.iter().filter(|w| w.iter().any(|(_, t)| !t.is_empty())).collect();
+    let mut read = text.len();
+    let mut texts = Vec::with_capacity(words.len());
+    for word in words {
+        let text: String = word.iter().rev().map(|(_, t)| t.as_str()).collect();
+        read = read.saturating_add(text.len());
+        if read > MAX_PAGE_WORDS {
+            return false;
+        }
+        texts.push((text, word.iter().map(|(g, _)| *g).collect::<Vec<u32>>()));
+    }
+    // Shaping is bounded as in [`joins_arabic`]: by the layout's size times the text shaped.
+    let size = |table: Option<(usize, usize)>| table.map(|(lookups, subtables)| lookups.max(subtables));
+    let (Some(gpos), Some(gsub)) = (
+        size(layout_counts(own.gpos().ok().and_then(|t| t.lookup_list().ok()), pos_sub_table_count)),
+        size(layout_counts(own.gsub().ok().and_then(|t| t.lookup_list().ok()), sub_sub_table_count)),
+    ) else {
+        return false;
+    };
+    if gpos.saturating_add(gsub).max(1).saturating_mul(read) > 1 << 27 {
+        return false;
+    }
+    let (own_data, reference_data) = (ShaperData::new(&own), ShaperData::new(&reference));
+    let (own_shaper, reference_shaper) = (own_data.shaper(&own).build(), reference_data.shaper(&reference).build());
+    // Each cluster of `run` as `program` draws it: its characters and the reference's glyphs for
+    // them there (the form), with the program's glyphs, sorted, in drawing order. `None` where the
+    // two faces cluster `run` differently, as a cluster's form is then not the reference's alone.
+    // A cluster: (its characters, the reference's glyphs for them) and the program's glyphs.
+    type Cluster = ((String, Vec<u32>), Vec<u32>);
+    let clusters = |run: &str| -> Option<Vec<Cluster>> {
+        let ours = rtl_clusters(&own_shaper, run);
+        let theirs = rtl_clusters(&reference_shaper, run);
+        let starts_of = |glyphs: &[(usize, u32)]| {
+            let mut starts: Vec<usize> = glyphs.iter().map(|(s, _)| *s).collect();
+            starts.sort_unstable();
+            starts.dedup();
+            starts
+        };
+        let starts = starts_of(&ours);
+        if starts != starts_of(&theirs) {
+            return None;
+        }
+        // The reference's glyphs for each cluster, sorted, gathered once.
+        let mut forms: HashMap<usize, Vec<u32>> = HashMap::new();
+        for &(start, glyph) in &theirs {
+            forms.entry(start).or_default().push(glyph);
+        }
+        for glyphs in forms.values_mut() {
+            glyphs.sort_unstable();
+        }
+        let mut out: Vec<Cluster> = Vec::new();
+        let mut last = None;
+        for &(start, glyph) in &ours {
+            if last != Some(start) {
+                let end = starts.get(starts.partition_point(|&s| s <= start)).copied().unwrap_or(run.len());
+                let form = forms.get(&start).cloned().unwrap_or_default();
+                out.push(((run.get(start..end).unwrap_or_default().to_owned(), form), Vec::new()));
+                last = Some(start);
+            }
+            if let Some((_, glyphs)) = out.last_mut() {
+                glyphs.push(glyph);
+            }
+        }
+        for (_, glyphs) in &mut out {
+            glyphs.sort_unstable();
+        }
+        Some(out)
+    };
+    let mut seen: HashMap<(String, Vec<u32>), HashSet<Vec<u32>>> = HashMap::new();
+    for (word, glyphs) in &texts {
+        let Some(ours) = clusters(word) else { return false };
+        if ours.iter().map(|(_, g)| g.len()).sum::<usize>() != glyphs.len() {
+            return false;
+        }
+        let mut at = 0;
+        for (key, ours) in ours {
+            let Some(page) = glyphs.get(at..at + ours.len()) else { return false };
+            let mut page = page.to_vec();
+            at += ours.len();
+            page.sort_unstable();
+            if page != ours {
+                return false;
+            }
+            seen.entry(key).or_default().insert(ours);
+        }
+    }
+    text.split(|c: char| !joins(c))
+        .filter(|run| !run.is_empty())
+        .all(|run| clusters(run).is_some_and(|c| c.into_iter().all(|(key, glyphs)| seen.get(&key).is_some_and(|drawn| drawn.contains(&glyphs)))))
+}
+
 /// Whether `own` draws `letter`'s isolated, initial, medial and final forms (set against tatweels,
 /// which join on both sides) as distinct glyphs wherever `reference` does, both drawing each form
 /// in glyphs of their own. With `may_share_initial` (`ط` or `ظ`), `own`'s initial form may be its

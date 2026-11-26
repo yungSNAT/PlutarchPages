@@ -355,7 +355,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   the first program of its face on the page, a subset's too, whose own cmap and GSUB give its
   letters a joining form wherever the bundled Arabic face does (`joins_arabic`, comparing the 2
   shapings glyph by glyph), whose GPOS places every mark and dot glyph (`places_marks`) and stacks marks where the
-  bundled face does (`stacks_marks`), and
+  bundled face does (`stacks_marks`), whose codes are its glyph ids and which draws the span only
+  in forms the page itself drew with it, shaping the page's own words as the page drew them
+  (`drawn_like_page` on the page's words, `drawn_words`), and
   that shapes each row and word with every glyph
   inked (`arabic_span` in `crates/edit/src/text_regions/styled/scripts.rs`, `draws_every_glyph`
   in `crates/fonts/src/source_shaping.rs`), shown in that font's own codes where they are glyph
