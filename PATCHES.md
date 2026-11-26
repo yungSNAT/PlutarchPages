@@ -64,11 +64,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
 - **Auto-tag running text** fails towards content when a line may hold an amount. A band line on
   every page is a header or footer only if it holds no currency sign of any script (Unicode
-  category Sc) and no digits other than years in ASCII digits from 1900 to 2099 without a minus
-  sign or bracket directly around them (`Annual report 2026`, `(c) 2026 Firm` run; `300`, `(500)`,
-  `-2026`, `(2026)`, `AUD 500`, `GST 10%` don't; other scripts' digits never read as a year).
-  Known limit: an unsigned amount from 1900 to 2099 repeated on every page (`Total 2000`) reads as
-  a year and runs. A line whose numbers change runs only if it
+  category Sc) and no digits other than years: 4 ASCII digits from 1900 to 2099 with no `-`
+  (U+002D), `−` (U+2212) or `(` directly before them and no `)` directly after
+  (`Annual report 2026`, `(c) 2026 Firm` run; `300`, `(500)`, `-2026`, `(2026)`, `AUD 500`,
+  `GST 10%` don't; other scripts' digits never read as a year). Known limit: an amount from 1900
+  to 2099 repeated on every page without those marks reads as a year and runs, whether unsigned
+  (`Total 2000`) or signed another way (`[2026]`, `（2026）`, `–2026`, `- 2026`, `2026-`,
+  `Balance 2000 CR`). A line whose numbers change runs only if it
   reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
   number steps by one a page (any start, unnumbered pages skipped).
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every

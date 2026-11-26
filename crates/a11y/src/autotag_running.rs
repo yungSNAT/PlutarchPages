@@ -131,11 +131,12 @@ fn repeats(window: &[Member<'_>], key: &str) -> bool {
 }
 
 /// Folded text that may be an amount, failing towards content: a currency sign of any script
-/// (Unicode category Sc), or a run of digits other than a year in ASCII digits from 1900 to 2099
-/// with no minus sign directly before it and no bracket directly around it. So `Annual report 2026`
-/// and `(c) 2026 Firm` can repeat, and `300`, `(500)`, `-2026`, `(2026)`, `AUD 500` and `GST 10%`
-/// cannot. Digits of other scripts (`٢٠٢٦`, `２０２６`) never read as a year, so they count as an
-/// amount. Known limit: an unsigned amount from 1900 to 2099 (`Total 2000`) reads as a year.
+/// (Unicode category Sc), or a run of digits other than a year: 4 ASCII digits from 1900 to 2099
+/// with no `-` (U+002D), `−` (U+2212) or `(` directly before and no `)` directly after. So `Annual
+/// report 2026` and `(c) 2026 Firm` can repeat, and `300`, `(500)`, `-2026`, `(2026)`, `AUD 500`
+/// and `GST 10%` cannot. Digits of other scripts (`٢٠٢٦`, `２０２６`) never read as a year, so they
+/// count as an amount. Known limit: any other amount from 1900 to 2099 reads as a year, unsigned
+/// (`Total 2000`) or signed another way (`[2026]`, `（2026）`, `–2026`, `- 2026`, `2026-`, `2000 CR`).
 fn holds_amount(folded: &str) -> bool {
     use icu_properties::{CodePointMapData, props::GeneralCategory};
     let category = CodePointMapData::<GeneralCategory>::new();
