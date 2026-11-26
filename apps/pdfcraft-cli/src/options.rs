@@ -76,7 +76,11 @@ pub(crate) fn validate_options(command: &str, args: &[String], specs: &[OptionSp
 
 pub(crate) const INFO_OPTIONS: &[OptionSpec] = &[OptionSpec { name: "--password", takes_value: true }];
 
-pub(crate) const AUDIT_OPTIONS: &[OptionSpec] = &[OptionSpec { name: "--password", takes_value: true }];
+pub(crate) const AUDIT_OPTIONS: &[OptionSpec] = &[
+    OptionSpec { name: "--password", takes_value: true },
+    OptionSpec { name: "--before", takes_value: true },
+    OptionSpec { name: "--before-password", takes_value: true },
+];
 
 pub(crate) const TEXT_OPTIONS: &[OptionSpec] =
     &[OptionSpec { name: "--page", takes_value: true }, OptionSpec { name: "--password", takes_value: true }];
