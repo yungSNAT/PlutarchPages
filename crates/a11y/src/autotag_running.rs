@@ -10,6 +10,7 @@
 //! Every object in some qualifying span of distances counts, so spans that overlap and spans that
 //! lie apart are each marked. Position alone never makes running text.
 //! A text object whose extent is not known (see [`Evidence::extent`]) is never running text.
+//! Fork: text that changes from page to page runs only as a page-number sequence ([`repeats`]).
 
 use std::collections::HashMap;
 
@@ -69,7 +70,7 @@ pub(crate) fn find(pages: &[PageText<'_>], body: Option<f64>) -> Vec<Vec<Option<
     for ((edge, key), mut members) in groups(pages) {
         members.sort_by(|a, b| a.distance.total_cmp(&b.distance));
         for cluster in clusters(&members, needed) {
-            if is_heading_sequence(cluster, &key, body) {
+            if is_heading_sequence(cluster, &key, body) || !repeats(cluster, &key) {
                 continue;
             }
             for m in cluster {
@@ -88,6 +89,60 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
     let heading_sized = body.is_some_and(|body| window.iter().all(|m| m.evidence.size >= body * HEADING_SIZE_RATIO));
     let worded = window.iter().all(|m| m.evidence.letters) && !is_page_number(key);
     texts_differ && heading_sized && worded
+}
+
+/// Fork guard: a group whose text changes repeats only as a page-number sequence. Every member has
+/// the same count of numbers, exactly one of them changes, and it steps with the page index (the
+/// same offset on every member, so numbering may start anywhere and skip unnumbered pages); the
+/// others stay the same. The key must read as a page number or keep a word. So differing amounts at
+/// the same height (`1,234.56`, `Total 7,890.12`) stay content; upstream marks them as footers.
+fn repeats(window: &[Member<'_>], key: &str) -> bool {
+    let Some(first) = window.first().map(|m| folded(&m.evidence.text)) else {
+        return false;
+    };
+    if window.iter().all(|m| folded(&m.evidence.text) == first) {
+        return true;
+    }
+    if !is_page_number(key) && !key.chars().any(char::is_alphabetic) {
+        return false;
+    }
+    let Some(rows) = window.iter().map(|m| Some((i128::try_from(m.page).ok()?, numbers(&m.evidence.text)?))).collect::<Option<Vec<_>>>() else {
+        return false;
+    };
+    let width = rows.first().map_or(0, |(_, n)| n.len());
+    if rows.iter().any(|(_, n)| n.len() != width) {
+        return false;
+    }
+    let mut stepping = 0usize;
+    for slot in 0..width {
+        let values: Vec<(i128, u64)> = rows.iter().filter_map(|(page, n)| n.get(slot).map(|v| (*page, *v))).collect();
+        if values.windows(2).all(|w| matches!(w, [a, b] if a.1 == b.1)) {
+            continue;
+        }
+        let offsets: Vec<Option<i128>> = values.iter().map(|(page, v)| i128::from(*v).checked_sub(*page)).collect();
+        if offsets.iter().any(Option::is_none) || offsets.windows(2).any(|w| matches!(w, [a, b] if a != b)) {
+            return false;
+        }
+        stepping = stepping.saturating_add(1);
+    }
+    stepping == 1
+}
+
+/// The numbers [`normalise`] replaces by `#`, in order: each digit run, and a roman numeral standing
+/// alone or after `page`. `None` when a digit run is too long to be a page number.
+fn numbers(text: &str) -> Option<Vec<u64>> {
+    let lower = text.to_lowercase();
+    let words: Vec<&str> = lower.split_whitespace().collect();
+    if let [w] | ["page", w] = words.as_slice()
+        && let Some(v) = roman_value(w)
+    {
+        return Some(vec![u64::from(v)]);
+    }
+    let mut out = Vec::new();
+    for run in lower.split(|c: char| !c.is_ascii_digit()).filter(|r| !r.is_empty()) {
+        out.push(run.parse::<u64>().ok().filter(|_| run.len() <= 18)?);
+    }
+    Some(out)
 }
 
 /// Lowercase with whitespace collapsed, digits kept: `ANNUAL  REPORT` and `Annual report` are the
@@ -221,6 +276,11 @@ fn normalise(text: &str) -> String {
 
 /// A canonical lowercase roman numeral from 1 to 3999 (`mid` and `iiii` are not).
 fn is_roman(s: &str) -> bool {
+    roman_value(s).is_some()
+}
+
+/// The value of a canonical lowercase roman numeral from 1 to 3999.
+fn roman_value(s: &str) -> Option<u32> {
     const UNITS: [(u32, &str); 13] = [
         (1000, "m"),
         (900, "cm"),
@@ -237,7 +297,7 @@ fn is_roman(s: &str) -> bool {
         (1, "i"),
     ];
     if s.is_empty() || s.len() > 15 {
-        return false;
+        return None;
     }
     let (mut rest, mut value) = (s, 0u32);
     for (v, sym) in UNITS {
@@ -245,21 +305,21 @@ fn is_roman(s: &str) -> bool {
         while let Some(r) = rest.strip_prefix(sym) {
             (rest, value, repeats) = (r, value.saturating_add(v), repeats + 1);
             if repeats > 3 {
-                return false;
+                return None;
             }
         }
     }
     if !rest.is_empty() || value == 0 {
-        return false;
+        return None;
     }
-    let mut canonical = String::new();
+    let (total, mut canonical) = (value, String::new());
     for (v, sym) in UNITS {
         while value >= v {
             canonical.push_str(sym);
             value = value.saturating_sub(v);
         }
     }
-    canonical == s
+    (canonical == s).then_some(total)
 }
 
 #[cfg(test)]
@@ -383,6 +443,45 @@ mod tests {
         assert_eq!(found, [[Some(Edge::Top)], [Some(Edge::Top)]], "so is a large roman one");
         let found = run(&[vec![big("Page 1")], vec![big("Page 2")], vec![big("- 3 of 9 -")], vec![big("- 4 of 9 -")]], Some(10.0));
         assert!(found.iter().flatten().all(|e| *e == Some(Edge::Top)), "a labelled page number is too: {found:?}");
+    }
+
+    /// Fork guard (PATCHES.md, 'Stricter than upstream on purpose'): amounts in a band are content.
+    #[test]
+    fn differing_amounts_at_the_same_height_stay_content() {
+        let amount = |text: &str| Evidence { letters: false, ..line(text, 60.0) };
+        assert_eq!(run(&[vec![amount("1,234.56")], vec![amount("7,890.12")]], Some(10.0)), [[None], [None]]);
+        let totals = [vec![line("Total 1,234.56", 60.0)], vec![line("Total 7,890.12", 60.0)], vec![line("Total 55.00", 60.0)]];
+        assert_eq!(run(&totals, Some(10.0)), [[None], [None], [None]]);
+        // A number that steps with the page but sits beside another that changes is not a page number.
+        let mixed = [vec![line("Ref 3 total 40", 60.0)], vec![line("Ref 4 total 75", 60.0)]];
+        assert_eq!(run(&mixed, Some(10.0)), [[None], [None]]);
+        // Two members on one page cannot both be its page number.
+        let doubled = [vec![amount("3"), amount("8")], vec![amount("4")]];
+        assert_eq!(run(&doubled, Some(10.0)), [vec![None, None], vec![None]]);
+        // The same line on every page is still a repeat.
+        let same = [vec![line("Total 55.00", 60.0)], vec![line("Total 55.00", 60.0)]];
+        assert_eq!(run(&same, Some(10.0)), [[Some(Edge::Bottom)], [Some(Edge::Bottom)]]);
+    }
+
+    #[test]
+    fn page_numbers_that_step_with_the_page_are_still_artifacts() {
+        let number = |text: &str| Evidence { letters: false, ..line(text, 30.0) };
+        let pages: Vec<Vec<Evidence>> = (3..6).map(|n| vec![number(&n.to_string())]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "3, 4, 5");
+        let pages: Vec<Vec<Evidence>> = (3..6).map(|n| vec![line(&format!("Page {n} of 9"), 30.0)]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "Page n of 9");
+        let pages: Vec<Vec<Evidence>> = ["iii", "iv", "v"].iter().map(|n| vec![line(n, 30.0)]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "roman");
+        // Pages 1 and 3 numbered, page 2 not: the number still steps by the page index.
+        let pages = vec![vec![number("7")], Vec::new(), vec![number("9")]];
+        assert_eq!(run(&pages, Some(10.0)), [vec![Some(Edge::Bottom)], vec![], vec![Some(Edge::Bottom)]]);
+        // A labelled header beside its page number: the label stays, the number steps.
+        let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("Annual report 2026, page {n}"), 760.0)]).collect();
+        assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Top)));
+        assert_eq!(numbers("Page xiv of 20"), Some(vec![20]), "a numeral not standing alone is a word");
+        assert_eq!(numbers("Page xiv"), Some(vec![14]));
+        assert_eq!(numbers("p. 1,234.5"), Some(vec![1, 234, 5]));
+        assert_eq!(numbers(&"9".repeat(40)), None, "too long to be a page number");
     }
 
     #[test]

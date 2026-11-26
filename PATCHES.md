@@ -62,6 +62,13 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   step until a save (`Editor::held`). Code in `crates/redact/src/elsewhere.rs` and `metadata.rs`
   and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
+- **Auto-tag running text** marks a band line whose numbers change from page to page as a header
+  or footer only when they read as page numbers: one number changes, by one a page (any start,
+  unnumbered pages skipped), and the rest stay the same. Upstream matches any digits, so differing
+  amounts in the bottom band (`1,234.56`, `Total 7,890.12`) become footer artifacts that screen
+  readers skip. Code `repeats` in `crates/a11y/src/autotag_running.rs`; tests
+  `differing_amounts_at_the_same_height_stay_content` and
+  `page_numbers_that_step_with_the_page_are_still_artifacts` there.
 
 ## Only here
 
@@ -415,7 +422,8 @@ should not conflict on them: delete the entry then.
 
 - Auto-tag marks running headers, footers and page numbers as pagination artifacts: upstream
   #7810 (`6f1c601a`, 26 November 2026), picked as one commit against its first parent. Its lines
-  are upstream's; the following merge brings #8160 too (R4915).
+  are upstream's apart from the running-text guard above; the following merge brings #8160 too
+  (R4915).
 
 ## Merging upstream
 
