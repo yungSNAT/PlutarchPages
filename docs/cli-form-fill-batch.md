@@ -40,8 +40,8 @@ validation failure, an option the field does not list, a read-only field), gives
 a calculated field a value the form then calculates differently, or has the wrong
 number of cells. A calculated field's value must match the form's result as the
 form stores it, character for character (`6` and `6.00` differ); an empty cell
-leaves the calculation to the form. The other rows go on. The command exits with status 1 when any row
-failed.
+leaves the calculation to the form. The other rows go on. The command exits
+with status 1 when any row failed.
 
 A field the row does not name keeps the form's value, unsaved edits included.
 Required fields are not enforced. A names row with an empty name (a trailing
