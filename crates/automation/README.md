@@ -282,6 +282,12 @@ unapplied with a warning.
 folders. The CLI also exposes it as `pdfcraft-cli batch`. See the
 [batch guide](../../docs/cli-batch.md) for examples, output protection, errors and limits.
 
+## Filling a form once per data row
+
+`form_fill_batch` fills a copy of an open form for each row of a CSV, tab-delimited or JSON
+file and writes each to its own PDF, a row all or nothing. The CLI also exposes it as
+`pdfcraft-cli form-fill-batch`. See the [form fill guide](../../docs/cli-form-fill-batch.md).
+
 ## Editing button export values
 
 Use `form_set_props` with `field`, `export_value` and optional `widget`
