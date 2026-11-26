@@ -630,6 +630,7 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     mod fork_tests;
 
     #[test]

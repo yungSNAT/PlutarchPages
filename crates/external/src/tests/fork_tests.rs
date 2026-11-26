@@ -1,8 +1,7 @@
-//! The fork's tests of the external program checks.
+//! The fork's tests of the external program checks (Unix only: they set mode bits).
 
 use super::*;
 
-#[cfg(unix)]
 #[test]
 fn a_configured_program_requires_execute_permission() {
     use std::os::unix::fs::PermissionsExt;
