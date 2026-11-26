@@ -74,7 +74,10 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
   number steps by one a page (any start, unnumbered pages skipped). Round brackets and a minus on
   one side only (`(3)`, `-3`, `3-`) mark an amount, so such a changing number stays content;
-  `[3]` and `- 3 -` run.
+  `[3]` and `- 3 -` run. Known limit: a bare number in square brackets or between paired dashes
+  that steps by one a page runs as a page number whatever its size (`[500]`, `[501]`;
+  `- 500 -`, `- 501 -`), as neither shape marks an amount
+  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes).
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in

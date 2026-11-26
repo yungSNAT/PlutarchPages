@@ -97,7 +97,9 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
 /// or separator), exactly one of its numbers changes, and that one steps with the page index (the
 /// same offset on every member, so numbering may start anywhere and skip unnumbered pages). So
 /// `Total 100`, `Total 101` and an `Amount due` line on every page stay content; upstream marks
-/// them as footers.
+/// them as footers. Known limit: a bare number in square brackets or between paired dashes that
+/// steps by one a page runs as a page number whatever its size (`[500]`, `[501]`; `- 500 -`,
+/// `- 501 -`), as neither shape marks an amount.
 fn repeats(window: &[Member<'_>], key: &str) -> bool {
     let Some(first) = window.first().map(|m| folded(&m.evidence.text)) else {
         return false;
