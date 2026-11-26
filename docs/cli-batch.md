@@ -68,11 +68,13 @@ and drives mapped to a share) are not covered by these checks, nor is a process 
 redefining a drive letter whilst the batch runs. These Windows checks are hardening: they close
 the link escapes the tests demonstrate, and they are not a guarantee by construction (that would
 need every relative open to refuse reparse points and a rename by handle). An empty output is
-refused on Windows, as an empty file could be turned into a link after it is checked. On macOS and other systems without
+refused on Windows, as an empty file could be turned into a link after it is checked. Once the
+batch has let go of an output, any process that may write to the output folder can still change,
+move or delete it, as with any file. On macOS and other systems without
 `O_PATH` the output folder and every folder above it must also be readable, and a folder that has
 to be made needs a writable parent.
 
-The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not give this guarantee yet.
+The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not have these checks yet.
 
 The report contains `completed`, `failed`, `skipped`, `stopped` and `files`.
 Each file records its status, output and step results, or the error/skip reason.
