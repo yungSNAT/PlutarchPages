@@ -1,6 +1,8 @@
 //! One-shot folder jobs shared by CLI and MCP. Discovery finishes before any output is made.
 
 use std::collections::{BTreeMap, HashSet};
+#[cfg(windows)]
+use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -290,22 +292,209 @@ impl Automation {
 }
 
 /// Publish atomically without replacing any existing name, even if another writer wins a race.
+///
+/// `target` is the absolute path the caller checked. Its folder is opened from the file system
+/// root one name at a time, refusing a link at every step and making missing folders on the way,
+/// and the file is written through that open folder, so a folder swapped for a link after the
+/// check cannot redirect the write.
 pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
     let dir = target.parent().ok_or_else(|| failed("output has no parent"))?;
-    std::fs::create_dir_all(dir).map_err(failed)?;
-    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(failed)?;
-    temp.write_all(bytes).map_err(failed)?;
-    temp.as_file().sync_all().map_err(failed)?;
+    let name = target.file_name().ok_or_else(|| failed("output has no name"))?;
     let stem = target.file_stem().ok_or_else(|| failed("output has no stem"))?.to_string_lossy();
-    for n in 1..=10_000 {
-        let candidate = if n == 1 { target.to_path_buf() } else { dir.join(format!("{stem} ({n}).pdf")) };
-        match temp.persist_noclobber(&candidate) {
-            Ok(_) => return Ok(candidate),
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists || candidate.symlink_metadata().is_ok() => temp = e.file,
-            Err(e) => return Err(failed(e.error)),
+    let names = std::iter::once(name.to_os_string()).chain((2..=10_000).map(|n| format!("{stem} ({n}).pdf").into()));
+    Folder::open_checked(dir)?.publish(bytes, names).map(|name| dir.join(name))
+}
+
+#[cfg(any(unix, windows))]
+const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
+
+/// The output folder, held open from the file system root down.
+///
+/// Unix: a descriptor reached with `openat` and `O_NOFOLLOW` one name at a time, and the file is
+/// made and named relative to it, so later moves of any folder on the path cannot redirect it.
+#[cfg(unix)]
+struct Folder(std::os::fd::OwnedFd);
+
+/// A temporary name in a [`Folder`], removed on drop unless a rename already took it.
+#[cfg(unix)]
+struct Temp<'a>(&'a std::os::fd::OwnedFd, String, bool);
+
+#[cfg(unix)]
+impl Drop for Temp<'_> {
+    fn drop(&mut self) {
+        if !self.2 {
+            let _ = rustix::fs::unlinkat(self.0, self.1.as_str(), rustix::fs::AtFlags::empty());
         }
     }
-    Err(failed("all 10000 output names are occupied"))
+}
+
+#[cfg(unix)]
+impl Folder {
+    fn open_checked(dir: &Path) -> Result<Self> {
+        use rustix::fs::{Mode, OFlags, mkdirat, openat};
+        use rustix::io::Errno;
+        use std::path::Component;
+        // `O_PATH` (Linux, Android, FreeBSD 14) needs only search permission on the folders above,
+        // as writing by path did. macOS has no `O_PATH`, and rustix offers it no `O_SEARCH`, so
+        // there the output folder and each folder above it must also be readable: a known limit,
+        // refused with a message saying what to do rather than written by path. A link met with `O_NOFOLLOW` fails with
+        // ELOOP (EMLINK on FreeBSD, ENOTDIR with `O_PATH`).
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+        let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let refused = |e: Errno| match e {
+            Errno::LOOP | Errno::NOTDIR | Errno::MLINK => failed(LINKED_FOLDER),
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+            Errno::ACCESS => failed(UNREADABLE_FOLDER),
+            e => failed(std::io::Error::from(e)),
+        };
+        let mut components = dir.components();
+        if components.next() != Some(Component::RootDir) {
+            return Err(failed("output folder is not absolute"));
+        }
+        let mut fd = rustix::fs::open("/", flags, Mode::empty()).map_err(refused)?;
+        for component in components {
+            let Component::Normal(name) = component else { return Err(failed(LINKED_FOLDER)) };
+            fd = match openat(&fd, name, flags, Mode::empty()) {
+                Err(Errno::NOENT) => {
+                    // A name made since is opened the same way, so it cannot be a link either.
+                    mkdirat(&fd, name, Mode::from_raw_mode(0o777)).or_else(|e| if e == Errno::EXIST { Ok(()) } else { Err(e) }).map_err(refused)?;
+                    openat(&fd, name, flags, Mode::empty())
+                }
+                opened => opened,
+            }
+            .map_err(refused)?;
+        }
+        Ok(Self(fd))
+    }
+
+    /// Write `bytes` to a temporary file in the folder, then give it the first free name.
+    fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        use rustix::fs::{AtFlags, Mode, OFlags, linkat, openat};
+        use rustix::io::Errno;
+        use std::hash::BuildHasher;
+        let flags = OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        let mut made = None;
+        for _ in 0..64 {
+            let name = format!(".tmp{:016x}", std::collections::hash_map::RandomState::new().hash_one(0u8));
+            match openat(&self.0, name.as_str(), flags, Mode::from_raw_mode(0o600)) {
+                Ok(fd) => {
+                    made = Some((Temp(&self.0, name, false), std::fs::File::from(fd)));
+                    break;
+                }
+                Err(Errno::EXIST) => {}
+                Err(e) => return Err(failed(std::io::Error::from(e))),
+            }
+        }
+        let (mut temp, mut file) = made.ok_or_else(|| failed("no free temporary name in the output folder"))?;
+        file.write_all(bytes).map_err(failed)?;
+        file.sync_all().map_err(failed)?;
+        drop(file);
+        for name in names {
+            // As `tempfile` does: rename without replacing where the system can, else hard-link
+            // (which never replaces) and drop the temporary name.
+            #[cfg(any(target_os = "linux", target_os = "android", target_vendor = "apple"))]
+            match rustix::fs::renameat_with(&self.0, temp.1.as_str(), &self.0, name.as_os_str(), rustix::fs::RenameFlags::NOREPLACE) {
+                Ok(()) => {
+                    temp.2 = true;
+                    return Ok(name);
+                }
+                Err(Errno::EXIST) => continue,
+                Err(Errno::NOSYS | Errno::INVAL) => {}
+                Err(e) => return Err(failed(std::io::Error::from(e))),
+            }
+            match linkat(&self.0, temp.1.as_str(), &self.0, name.as_os_str(), AtFlags::empty()) {
+                Ok(()) => return Ok(name),
+                Err(Errno::EXIST) => {}
+                Err(e) => return Err(failed(std::io::Error::from(e))),
+            }
+        }
+        Err(failed("all 10000 output names are occupied"))
+    }
+}
+
+/// Windows: every folder from the drive root down is held open without `FILE_SHARE_DELETE`, so
+/// none can be renamed, moved or deleted (and so none swapped for a junction) until the file is
+/// named. Each is opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link,
+/// including a volume mounted at a folder. Known limit: holding does not stop another process
+/// turning a held, empty folder into a junction in place (`FSCTL_SET_REPARSE_POINT`), and the file
+/// is still made and named by path, so such a conversion after opening is not caught; closing it
+/// needs a create and rename relative to the held handle. Elsewhere (wasm) the folder is only made.
+#[cfg(not(unix))]
+struct Folder {
+    path: PathBuf,
+    #[cfg(windows)]
+    _held: Vec<File>,
+}
+
+#[cfg(not(unix))]
+impl Folder {
+    #[cfg(windows)]
+    fn open_checked(dir: &Path) -> Result<Self> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use std::path::Component;
+        const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+        const BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT: u32 = 0x0200_0000 | 0x0020_0000;
+        let hold = |path: &Path| {
+            std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ_WRITE).custom_flags(BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT).open(path)
+        };
+        let (mut path, mut held) = (PathBuf::new(), Vec::new());
+        for component in dir.components() {
+            match component {
+                Component::Prefix(_) => {
+                    path.push(component);
+                    continue;
+                }
+                Component::RootDir => path.push(component),
+                Component::Normal(name) => path.push(name),
+                Component::CurDir | Component::ParentDir => return Err(failed(LINKED_FOLDER)),
+            }
+            let file = match hold(&path) {
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // Its parent is held, so the name is made in the folder already checked.
+                    std::fs::create_dir(&path)
+                        .or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) })
+                        .map_err(failed)?;
+                    hold(&path)
+                }
+                opened => opened,
+            }
+            .map_err(failed)?;
+            // Not a directory, or a name surrogate (symbolic link, junction or mount point).
+            if !file.metadata().map_err(failed)?.is_dir() {
+                return Err(failed(LINKED_FOLDER));
+            }
+            held.push(file);
+        }
+        if held.is_empty() {
+            return Err(failed("output folder is not absolute"));
+        }
+        Ok(Self { path, _held: held })
+    }
+
+    #[cfg(not(windows))]
+    fn open_checked(dir: &Path) -> Result<Self> {
+        std::fs::create_dir_all(dir).map_err(failed)?;
+        Ok(Self { path: dir.to_path_buf() })
+    }
+
+    fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        let mut temp = tempfile::NamedTempFile::new_in(&self.path).map_err(failed)?;
+        temp.write_all(bytes).map_err(failed)?;
+        temp.as_file().sync_all().map_err(failed)?;
+        for name in names {
+            let candidate = self.path.join(&name);
+            match temp.persist_noclobber(&candidate) {
+                Ok(_) => return Ok(name),
+                Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists || candidate.symlink_metadata().is_ok() => temp = e.file,
+                Err(e) => return Err(failed(e.error)),
+            }
+        }
+        Err(failed("all 10000 output names are occupied"))
+    }
 }
 
 #[cfg(test)]
@@ -318,6 +507,107 @@ mod tests {
         assert!(discovery.walk(Path::new("absent"), Path::new(""), Path::new("output"), true, 0).unwrap_err().to_string().contains("10000"));
         discovery.visited = 0;
         assert!(discovery.walk(Path::new("absent"), Path::new(""), Path::new("output"), true, MAX_DEPTH + 1).unwrap_err().to_string().contains("64"));
+    }
+
+    /// A link `at` to the folder `target`: a symlink on Unix, a junction on Windows (which needs
+    /// no privilege).
+    fn link_dir(at: &Path, target: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, at).unwrap();
+        #[cfg(windows)]
+        {
+            // Rebuilt from components so every separator is `\` (cmd reads `/x` as a switch).
+            let (link, target): (PathBuf, PathBuf) = (at.components().collect(), target.components().collect());
+            let status = std::process::Command::new("cmd").arg("/C").arg("mklink").arg("/J").arg(link).arg(target).output().unwrap();
+            assert!(status.status.success(), "mklink /J failed: {}", String::from_utf8_lossy(&status.stderr));
+        }
+    }
+
+    /// The canonical temporary folder, as callers pass it, and a folder `outside` in it, named
+    /// as created (mklink takes it in that form).
+    fn sandbox() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let base = dir.path().canonicalize().unwrap();
+        (dir, base, outside)
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn publish_refuses_an_output_folder_swapped_for_a_link() {
+        // The caller checked `base/out`; it was then replaced by a link out of the root.
+        let (_dir, base, outside) = sandbox();
+        link_dir(&base.join("out"), &outside);
+        let error = publish(&base.join("out/a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "nothing is written through the link");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn publish_refuses_a_link_above_the_output_folder() {
+        let (_dir, base, outside) = sandbox();
+        link_dir(&base.join("up"), &outside);
+        let error = publish(&base.join("up/new/sub/a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "no folder is made through the link");
+    }
+
+    #[test]
+    fn publish_makes_missing_folders_and_never_replaces_a_file() {
+        let (_dir, base, _) = sandbox();
+        let target = base.join("out/x/a.pdf");
+        assert_eq!(publish(&target, b"first").unwrap(), target);
+        assert_eq!(publish(&target, b"second").unwrap(), base.join("out/x/a (2).pdf"));
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
+        assert_eq!(std::fs::read(base.join("out/x/a (2).pdf")).unwrap(), b"second");
+        assert_eq!(std::fs::read_dir(base.join("out/x")).unwrap().count(), 2, "no temporary file is left");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_swapped_for_a_link_after_it_was_opened_still_gets_the_file() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        std::fs::rename(&out, base.join("moved")).unwrap();
+        link_dir(&out, &outside);
+        assert_eq!(folder.publish(b"%PDF-1.7", [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap(), "a.pdf");
+        assert_eq!(std::fs::read(base.join("moved/a.pdf")).unwrap(), b"%PDF-1.7");
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[test]
+    fn publish_needs_only_search_permission_above_the_output_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, base, _) = sandbox();
+        let (locked, out) = (base.join("locked"), base.join("locked/out"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o111)).unwrap();
+        let result = if std::fs::read_dir(&locked).is_ok() {
+            eprintln!("skipping: this user reads the folder anyway (root)");
+            None
+        } else {
+            Some(publish(&out.join("a.pdf"), b"%PDF-1.7"))
+        };
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if let Some(result) = result {
+            assert_eq!(result.unwrap(), out.join("a.pdf"));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn an_open_output_folder_and_its_parents_cannot_be_moved() {
+        let (_dir, base, _) = sandbox();
+        let out = base.join("parent/out");
+        let folder = Folder::open_checked(&out).unwrap();
+        assert!(std::fs::rename(&out, base.join("moved")).is_err(), "the folder is held");
+        assert!(std::fs::rename(base.join("parent"), base.join("moved")).is_err(), "its parent is held");
+        drop(folder);
+        std::fs::rename(&out, base.join("moved")).unwrap();
     }
 
     #[test]
