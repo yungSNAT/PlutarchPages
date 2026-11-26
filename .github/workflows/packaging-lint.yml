@@ -20,7 +20,7 @@ concurrency:
 jobs:
   lint:
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@88148a57ef09ef407d73c0f385e04cc7f4c2720a # main, 31 October 2026
+    uses: storytold/craft-common-actions/.github/workflows/packaging-lint.yml@88148a57ef09ef407d73c0f385e04cc7f4c2720a # main, 25 November 2026
 
   windows-install-policy:
     timeout-minutes: 10
