@@ -116,3 +116,24 @@ mod native {
         assert_eq!((out.error, out.result.as_deref()), (None, Some("undefined")));
     }
 }
+
+#[test]
+fn stamping_gives_each_present_object_a_token_and_a_returning_object_a_new_one() {
+    let mut session = ScriptSession::default();
+    let mut a = FieldState::new("a", crate::FieldType::Text, vec![]);
+    a.object_id = Some(7);
+    let mut fields = Arc::new(vec![a, FieldState::new("b", crate::FieldType::Text, vec![])]);
+    session.stamp_fields(&mut fields);
+    let ids = |f: &Arc<Vec<FieldState>>| f.iter().map(|f| f.instance_id).collect::<Vec<_>>();
+    assert_eq!(ids(&fields), [1, 0]);
+    // Stamping again changes nothing and copies nothing.
+    let before = Arc::clone(&fields);
+    session.stamp_fields(&mut fields);
+    assert!(Arc::ptr_eq(&before, &fields));
+    // Once gone and back, object 7 is another instance.
+    let mut without = Arc::new(vec![FieldState::new("b", crate::FieldType::Text, vec![])]);
+    session.stamp_fields(&mut without);
+    drop(before);
+    session.stamp_fields(&mut fields);
+    assert_eq!(ids(&fields), [2, 0]);
+}

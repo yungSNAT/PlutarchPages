@@ -84,3 +84,11 @@ fn direct_node_index_and_descendants_cover_error_and_gone_paths() {
     }
     assert!(descendants_named(&h, 0, "f", 0).is_empty());
 }
+
+#[test]
+fn a_node_converts_to_its_value() {
+    let root = crate::fork_test_support::form1(vec![crate::fork_test_support::field("g", "form1[0].g[0]", "abc", false)]);
+    let event = XfaEvent { activity: "click".into(), target: "form1[0].g[0]".into(), ..Default::default() };
+    let out = run_xfa("[this.toString(), this.valueOf(), this + '!'].join('|')", &event, &XfaDoc::default(), &root, Limits::default());
+    assert_eq!((out.error, out.result.as_deref()), (None, Some("abc|abc|abc!")));
+}

@@ -47,3 +47,24 @@ fn an_oversized_host_reply_is_refused() {
     let _ = responder.join();
     assert!(result.is_err_and(|e| e.to_string().contains("exceeds its limit")));
 }
+
+#[test]
+fn a_submenu_array_is_read_in_order() {
+    let mut ctx = Context::default();
+    let menu = value(&mut ctx, "({cName:'p', oSubMenu:[{cName:'a'}, {cName:'b'}]})");
+    let names: Vec<String> = read_menu(&menu, &mut ctx, 0, &mut 1024).map(|m| m.children.into_iter().map(|c| c.name).collect()).unwrap_or_default();
+    assert_eq!(names, ["a", "b"]);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_menu_answer_must_be_one_of_its_items_and_no_answer_is_null() {
+    let mut session = crate::session::ScriptSession::default();
+    let script = "String(app.popUpMenuEx({cName:'A', cReturn:'a'}));";
+    let picked = session.run(crate::fork_test_support::job(script), &[Some("a".into())]);
+    assert_eq!(picked.result.as_deref(), Some("a"));
+    let invalid = session.run(crate::fork_test_support::job(script), &[Some("zzz".into())]);
+    assert!(invalid.error.as_deref().is_some_and(|e| e.contains("invalid popup menu selection")), "{:?}", invalid.error);
+    let none = session.run(crate::fork_test_support::job(script), &[None]);
+    assert_eq!(none.result.as_deref(), Some("null"));
+}

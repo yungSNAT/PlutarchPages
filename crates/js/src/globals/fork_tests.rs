@@ -108,3 +108,35 @@ fn interactive_alert_answers_are_checked_against_its_buttons() {
     let invalid = session.run(job("app.alert('q', 0, 0);"), &[Some("9".into())]);
     assert!(invalid.error.as_deref().is_some_and(|e| e.contains("invalid alert response")), "{:?}", invalid.error);
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_yes_no_cancel_alert_takes_no_as_its_answer() {
+    let mut session = crate::session::ScriptSession::default();
+    let out = session.run(crate::fork_test_support::job("app.alert('q', 0, 3);"), &[Some("3".into())]);
+    assert_eq!((out.error, out.result.as_deref()), (None, Some("3")));
+}
+
+#[test]
+fn a_decimal_comma_after_thousands_dots_is_read() {
+    let fields = vec![FieldState::new("de", FieldType::Text, vec!["1.234,5".into()])];
+    let out = run("AFSimple_Calculate('SUM', ['de']);", &Event::doc("Console"), &DocInfo::default(), &fields, &[], Limits::default());
+    assert_eq!((out.error, out.result.as_deref()), (None, Some("1234.5")));
+}
+
+#[test]
+fn a_calculation_may_not_open_another_document() {
+    let fields = Arc::new(vec![FieldState::new("a", FieldType::Text, vec!["1".into()])]);
+    let out = run_shared_calculations(
+        "calculateNow();",
+        &Event::doc("Console"),
+        &DocInfo::default(),
+        fields,
+        &[],
+        &[(0, "app.openDoc('other.pdf');".into())],
+        Limits::default(),
+    );
+    assert_eq!(out.error, None, "{:?}", out.error);
+    assert!(out.console.iter().any(|l| l.contains("other.pdf") && l.contains("may open another document")), "{:?}", out.console);
+    assert!(!out.requests.iter().any(|r| matches!(r, Request::OpenDoc(_))), "{:?}", out.requests);
+}

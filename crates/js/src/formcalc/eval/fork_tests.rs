@@ -104,3 +104,24 @@ fn arg_values_keeping_enforces_max_list_cap() {
     interp.declare("big", big);
     assert_eq!(interp.arg_values_keeping(&[Expr::Ident("big".into())], true), Err(LIST_TOO_LONG.into()));
 }
+
+#[test]
+fn text_that_is_not_a_number_compares_with_a_number_as_text() {
+    let root = sample_form();
+    let run = |s: &str| run_on(&root, "form1[0].target[0]", s, Limits::default()).result;
+    // "abc" against the text "5"; "10" against 9 as numbers.
+    assert_eq!(run("\"abc\" > 5").as_deref(), Some("1"));
+    assert_eq!(run("\"10\" > 9").as_deref(), Some("1"));
+}
+
+#[test]
+fn calls_and_blocks_past_the_depth_limit_are_errors() {
+    let root = Arc::new(sample_form());
+    let mut host = XHost::new(root, false, "form1[0].target[0]", &XfaDoc::default());
+    let mut interp = interp(&mut host);
+    interp.max_depth = 0;
+    let f = Func { params: Vec::new(), body: Vec::new() };
+    assert!(interp.call_user(&f, Vec::new()).is_err_and(|e| e == CALLS_TOO_DEEP));
+    assert!(interp.block(&[]).is_err_and(|e| e == TOO_DEEP));
+    assert_eq!(interp.depth, 0);
+}

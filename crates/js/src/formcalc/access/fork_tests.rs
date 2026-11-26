@@ -125,3 +125,11 @@ fn direct_interp_access_covers_coercion_and_limit_guards() {
     let mut seen_vals = HashSet::new();
     assert_eq!(interp.list_push(&mut out_vals, &mut seen_vals, Val::Num(0.0)), Err(LIST_TOO_LONG.into()));
 }
+
+#[test]
+fn an_empty_field_reads_as_null_in_arithmetic() {
+    let root = sample_form();
+    // Negating null stays null; negating a field with a value negates the value.
+    assert_eq!(eval_on(&root, "form1[0].empty[0]", "HasValue(-$)").result.as_deref(), Some("0"));
+    assert_eq!(eval_on(&root, "form1[0].flag[0]", "-$").result.as_deref(), Some("-1"));
+}

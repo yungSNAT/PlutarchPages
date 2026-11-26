@@ -47,3 +47,13 @@ fn a_month_name_slot_takes_no_number_and_a_bad_meridiem_fails_the_scan() {
     assert_eq!(scan_date("yyyy-mm-dd tt", "2024-01-01 xx", 2024), None);
     assert!(scan_date("yyyy-mm-dd tt", "2024-01-01 pm", 2024).is_some());
 }
+
+#[test]
+fn folding_treats_dotted_and_dotless_i_and_final_sigma_alike() {
+    assert_eq!([fold('I'), fold('ı'), fold('İ'), fold('ς')], ["i", "i", "i", "σ"]);
+}
+
+#[test]
+fn a_dotted_short_name_touching_digits_is_spaced_apart() {
+    assert_eq!(english_names("10mar.2024", "ddmmmyyyy", [&["jan.", "feb.", "mar."], &[], &[], &[]]), "10 March 2024");
+}

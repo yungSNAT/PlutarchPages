@@ -34,3 +34,11 @@ fn one_icon_keeps_one_handle_and_handles_are_limited() {
     // The 4096th is still handed out.
     assert_eq!(go("for (var i = 0; i < 4096; i++) getField('b' + i).buttonGetIcon(); 'ok';", &many).result.as_deref(), Some("ok"));
 }
+
+#[test]
+fn a_button_without_an_icon_has_none_and_setting_null_clears_one() {
+    let fields = [FieldState::new("plain", FieldType::Button, vec![]), button("btn", 42)];
+    assert_eq!(go("String(getField('plain').buttonGetIcon());", &fields).result.as_deref(), Some("null"));
+    let cleared = go("var b = getField('btn'); b.buttonSetIcon(null); String(b.buttonGetIcon());", &fields);
+    assert_eq!((cleared.error, cleared.result.as_deref()), (None, Some("null")));
+}
