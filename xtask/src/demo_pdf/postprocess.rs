@@ -542,3 +542,393 @@ fn xmp(producer: &str, now: &Stamp) -> String {
         padding = " ".repeat(1024),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::demo_pdf::pdf::rect;
+
+    const KINDS: [&str; 15] = [
+        "highlight",
+        "underline",
+        "strikeout",
+        "squiggly",
+        "caret",
+        "note",
+        "freetext",
+        "line",
+        "square",
+        "circle",
+        "polygon",
+        "polyline",
+        "ink",
+        "stamp",
+        "attach",
+    ];
+
+    /// How the review page stores its `/Contents` and `/Resources`, and what else the catalog carries.
+    #[derive(Clone, Copy)]
+    struct Shape {
+        contents: u8,
+        resources: u8,
+        outline: bool,
+        names: u8,
+        producer: bool,
+        lang: bool,
+    }
+
+    fn link(doc: &mut Document, uri: &str, rect: Object) -> ObjectId {
+        doc.add_object(dictionary! {
+            "Type" => "Annot",
+            "Subtype" => "Link",
+            "Rect" => rect,
+            "A" => dictionary! { "S" => "URI", "URI" => Object::string_literal(uri) },
+        })
+    }
+
+    fn utf16(s: &str) -> Object {
+        let mut bytes = vec![0xfe, 0xff];
+        bytes.extend(s.encode_utf16().flat_map(u16::to_be_bytes));
+        Object::String(bytes, lopdf::StringFormat::Hexadecimal)
+    }
+
+    /// A twelve-page document shaped like Chrome's print of the showcase.
+    fn chrome_like(shape: Shape) -> (Document, Vec<ObjectId>) {
+        let mut doc = Document::with_version("1.4");
+        let pages_root = doc.new_object_id();
+        let mut pages = Vec::new();
+        for index in 0..CHROME_PAGES {
+            let content = doc.add_object(Stream::new(Dictionary::new(), format!("BT ({index}) Tj ET").into_bytes()));
+            let mut page = dictionary! {
+                "Type" => "Page",
+                "Parent" => pages_root,
+                "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+                "Contents" => content,
+            };
+            if index == PAGE_REVIEW {
+                match shape.contents {
+                    0 => {}
+                    1 => {
+                        let array = doc.add_object(vec![Object::Reference(content)]);
+                        page.set("Contents", array);
+                    }
+                    2 => page.set("Contents", vec![Object::Reference(content)]),
+                    _ => page.set("Contents", 7),
+                }
+                match shape.resources {
+                    0 => {}
+                    1 => page.set("Resources", dictionary! { "Font" => dictionary! { "F1" => Object::Null } }),
+                    _ => {
+                        let fonts = doc.add_object(dictionary! { "F1" => Object::Null });
+                        let res = doc.add_object(dictionary! { "Font" => fonts });
+                        page.set("Resources", res);
+                    }
+                }
+            }
+            pages.push(doc.add_object(page));
+        }
+
+        // Page 1: one marker per kind, a second box of a wrapped marker, an ordinary link, a
+        // marker whose rectangle is malformed, and a non-link annotation.
+        let mut annots: Vec<Object> = Vec::new();
+        for (i, kind) in KINDS.iter().enumerate() {
+            let y = 700.0 - i as f32 * 40.0;
+            annots.push(link(&mut doc, &format!("{MARKER_PREFIX}{kind}/1"), rect(72.0, y, 300.0, y + 30.0)).into());
+        }
+        let structured = annots[0].as_reference().unwrap();
+        doc.get_dictionary_mut(structured).unwrap().set("StructParent", 42);
+        annots.push(link(&mut doc, &format!("{MARKER_PREFIX}highlight/1"), rect(72.0, 50.0, 100.0, 60.0)).into());
+        let plain = link(&mut doc, "https://example.com/", rect(10.0, 10.0, 20.0, 20.0));
+        let bad_rect = link(&mut doc, &format!("{MARKER_PREFIX}ink/2"), vec![1.into(), 2.into(), 3.into()].into());
+        let text_annot = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Text", "Rect" => rect(0.0, 0.0, 1.0, 1.0) });
+        let no_action = doc.add_object(dictionary! { "Type" => "Annot", "Subtype" => "Link", "Rect" => rect(0.0, 0.0, 1.0, 1.0) });
+        annots.extend([plain, bad_rect, text_annot, no_action].map(Object::Reference));
+        doc.get_dictionary_mut(pages[0]).unwrap().set("Annots", annots);
+        // Page 2 keeps its annotations in an indirect array that holds no markers.
+        let indirect = doc.add_object(vec![Object::Reference(plain)]);
+        doc.get_dictionary_mut(pages[1]).unwrap().set("Annots", indirect);
+
+        doc.objects.insert(
+            pages_root,
+            Object::Dictionary(dictionary! {
+                "Type" => "Pages",
+                "Kids" => pages.iter().map(|&p| Object::Reference(p)).collect::<Vec<_>>(),
+                "Count" => CHROME_PAGES as i64,
+            }),
+        );
+        let mut catalog = dictionary! { "Type" => "Catalog", "Pages" => pages_root };
+        if shape.lang {
+            catalog.set("Lang", Object::string_literal("en-GB"));
+        }
+        match shape.names {
+            0 => {}
+            1 => catalog.set("Names", dictionary! { "Dests" => Dictionary::new() }),
+            _ => {
+                let names = doc.add_object(dictionary! { "Dests" => Dictionary::new() });
+                catalog.set("Names", names);
+            }
+        }
+        if shape.outline {
+            // Root > CHAPTERS (closed) > [PdfCraftShowcase, "Review & Markup" in UTF-16, ALL-CAPS PDF heading].
+            let root = doc.new_object_id();
+            let chapters = doc.new_object_id();
+            let (cover, review, caps) = (doc.new_object_id(), doc.new_object_id(), doc.new_object_id());
+            let item = |title: Object, parent: ObjectId, prev: Option<ObjectId>, next: Option<ObjectId>| {
+                let mut d = dictionary! { "Title" => title, "Parent" => parent };
+                if let Some(p) = prev {
+                    d.set("Prev", p);
+                }
+                if let Some(n) = next {
+                    d.set("Next", n);
+                }
+                d
+            };
+            let mut chapters_dict = item(Object::string_literal("CHAPTERS"), root, None, None);
+            chapters_dict.extend(&dictionary! { "First" => cover, "Last" => caps, "Count" => -3 });
+            doc.objects.insert(chapters, chapters_dict.into());
+            doc.objects.insert(cover, item(Object::string_literal("PdfCraftShowcase"), chapters, None, Some(review)).into());
+            doc.objects.insert(review, item(utf16("Review & Markup"), chapters, Some(cover), Some(caps)).into());
+            doc.objects.insert(caps, item(Object::string_literal("THE  PDF FORMAT, PLAINLY"), chapters, Some(review), None).into());
+            doc.objects.insert(root, dictionary! { "Type" => "Outlines", "First" => chapters, "Last" => chapters, "Count" => 1 }.into());
+            catalog.set("Outlines", root);
+        }
+        let catalog = doc.add_object(catalog);
+        doc.trailer.set("Root", catalog);
+        if shape.producer {
+            let info = doc.add_object(dictionary! { "Producer" => Object::string_literal("Skia/PDF m150") });
+            doc.trailer.set("Info", info);
+        }
+        (doc, pages)
+    }
+
+    fn now() -> Stamp {
+        Stamp::from_unix(1_790_000_000)
+    }
+
+    fn subtype(doc: &Document, id: ObjectId) -> String {
+        String::from_utf8_lossy(doc.get_dictionary(id).unwrap().get(b"Subtype").unwrap().as_name().unwrap()).into_owned()
+    }
+
+    fn refs(obj: &Object) -> Vec<ObjectId> {
+        obj.as_array().unwrap().iter().map(|o| o.as_reference().unwrap()).collect()
+    }
+
+    fn string(obj: &Object) -> String {
+        decode_text(obj.as_str().unwrap())
+    }
+
+    fn content_of(doc: &Document, id: ObjectId) -> String {
+        String::from_utf8_lossy(&doc.get_object(id).unwrap().as_stream().unwrap().content).into_owned()
+    }
+
+    const FULL: Shape = Shape { contents: 0, resources: 2, outline: true, names: 2, producer: true, lang: true };
+
+    #[test]
+    fn markers_become_annotations_with_appearances_and_the_form_page_is_appended() {
+        let (mut doc, pages) = chrome_like(FULL);
+        let summary = enhance(&mut doc, now()).unwrap();
+        assert_eq!(doc.version, "1.7");
+        assert_eq!(summary.pages, CHROME_PAGES + 1);
+        // 15 markers, the note's popup, reply and review state, the page-4 note and its popup,
+        // and the form page's two links and note.
+        assert_eq!(summary.annotations, 15 + 3 + 2 + 3);
+        assert_eq!(summary.fields, 13);
+        assert_eq!(summary.outline, "Chrome headings (tidied) + form page, 8 entries");
+        assert_marker_pages(&doc, &pages);
+        assert_form_and_catalog(&doc);
+        assert_watermark_and_outline(&doc, pages[PAGE_REVIEW]);
+
+        // The result survives a save and reload.
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        assert_eq!(Document::load_mem(&bytes).unwrap().get_pages().len(), 13);
+    }
+
+    fn assert_marker_pages(doc: &Document, pages: &[ObjectId]) {
+        let page1 = doc.get_dictionary(pages[0]).unwrap();
+        assert_eq!(page1.get(b"Tabs").unwrap().as_name().unwrap(), b"S");
+        let annots = refs(page1.get(b"Annots").unwrap());
+        let kinds: Vec<String> = annots.iter().map(|&id| subtype(doc, id)).collect();
+        let want = [
+            "Highlight",
+            "Underline",
+            "StrikeOut",
+            "Squiggly",
+            "Caret",
+            "Text",
+            "FreeText",
+            "Line",
+            "Square",
+            "Circle",
+            "Polygon",
+            "PolyLine",
+            "Ink",
+            "Stamp",
+            "FileAttachment",
+            // Kept as they were: the ordinary link, the malformed marker, the Text, the action-less link.
+            "Link",
+            "Link",
+            "Text",
+            "Link",
+            // The sticky note's popup, reply and review state.
+            "Popup",
+            "Text",
+            "Text",
+        ];
+        assert_eq!(kinds, want);
+        // Every converted marker carries an appearance stream; the first kept Chrome's StructParent.
+        for &id in &annots[..15] {
+            let ap = doc.get_dictionary(id).unwrap().get(b"AP").unwrap().as_dict().unwrap().get(b"N").unwrap().as_reference().unwrap();
+            assert!(doc.get_object(ap).unwrap().as_stream().is_ok(), "{}", subtype(doc, id));
+        }
+        assert_eq!(doc.get_dictionary(annots[0]).unwrap().get(b"StructParent").unwrap().as_i64().unwrap(), 42);
+        let highlight = doc.get_dictionary(annots[0]).unwrap();
+        assert_eq!(string(highlight.get(b"NM").unwrap()), "pdfcraft-showcase-001-highlight");
+        assert_eq!(highlight.get(b"QuadPoints").unwrap().as_array().unwrap().len(), 8);
+        let reply = doc.get_dictionary(annots[20]).unwrap();
+        assert_eq!(reply.get(b"IRT").unwrap().as_reference().unwrap(), annots[5]);
+        let state = doc.get_dictionary(annots[21]).unwrap();
+        assert_eq!(state.get(b"State").unwrap().as_str().unwrap(), b"Accepted");
+        let attachment = doc.get_dictionary(annots[14]).unwrap();
+        let spec = doc.get_dictionary(attachment.get(b"FS").unwrap().as_reference().unwrap()).unwrap();
+        assert_eq!(string(spec.get(b"F").unwrap()), "review-notes.txt");
+
+        // Page 2's indirect array had no markers and stays as it was; pages with none keep none.
+        assert_eq!(refs(doc.get_dictionary(pages[1]).unwrap().get(b"Annots").unwrap()).len(), 1);
+        assert!(!doc.get_dictionary(pages[2]).unwrap().has(b"Annots"));
+        let page4 = refs(doc.get_dictionary(pages[PAGE_SETTING_TEXT]).unwrap().get(b"Annots").unwrap());
+        assert_eq!(page4.len(), 1);
+        assert_eq!(subtype(doc, page4[0]), "Text");
+    }
+
+    fn assert_form_and_catalog(doc: &Document) {
+        // The form page is the thirteenth kid, with every field in the AcroForm.
+        let catalog = doc.catalog().unwrap();
+        let pages_root = catalog.get(b"Pages").unwrap().as_reference().unwrap();
+        let root = doc.get_dictionary(pages_root).unwrap();
+        assert_eq!(root.get(b"Count").unwrap().as_i64().unwrap(), 13);
+        let form_page = refs(root.get(b"Kids").unwrap())[12];
+        let acroform = doc.get_dictionary(catalog.get(b"AcroForm").unwrap().as_reference().unwrap()).unwrap();
+        assert_eq!(acroform.get(b"Fields").unwrap().as_array().unwrap().len(), 13);
+        let form_annots = refs(doc.get_dictionary(form_page).unwrap().get(b"Annots").unwrap());
+        let links: Vec<_> = form_annots.iter().filter(|&&id| subtype(doc, id) == "Link").collect();
+        assert_eq!(links.len(), 2);
+
+        // Catalog entries, metadata and the embedded data file.
+        assert_eq!(catalog.get(b"Lang").unwrap().as_str().unwrap(), b"en-GB", "an existing /Lang is kept");
+        assert_eq!(catalog.get(b"PageMode").unwrap().as_name().unwrap(), b"UseOutlines");
+        let names = doc.get_dictionary(catalog.get(b"Names").unwrap().as_reference().unwrap()).unwrap();
+        assert!(names.has(b"Dests"));
+        let embedded = names.get(b"EmbeddedFiles").unwrap().as_dict().unwrap().get(b"Names").unwrap().as_array().unwrap();
+        assert_eq!(embedded[0].as_str().unwrap(), b"showcase-data.csv");
+        let info = doc.get_dictionary(doc.trailer.get(b"Info").unwrap().as_reference().unwrap()).unwrap();
+        assert_eq!(string(info.get(b"Producer").unwrap()), "Skia/PDF m150; lopdf 0.45 via pdfcraft xtask");
+        assert_eq!(string(info.get(b"Title").unwrap()), TITLE);
+        let xmp = content_of(doc, catalog.get(b"Metadata").unwrap().as_reference().unwrap());
+        assert!(xmp.contains("<pdf:Producer>Skia/PDF m150; lopdf 0.45 via pdfcraft xtask</pdf:Producer>"), "{xmp}");
+        assert!(xmp.contains("<xmp:CreateDate>2026-09-21T14:13:20Z</xmp:CreateDate>"));
+        let ocgs = catalog.get(b"OCProperties").unwrap().as_dict().unwrap().get(b"OCGs").unwrap().as_array().unwrap();
+        assert_eq!(ocgs.len(), 2);
+    }
+
+    fn assert_watermark_and_outline(doc: &Document, review: ObjectId) {
+        // The watermark wraps the review page's own content in q/Q.
+        let review = doc.get_dictionary(review).unwrap();
+        let contents = refs(review.get(b"Contents").unwrap());
+        assert_eq!(contents.len(), 3);
+        assert_eq!(content_of(doc, contents[0]), "q\n");
+        assert_eq!(content_of(doc, contents[1]), "BT (11) Tj ET");
+        assert!(content_of(doc, contents[2]).contains("(DRAFT) Tj"));
+        let res = doc.get_dictionary(review.get(b"Resources").unwrap().as_reference().unwrap()).unwrap();
+        assert!(res.get(b"Properties").unwrap().as_dict().unwrap().has(b"PCDraft"));
+        let fonts = doc.get_dictionary(res.get(b"Font").unwrap().as_reference().unwrap()).unwrap();
+        assert!(fonts.has(b"F1") && fonts.has(b"PCDraftFont"), "the indirect font dictionary gains the watermark font");
+
+        let catalog = doc.catalog().unwrap();
+        // Outline: titles tidied, the form chapter added beside "Review & Markup" in its closed parent.
+        let outline_root = doc.get_dictionary(catalog.get(b"Outlines").unwrap().as_reference().unwrap()).unwrap();
+        assert_eq!(outline_root.get(b"Count").unwrap().as_i64().unwrap(), 1, "a closed child hides the change from the root");
+        let chapters = doc.get_dictionary(outline_root.get(b"First").unwrap().as_reference().unwrap()).unwrap();
+        assert_eq!(chapters.get(b"Count").unwrap().as_i64().unwrap(), -7, "each added item grows the closed count");
+        assert_eq!(string(chapters.get(b"Title").unwrap()), "Chapters");
+        let mut titles = Vec::new();
+        let mut cur = chapters.get(b"First").unwrap().as_reference().ok();
+        while let Some(id) = cur {
+            let d = doc.get_dictionary(id).unwrap();
+            titles.push(string(d.get(b"Title").unwrap()));
+            cur = d.get(b"Next").and_then(Object::as_reference).ok();
+        }
+        assert_eq!(titles, [TITLE, "Review & Markup", "The PDF format, plainly", "Interactive Form"]);
+    }
+
+    #[test]
+    fn an_outline_is_built_when_chrome_emits_none_and_other_storage_shapes_are_handled() {
+        for (contents, resources, names) in [(1, 0, 0), (2, 1, 1)] {
+            let shape = Shape { contents, resources, outline: false, names, producer: false, lang: false };
+            let (mut doc, pages) = chrome_like(shape);
+            let summary = enhance(&mut doc, now()).unwrap();
+            assert_eq!(summary.outline, "built by xtask (Chrome emitted none), 16 entries");
+
+            let catalog = doc.catalog().unwrap();
+            assert_eq!(catalog.get(b"Lang").unwrap().as_str().unwrap(), b"en-US");
+            let root = doc.get_dictionary(catalog.get(b"Outlines").unwrap().as_reference().unwrap()).unwrap();
+            assert_eq!(root.get(b"Count").unwrap().as_i64().unwrap(), 16);
+            let last = doc.get_dictionary(root.get(b"Last").unwrap().as_reference().unwrap()).unwrap();
+            assert_eq!(string(last.get(b"Title").unwrap()), "Interactive Form");
+            assert_eq!(last.get(b"Count").unwrap().as_i64().unwrap(), 3);
+            assert_eq!(last.get(b"F").unwrap().as_i64().unwrap(), 2);
+
+            let names = catalog.get(b"Names").unwrap().as_dict().unwrap();
+            assert!(names.has(b"EmbeddedFiles"));
+            assert_eq!(names.has(b"Dests"), shape.names != 0);
+            let info = doc.get_dictionary(doc.trailer.get(b"Info").unwrap().as_reference().unwrap()).unwrap();
+            assert_eq!(string(info.get(b"Producer").unwrap()), "Chrome; lopdf 0.45 via pdfcraft xtask");
+
+            let review = doc.get_dictionary(pages[PAGE_REVIEW]).unwrap();
+            let contents = refs(review.get(b"Contents").unwrap());
+            assert_eq!(contents.len(), 3, "an array of one stream, direct or indirect, is spliced in");
+            assert_eq!(content_of(&doc, contents[1]), "BT (11) Tj ET");
+            let res = review.get(b"Resources").unwrap().as_dict().unwrap();
+            assert!(res.get(b"Font").unwrap().as_dict().unwrap().has(b"PCDraftFont"));
+            assert!(res.get(b"ExtGState").unwrap().as_dict().unwrap().has(b"PCDraftGS"));
+        }
+    }
+
+    fn failure(doc: &mut Document) -> String {
+        enhance(doc, now()).err().expect("enhance refuses a malformed document").to_string()
+    }
+
+    #[test]
+    fn layout_and_marker_errors_are_reported() {
+        let (mut doc, pages) = chrome_like(FULL);
+        let pages_root = doc.catalog().unwrap().get(b"Pages").unwrap().as_reference().unwrap();
+        let root = doc.get_dictionary_mut(pages_root).unwrap();
+        root.set("Kids", vec![Object::Reference(pages[0])]);
+        root.set("Count", 1);
+        let err = failure(&mut doc);
+        assert!(err.starts_with("Chrome produced 1 pages but the showcase layout expects 12"), "{err}");
+
+        let (mut doc, pages) = chrome_like(FULL);
+        let unknown = link(&mut doc, &format!("{MARKER_PREFIX}sparkle/1"), rect(0.0, 0.0, 10.0, 10.0));
+        doc.get_dictionary_mut(pages[2]).unwrap().set("Annots", vec![Object::Reference(unknown)]);
+        let err = failure(&mut doc);
+        assert_eq!(err, format!("unknown annotation marker {MARKER_PREFIX}sparkle/1 on page 3"));
+
+        let (mut doc, _) = chrome_like(Shape { contents: 3, ..FULL });
+        let err = failure(&mut doc);
+        assert!(err.starts_with("unexpected /Contents"), "{err}");
+    }
+
+    #[test]
+    fn titles_and_text_are_decoded_and_tidied() {
+        assert_eq!(decode_text(b"caf\xe9"), "café");
+        assert_eq!(decode_text(&[0xfe, 0xff, 0x00, 0x41, 0x20, 0xac]), "A€");
+        assert_eq!(tidy_title("PdfCraftShowcase"), TITLE);
+        assert_eq!(tidy_title("OPENTYPE  FEATURES"), "Opentype features");
+        assert_eq!(tidy_title("WHY PDF/A?"), "Why pdf/a?");
+        assert_eq!(tidy_title("ABOUT PDF"), "About PDF");
+        assert_eq!(tidy_title("Mixed Case"), "Mixed Case");
+        assert_eq!(tidy_title("2026 — 27"), "2026 — 27");
+        assert_eq!(xml_escape("a<b>&c"), "a&lt;b&gt;&amp;c");
+    }
+}

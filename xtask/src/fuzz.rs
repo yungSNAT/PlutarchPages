@@ -366,15 +366,20 @@ fn synthetic_seeds() -> Vec<Vec<u8>> {
 }
 
 fn seeds() -> Vec<(String, Vec<u8>)> {
+    seeds_from(&root().join("corpus/pdfjs/test/pdfs"), &root().join("xtask/baselines/pdfjs.json"))
+}
+
+/// The synthetic seeds, then the PDFs of at most 64 KB in `dir` that `baseline` does not list as
+/// hanging.
+fn seeds_from(dir: &Path, baseline: &Path) -> Vec<(String, Vec<u8>)> {
     let mut out: Vec<(String, Vec<u8>)> = synthetic_seeds().into_iter().enumerate().map(|(i, b)| (format!("synthetic-{i}"), b)).collect();
     // Seeds the corpus sweep already knows to hang only rediscover that hang.
-    let known_hangs: std::collections::HashSet<String> = std::fs::read_to_string(root().join("xtask/baselines/pdfjs.json"))
+    let known_hangs: std::collections::HashSet<String> = std::fs::read_to_string(baseline)
         .ok()
         .and_then(|t| serde_json::from_str::<std::collections::BTreeMap<String, String>>(&t).ok())
         .map(|m| m.into_iter().filter(|(_, v)| v == "timeout").map(|(k, _)| k).collect())
         .unwrap_or_default();
-    let dir = root().join("corpus/pdfjs/test/pdfs");
-    if let Ok(rd) = std::fs::read_dir(&dir) {
+    if let Ok(rd) = std::fs::read_dir(dir) {
         let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "pdf")).collect();
         files.sort();
         for f in files {
@@ -501,6 +506,7 @@ pub fn run(args: &[String]) -> Result<()> {
     let jobs: usize =
         flag(args, "--jobs").map(str::parse).transpose()?.unwrap_or_else(|| std::thread::available_parallelism().map_or(2, |n| (n.get() / 2).max(1)));
     let timeout = Duration::from_secs(flag(args, "--timeout").unwrap_or("10").parse()?);
+    let settings = Settings { time, iterations, seed, jobs, timeout };
 
     let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .current_dir(root())
@@ -514,12 +520,28 @@ pub fn run(args: &[String]) -> Result<()> {
         // Every run would fail to start and count as a pass.
         bail!("{} not found after building it", exe.display());
     }
-    let out = root().join("fuzz-out");
+    campaign(&exe, &root().join("fuzz-out"), seeds(), settings)
+}
+
+/// How long and how wide a campaign runs.
+struct Settings {
+    time: Duration,
+    iterations: usize,
+    seed: u64,
+    jobs: usize,
+    timeout: Duration,
+}
+
+/// Fuzz `exe` with mutations of `seeds`, keeping inputs in `out/work` and findings in
+/// `out/findings`. Fails when a crash was found.
+fn campaign(exe: &Path, out: &Path, seeds: Vec<(String, Vec<u8>)>, settings: Settings) -> Result<()> {
+    let Settings { time, iterations, seed, jobs, timeout } = settings;
+    let exe = exe.to_path_buf();
     let work = out.join("work");
     let findings = out.join("findings");
     std::fs::create_dir_all(&work)?;
     std::fs::create_dir_all(&findings)?;
-    let seeds = Arc::new(seeds());
+    let seeds = Arc::new(seeds);
     println!("fuzz: {} seeds, {jobs} jobs, {} s, timeout {} s, seed {seed}", seeds.len(), time.as_secs(), timeout.as_secs());
 
     let done = Arc::new(AtomicUsize::new(0));
@@ -636,6 +658,199 @@ mod tests {
         let prev: usize = tail.split("/Prev ").nth(1).and_then(|s| s.split_whitespace().next()).and_then(|s| s.parse().ok()).unwrap_or(0);
         assert!(prev > 0 && prev < at, "/Prev {prev} must point at the earlier section (startxref {at})");
         assert!(pdf.get(prev..).unwrap_or_default().starts_with(b"xref\n"));
+    }
+
+    #[test]
+    fn flags_and_the_generator_are_deterministic() {
+        let args: Vec<String> = ["--time", "5", "--seed"].map(String::from).to_vec();
+        assert_eq!(flag(&args, "--time"), Some("5"));
+        assert_eq!(flag(&args, "--seed"), None, "no value");
+        assert_eq!(flag(&args, "--jobs"), None);
+
+        let (mut a, mut b) = (Rng(7), Rng(7));
+        let first: Vec<u64> = (0..4).map(|_| a.next()).collect();
+        assert_eq!(first, (0..4).map(|_| b.next()).collect::<Vec<_>>());
+        assert!(first.windows(2).all(|w| w[0] != w[1]));
+        assert_eq!(a.below(0), 0);
+        assert!((0..1000).all(|_| a.below(3) < 3));
+        assert_eq!(fxhash(b""), 0xcbf2_9ce4_8422_2325);
+        assert_ne!(fxhash(b"a"), fxhash(b"b"));
+    }
+
+    /// Mutation is reproducible from the generator's state, and across many rounds reaches each
+    /// kind of change: bit flips and deletions, spliced tokens, borrowed bytes, extreme numbers.
+    #[test]
+    fn mutations_are_reproducible_and_reach_every_kind_of_change() {
+        let seed = feature_rich_seed();
+        let other = b"BORROWED-BYTES".repeat(4);
+        assert_eq!(mutate(&mut Rng(3), &seed, &other), mutate(&mut Rng(3), &seed, &other));
+
+        let mut rng = Rng(11);
+        let outs: Vec<Vec<u8>> = (0..3000).map(|_| mutate(&mut rng, &seed, &other)).collect();
+        assert!(outs.iter().any(|o| o.len() < seed.len()), "something is deleted or truncated");
+        assert!(outs.iter().any(|o| o.len() > seed.len()), "something is inserted");
+        assert!(outs.iter().any(|o| find(o, b"BORROWED").is_some()), "bytes are spliced from the other seed");
+        assert!(outs.iter().any(|o| find(o, b"/Type /XRef /W [1 9 1]").is_some()), "tokens are spliced in");
+        assert!(outs.iter().any(|o| find(o, b"9223372036854775807").is_some()), "numbers become extreme");
+
+        // An empty seed gets a header before it is changed; a stream at the very end and no other
+        // seed are mutated without going out of bounds, reproducibly.
+        let (mut x, mut y) = (Rng(5), Rng(5));
+        let mut grew = false;
+        for _ in 0..500 {
+            let empty = mutate(&mut x, b"", b"");
+            assert_eq!(empty, mutate(&mut y, b"", b""));
+            grew |= empty.starts_with(b"%PDF-");
+            assert_eq!(mutate(&mut x, b"1 0 obj stream", b""), mutate(&mut y, b"1 0 obj stream", b""));
+        }
+        assert!(grew, "an empty seed starts from a header");
+    }
+
+    /// Corpus seeds join the synthetic ones when they are small PDFs not known to hang.
+    #[test]
+    fn corpus_seeds_skip_big_files_known_hangs_and_other_files() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-seeds-test").unwrap();
+        let pdfs = dir.path().join("pdfs");
+        std::fs::create_dir(&pdfs).unwrap();
+        std::fs::write(pdfs.join("small.pdf"), b"%PDF-1.7 small").unwrap();
+        std::fs::write(pdfs.join("hangs.pdf"), b"%PDF-1.7 slow").unwrap();
+        std::fs::write(pdfs.join("big.pdf"), vec![b' '; 64 * 1024 + 1]).unwrap();
+        std::fs::write(pdfs.join("notes.txt"), b"not a seed").unwrap();
+        let baseline = dir.path().join("pdfjs.json");
+        std::fs::write(&baseline, r#"{"hangs.pdf": "timeout", "small.pdf": "error"}"#).unwrap();
+
+        let seeds = seeds_from(&pdfs, &baseline);
+        let names: Vec<&str> = seeds.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names[..6], ["synthetic-0", "synthetic-1", "synthetic-2", "synthetic-3", "synthetic-4", "synthetic-5"]);
+        assert_eq!(names[6..], ["small.pdf"]);
+        assert_eq!(seeds[6].1, b"%PDF-1.7 small");
+
+        // Without a corpus or a readable baseline only the synthetic seeds remain.
+        assert_eq!(seeds_from(&dir.path().join("absent"), &dir.path().join("absent.json")).len(), 6);
+    }
+
+    /// An executable shell script in `dir`.
+    #[cfg(unix)]
+    fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// Crashes the way a Rust panic does when its input holds `BUG`, else succeeds.
+    #[cfg(unix)]
+    const PANICS_ON_BUG: &str =
+        r#"case "$(cat "$2")" in *BUG*) printf 'noise\nthread '"'main'"' (4242) panicked at src/lib.rs:1:2 (in parser):\n' >&2; exit 101;; esac"#;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_child_passes_crashes_or_hangs() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-run-test").unwrap();
+        let exe = script(dir.path(), "cli", PANICS_ON_BUG);
+        let input = dir.path().join("input.pdf");
+        let long = Duration::from_secs(60);
+
+        std::fs::write(&input, b"fine").unwrap();
+        assert_eq!(run_one(&exe, &input, long), (Outcome::Ok, String::new()));
+        std::fs::write(&input, b"a BUG").unwrap();
+        let (outcome, what) = run_one(&exe, &input, long);
+        assert_eq!(outcome, Outcome::Crash);
+        assert_eq!(what, "exit status: 101; thread 'main' panicked at src/lib.rs:1:2 (in parser):", "the thread id is dropped");
+
+        let silent = script(dir.path(), "silent", "exit 3");
+        assert_eq!(run_one(&silent, &input, long), (Outcome::Crash, "exit status: 3; ".into()));
+        let missing = run_one(&dir.path().join("absent"), &input, long);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        assert_eq!(missing.0, Outcome::Crash, "a child that cannot start under the shell fails: {missing:?}");
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        assert_eq!(missing.0, Outcome::Ok, "a child that cannot be spawned is not a finding: {missing:?}");
+
+        let stuck = script(dir.path(), "stuck", "exec sleep 30");
+        assert_eq!(run_one(&stuck, &input, Duration::ZERO), (Outcome::Hang, "over 0 s".into()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn minimizing_keeps_only_what_still_crashes_the_same_way() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-min-test").unwrap();
+        let exe = script(dir.path(), "cli", PANICS_ON_BUG);
+        let data = b"0123456789BUG0123456789".to_vec();
+        let what = "exit status: 101; thread 'main' panicked at src/lib.rs:1:2 (in parser):";
+        let small = minimize(&exe, dir.path(), data.clone(), Outcome::Crash, what, Duration::from_secs(60));
+        assert_eq!(small, b"BUG");
+        assert!(!dir.path().join("minimize.pdf").exists(), "the probe is removed");
+        // A different message is a different bug: nothing is removed.
+        assert_eq!(minimize(&exe, dir.path(), data.clone(), Outcome::Crash, "other", Duration::from_secs(60)), data);
+        // A probe that cannot be written stops the search with the input as it was.
+        assert_eq!(minimize(&exe, &dir.path().join("absent"), data.clone(), Outcome::Crash, what, Duration::from_secs(60)), data);
+    }
+
+    #[cfg(unix)]
+    fn settings(iterations: usize, timeout: Duration) -> Settings {
+        Settings { time: Duration::from_secs(600), iterations, seed: 1, jobs: 1, timeout }
+    }
+
+    #[cfg(unix)]
+    fn findings(out: &Path) -> Vec<String> {
+        let mut names: Vec<String> =
+            std::fs::read_dir(out.join("findings")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        names.sort();
+        names
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_campaign_records_one_minimized_finding_per_crash_and_fails() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-crash-test").unwrap();
+        let exe = script(dir.path(), "cli", r#"printf 'thread '"'main'"' panicked at src/lib.rs:9:9:\n' >&2; exit 101"#);
+        let out = dir.path().join("fuzz-out");
+        let seeds = vec![("one".to_string(), b"%PDF-1.7 seed".to_vec())];
+        let err = campaign(&exe, &out, seeds, settings(4, Duration::from_secs(60))).unwrap_err().to_string();
+        assert_eq!(err, "1 crash(es): see fuzz-out/findings/");
+        // Every input crashes, so minimizing empties it.
+        let id = format!("crash-{:016x}", fxhash(b""));
+        assert_eq!(findings(&out), [format!("{id}.json"), format!("{id}.pdf")]);
+        let note: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(out.join(format!("findings/{id}.json"))).unwrap()).unwrap();
+        assert_eq!(note["outcome"], "Crash");
+        assert_eq!(note["detail"], "exit status: 101; thread 'main' panicked at src/lib.rs:9:9:");
+        assert_eq!(note["seed_file"], "one");
+        assert_eq!(note["bytes"], 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_campaign_keeps_confirmed_hangs_whole_and_passes() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-hang-test").unwrap();
+        let exe = script(dir.path(), "cli", "exec sleep 30");
+        let out = dir.path().join("fuzz-out");
+        let seeds = vec![("slow".to_string(), b"%PDF-1.7 seed".to_vec())];
+        campaign(&exe, &out, seeds, settings(2, Duration::ZERO)).unwrap();
+        let names = findings(&out);
+        assert_eq!(names.len(), 2, "one hang per seed: {names:?}");
+        let note: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(out.join("findings").join(&names[0])).unwrap()).unwrap();
+        assert_eq!((note["outcome"].as_str(), note["seed_file"].as_str()), (Some("Hang"), Some("slow")));
+        assert_eq!(note["bytes"], note["original_bytes"], "hangs are not minimized");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_campaign_with_clean_runs_or_unwritable_inputs_finds_nothing() {
+        let dir = crate::gates::PrivateDir::new("pdfcraft-fuzz-clean-test").unwrap();
+        let exe = script(dir.path(), "cli", "exit 0");
+        let out = dir.path().join("fuzz-out");
+        let seeds = || vec![("one".to_string(), b"%PDF-1.7 seed".to_vec())];
+        campaign(&exe, &out, seeds(), settings(5, Duration::from_secs(60))).unwrap();
+        assert!(findings(&out).is_empty());
+        assert!(out.join("work/job0.pdf").is_file());
+
+        // The job's input path is taken by a folder, so no input is ever written or run.
+        let out = dir.path().join("blocked");
+        std::fs::create_dir_all(out.join("work/job0.pdf")).unwrap();
+        let crashing = script(dir.path(), "crashing", "exit 101");
+        campaign(&crashing, &out, seeds(), settings(5, Duration::from_secs(60))).unwrap();
+        assert!(findings(&out).is_empty());
     }
 
     /// Every cross-reference entry of the classic seeds points at its own object.

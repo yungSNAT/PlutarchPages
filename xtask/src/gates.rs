@@ -223,24 +223,28 @@ pub fn check(args: &[String]) -> anyhow::Result<()> {
         crate::corpus::State::Verified { files } => println!("corpus verified: {files} files at {}", crate::corpus::PDFJS_COMMIT),
     }
     run_args(&["build", "--release", "-p", "pdfcraft-cli"])?;
-    let report = target_dir().join("check-pdfjs.json");
-    let mut c = Command::new(release_cli());
-    c.args(["check"]).arg(&corpus).args(["--timeout", "20", "--dpi", "36", "--json"]).arg(&report);
+    sweep(&release_cli(), &corpus, &target_dir().join("check-pdfjs.json"), &root().join("xtask/baselines/pdfjs.json"), update)
+}
+
+/// `check`'s sweep once the corpus is verified and the CLI built: run `cli` over `corpus` into
+/// `report`, then compare the non-ok files with the baseline (re-recorded first with `update`).
+fn sweep(cli: &Path, corpus: &Path, report: &Path, baseline_path: &Path, update: bool) -> anyhow::Result<()> {
+    let mut c = Command::new(cli);
+    c.args(["check"]).arg(corpus).args(["--timeout", "20", "--dpi", "36", "--json"]).arg(report);
     run(c, "pdfcraft-cli check corpus/pdfjs")?;
-    let results: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(&report)?)?;
+    let results: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(report)?)?;
     let name =
         |v: &serde_json::Value| Path::new(v["file"].as_str().unwrap_or("")).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let status = |v: &serde_json::Value| v["status"].as_str().unwrap_or("?").split(':').next().unwrap_or("?").to_string();
     let current: BTreeMap<String, String> = results.iter().filter(|v| status(v) != "ok").map(|v| (name(v), status(v))).collect();
     let crashes: Vec<&String> = current.iter().filter(|(_, s)| s.as_str() == "crash").map(|(f, _)| f).collect();
-    let baseline_path = root().join("xtask/baselines/pdfjs.json");
     if update {
         std::fs::create_dir_all(baseline_path.parent().expect("has parent"))?;
-        std::fs::write(&baseline_path, serde_json::to_string_pretty(&current)? + "\n")?;
+        std::fs::write(baseline_path, serde_json::to_string_pretty(&current)? + "\n")?;
         println!("baseline updated: {} known non-ok files", current.len());
     }
     let baseline: BTreeMap<String, String> =
-        std::fs::read_to_string(&baseline_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+        std::fs::read_to_string(baseline_path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
     let regressions: Vec<String> = current.iter().filter(|(f, _)| !baseline.contains_key(*f)).map(|(f, s)| format!("{f} ({s})")).collect();
     let fixed: Vec<&String> = baseline.keys().filter(|f| !current.contains_key(*f)).collect();
     println!(
@@ -279,11 +283,15 @@ pub fn text_oracle(args: &[String]) -> anyhow::Result<()> {
         Err(absent) => bail!("{absent}"),
     };
     run_args(&["build", "--release", "-p", "pdfcraft-cli"])?;
-    let corpus = root().join("corpus/pdfjs/test/pdfs");
+    text_scores(&root().join("corpus/pdfjs/test/pdfs"), &release_cli(), || pdftotext.command(), limit)
+}
+
+/// `text-oracle`'s comparison once the CLI is built: `cli text` against `pdftotext` over the PDFs
+/// in `corpus`, at most `limit` of them.
+fn text_scores(corpus: &Path, cli: &Path, pdftotext: impl Fn() -> Command, limit: usize) -> anyhow::Result<()> {
     let mut files: Vec<PathBuf> =
-        std::fs::read_dir(&corpus)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "pdf")).collect();
+        std::fs::read_dir(corpus)?.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "pdf")).collect();
     files.sort();
-    let cli = release_cli();
     let mut scores = Vec::new();
     let mut orders = Vec::new();
     let mut worst: Vec<(f64, String)> = Vec::new();
@@ -299,8 +307,8 @@ pub fn text_oracle(args: &[String]) -> anyhow::Result<()> {
             not_permitted = not_permitted.saturating_add(1);
             continue;
         }
-        let ours = run_capture(Command::new(&cli).arg("text").arg(f), 20);
-        let theirs = run_capture(pdftotext.command().arg("-q").arg(f).arg("-"), 20);
+        let ours = run_capture(Command::new(cli).arg("text").arg(f), 20);
+        let theirs = run_capture(pdftotext().arg("-q").arg(f).arg("-"), 20);
         let (Some(ours), Some(theirs)) = (ours, theirs) else { continue };
         let (sa, sb) = (word_sequence(&ours), word_sequence(&theirs));
         let (a, b) = (words(&sa), words(&sb));
@@ -665,6 +673,168 @@ mod tests {
         let long: Vec<String> = (0..super::MAX_ORDER_WORDS + 10).map(|i| i.to_string()).collect();
         let (s, cut) = order_score(&long, &long);
         assert!((s - 1.0).abs() < 1e-9 && cut, "{s} {cut}");
+    }
+
+    /// An executable shell script in `dir`.
+    #[cfg(unix)]
+    fn script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    /// The sweep compares the non-ok files with the baseline: crashes fail first, then
+    /// regressions; `--update-baseline` re-records it from this run.
+    #[cfg(unix)]
+    #[test]
+    fn the_sweep_reports_crashes_and_regressions_against_the_baseline() {
+        let dir = PrivateDir::new("pdfcraft-sweep-test").unwrap();
+        let tmp = dir.path();
+        // The stand-in CLI copies `results.json` to the report path, its eighth argument.
+        let cli = script(tmp, "cli", r#"printf '%s\n' "$*" > "$(dirname "$0")/args"; cp "$(dirname "$0")/results.json" "$8""#);
+        let (report, baseline) = (tmp.join("report.json"), tmp.join("baselines/pdfjs.json"));
+        let results = |json: &str| std::fs::write(tmp.join("results.json"), json).unwrap();
+        results(
+            r#"[{"file": "/c/a.pdf", "status": "ok"}, {"file": "/c/b.pdf", "status": "error: bad xref"}, {"file": "/c/c.pdf", "status": "timeout"}]"#,
+        );
+
+        let err = super::sweep(&cli, tmp, &report, &baseline, false).unwrap_err().to_string();
+        assert_eq!(err, r#"regressions: ["b.pdf (error)", "c.pdf (timeout)"]"#);
+        let args = std::fs::read_to_string(tmp.join("args")).unwrap();
+        assert_eq!(args, format!("check {} --timeout 20 --dpi 36 --json {}\n", tmp.display(), report.display()));
+
+        // Recording the baseline makes the same run pass, and a later run that fixes one passes too.
+        super::sweep(&cli, tmp, &report, &baseline, true).unwrap();
+        assert_eq!(std::fs::read_to_string(&baseline).unwrap(), "{\n  \"b.pdf\": \"error\",\n  \"c.pdf\": \"timeout\"\n}\n");
+        results(r#"[{"file": "/c/b.pdf", "status": "error: still"}, {"file": "/c/c.pdf", "status": "ok"}]"#);
+        super::sweep(&cli, tmp, &report, &baseline, false).unwrap();
+
+        results(r#"[{"file": "/c/d.pdf", "status": "crash: panicked"}, {"status": "timeout"}]"#);
+        let err = super::sweep(&cli, tmp, &report, &baseline, false).unwrap_err().to_string();
+        assert_eq!(err, r#"crashes: ["d.pdf"]"#);
+
+        std::fs::remove_file(tmp.join("results.json")).unwrap();
+        let err = super::sweep(&cli, tmp, &report.with_extension("missing"), &baseline, false).unwrap_err().to_string();
+        assert_eq!(err, "pdfcraft-cli check corpus/pdfjs: exited with exit status: 1");
+    }
+
+    /// A PDF with an empty user password whose permissions leave out copying.
+    fn copy_protected_pdf() -> Vec<u8> {
+        use lopdf::{Document, EncryptionState, EncryptionVersion, Object, Permissions, dictionary};
+        let mut doc = Document::with_version("1.5");
+        let pages = doc.new_object_id();
+        let page = doc.add_object(dictionary! { "Type" => "Page", "Parent" => pages, "MediaBox" => vec![0.into(), 0.into(), 10.into(), 10.into()] });
+        doc.objects.insert(pages, dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }.into());
+        let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        doc.trailer.set("ID", vec![Object::string_literal("0123456789abcdef"), Object::string_literal("0123456789abcdef")]);
+        let owner = "owner";
+        let version = EncryptionVersion::V1 { document: &doc, owner_password: owner, user_password: "", permissions: Permissions::PRINTABLE };
+        let state = EncryptionState::try_from(version).unwrap();
+        doc.encrypt(&state).unwrap();
+        let mut bytes = Vec::new();
+        doc.save_to(&mut bytes).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn copying_is_allowed_unless_the_document_forbids_it() {
+        let dir = PrivateDir::new("pdfcraft-copy-test").unwrap();
+        let path = |name: &str| dir.path().join(name);
+        assert!(super::copying_allowed(&path("missing.pdf")), "an unreadable file is not dropped");
+        std::fs::write(path("junk.pdf"), b"not a pdf").unwrap();
+        assert!(super::copying_allowed(&path("junk.pdf")));
+        std::fs::write(path("locked.pdf"), copy_protected_pdf()).unwrap();
+        assert!(!super::copying_allowed(&path("locked.pdf")));
+    }
+
+    /// Files the document forbids copying from, and files the oracle finds almost no text in, are
+    /// left out; the rest are scored. Nothing comparable is an error.
+    #[cfg(unix)]
+    #[test]
+    fn the_text_oracle_scores_only_comparable_files() {
+        let dir = PrivateDir::new("pdfcraft-text-oracle-test").unwrap();
+        let tmp = dir.path();
+        let corpus = tmp.join("pdfs");
+        std::fs::create_dir(&corpus).unwrap();
+        for name in ["a.pdf", "short.pdf", "notes.txt"] {
+            std::fs::write(corpus.join(name), b"%PDF-1.7\n").unwrap();
+        }
+        std::fs::write(corpus.join("locked.pdf"), copy_protected_pdf()).unwrap();
+        let words = (1..=30).map(|i| format!("w{i}")).collect::<Vec<_>>().join(" ");
+        // Both stand-ins log the file they were given; the oracle finds three words in `short`.
+        let ours = script(tmp, "ours", &format!(r#"printf '%s\n' "$2" >> "$(dirname "$0")/ours.log"; printf '{words}'"#));
+        let theirs = script(
+            tmp,
+            "theirs",
+            &format!(
+                r#"printf '%s\n' "$2" >> "$(dirname "$0")/theirs.log"; case "$2" in *short.pdf) printf 'w1 w2 w3';; *) printf '{words} extra';; esac"#
+            ),
+        );
+        super::text_scores(&corpus, &ours, || std::process::Command::new(&theirs), usize::MAX).unwrap();
+        let logged = |name: &str| std::fs::read_to_string(tmp.join(name)).unwrap();
+        let want = format!("{0}/a.pdf\n{0}/short.pdf\n", corpus.display());
+        assert_eq!(logged("ours.log"), want);
+        assert_eq!(logged("theirs.log"), want);
+
+        // Only the first file: nothing skipped for its permissions, and only it is run.
+        std::fs::remove_file(tmp.join("ours.log")).unwrap();
+        super::text_scores(&corpus, &ours, || std::process::Command::new(&theirs), 1).unwrap();
+        assert_eq!(logged("ours.log"), format!("{}/a.pdf\n", corpus.display()));
+
+        // A corpus whose only file the oracle finds near-empty has nothing to compare.
+        let short_only = tmp.join("short-only");
+        std::fs::create_dir(&short_only).unwrap();
+        std::fs::write(short_only.join("short.pdf"), b"%PDF-1.7\n").unwrap();
+        let err = super::text_scores(&short_only, &ours, || std::process::Command::new(&theirs), usize::MAX).unwrap_err().to_string();
+        assert_eq!(err, "no comparable files");
+
+        let err = super::text_scores(&corpus, &ours, || std::process::Command::new(&theirs), 0).unwrap_err().to_string();
+        assert_eq!(err, "no comparable files");
+        assert!(super::text_scores(&tmp.join("absent"), &ours, || std::process::Command::new(&theirs), 1).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subprocesses_report_status_and_capture_bytes() {
+        use std::process::Command;
+        let sh = |code: &str| {
+            let mut c = Command::new("sh");
+            c.args(["-c", code]);
+            c
+        };
+        super::run(sh("exit 0"), "fine").unwrap();
+        assert_eq!(super::run(sh("exit 4"), "four").unwrap_err().to_string(), "four: exited with exit status: 4");
+        let err = super::run(Command::new("/nonexistent/tool"), "absent").unwrap_err();
+        assert_eq!(err.to_string(), "absent: failed to spawn");
+
+        assert_eq!(super::run_capture_bytes(&mut sh(r"printf '\000\377ok'; printf 'noise' >&2; exit 9"), 5).unwrap(), b"\0\xffok");
+        assert_eq!(super::run_capture(&mut sh(r"printf '\377'"), 5).unwrap(), "", "output that is not UTF-8 reads as empty");
+        assert_eq!(super::run_capture(&mut sh("printf 'text'"), 5).unwrap(), "text");
+        assert!(super::run_capture(&mut Command::new("/nonexistent/tool"), 5).is_none());
+        // A child still running after the timeout is killed and yields nothing.
+        assert!(super::run_capture_bytes(&mut sh("exec sleep 30"), 0).is_none());
+    }
+
+    #[test]
+    fn flags_pixels_and_paths() {
+        let args: Vec<String> = ["--dpi", "18", "--limit", "x", "--tolerance"].map(String::from).to_vec();
+        assert_eq!(super::flag_num::<u32>(&args, "--dpi"), Some(18));
+        assert_eq!(super::flag_num::<u32>(&args, "--limit"), None, "malformed");
+        assert_eq!(super::flag_num::<u8>(&args, "--tolerance"), None, "no value");
+        assert_eq!(super::flag_num::<u8>(&args, "--absent"), None);
+        assert!(super::pixels_of(2, 1, &[0, 255]).is_some());
+        assert!(super::pixels_of(2, 2, &[0, 255]).is_none());
+        let cli = super::release_cli();
+        assert_eq!(cli.file_name().unwrap().to_string_lossy(), format!("pdfcraft-cli{}", std::env::consts::EXE_SUFFIX));
+        assert_eq!(cli.parent().unwrap().file_name().unwrap(), "release");
+
+        let dir = PrivateDir::new("pdfcraft-path-test").unwrap();
+        assert!(dir.path().is_dir());
+        let err = PrivateDir::new("pdfcraft-no-such-parent/inner").err().unwrap().to_string();
+        assert!(err.starts_with("create ") && err.contains("pdfcraft-no-such-parent"), "{err}");
     }
 
     // Issue #211: Finder lists the app under Open With > Recommended only when the

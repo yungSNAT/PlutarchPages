@@ -539,3 +539,34 @@ pub fn acroform(fonts: &Fonts, fields: &[ObjectId]) -> Dictionary {
         "NeedAppearances" => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_centred_text_field_draws_its_value_in_the_middle() {
+        let mut doc = Document::with_version("1.7");
+        let fonts = Fonts::add_to(&mut doc);
+        let page = doc.new_object_id();
+        let mut b = Builder { doc: &mut doc, fonts: &fonts, page, widgets: Vec::new(), fields: Vec::new() };
+        let spec = TextFieldSpec { field: "c", tooltip: "Centred", rect: Rect::new(0.0, 0.0, 100.0, 20.0), value: "Hi", display: None, quadding: 1 };
+        b.text_field(spec, |_| {});
+        let (widgets, fields) = (b.widgets.clone(), b.fields.clone());
+        assert_eq!(widgets, fields);
+        let field = doc.get_dictionary(fields[0]).unwrap();
+        assert_eq!(field.get(b"Q").unwrap().as_i64().unwrap(), 1);
+        let ap = field.get(b"AP").unwrap().as_dict().unwrap().get(b"N").unwrap().as_reference().unwrap();
+        let content = String::from_utf8(doc.get_object(ap).unwrap().as_stream().unwrap().content.clone()).unwrap();
+        // "Hi" is 9.44 points wide at 10 points: (100 - 9.44) / 2.
+        assert!(content.contains("BT /Helv 10 Tf 45.28 6.5 Td (Hi) Tj ET"), "{content}");
+    }
+
+    #[test]
+    fn wrapping_breaks_between_words_and_never_inside_one() {
+        assert!(wrap("", Font::Helv, 10.0, 100.0).is_empty());
+        assert_eq!(wrap("a  b", Font::Helv, 10.0, 100.0), ["a b"]);
+        assert_eq!(wrap("alpha beta", Font::Helv, 10.0, 30.0), ["alpha", "beta"]);
+        assert_eq!(wrap("extraordinary", Font::Helv, 10.0, 5.0), ["extraordinary"]);
+    }
+}
