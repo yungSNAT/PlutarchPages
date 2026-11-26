@@ -610,6 +610,64 @@ mod tests {
         std::fs::rename(&out, base.join("moved")).unwrap();
     }
 
+    /// Turns the existing, empty folder `dir` into a junction to `target` in place, as another
+    /// process could whilst publish holds it: no rename and no delete, only a reparse point set
+    /// through a handle opened for `FILE_WRITE_ATTRIBUTES`, which no share mode can refuse.
+    #[cfg(windows)]
+    fn convert_in_place(dir: &Path, target: &Path) {
+        const SCRIPT: &str = r#"param([string]$Dir, [string]$Target)
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class InPlaceJunction {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle h, uint code, byte[] inBuf, int inLen, IntPtr outBuf, int outLen, out int returned, IntPtr overlapped);
+    public static string Make(string dir, string target) {
+        SafeFileHandle h = CreateFileW(dir, 0x100, 7, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        if (h.IsInvalid) return "open failed " + Marshal.GetLastWin32Error();
+        byte[] sub = Encoding.Unicode.GetBytes("\\??\\" + target);
+        int pathLen = sub.Length + 4;
+        byte[] buf = new byte[16 + pathLen];
+        BitConverter.GetBytes(0xA0000003u).CopyTo(buf, 0);
+        BitConverter.GetBytes((ushort)(8 + pathLen)).CopyTo(buf, 4);
+        BitConverter.GetBytes((ushort)sub.Length).CopyTo(buf, 10);
+        BitConverter.GetBytes((ushort)(sub.Length + 2)).CopyTo(buf, 12);
+        sub.CopyTo(buf, 16);
+        int r;
+        bool ok = DeviceIoControl(h, 0x000900A4, buf, buf.Length, IntPtr.Zero, 0, out r, IntPtr.Zero);
+        int err = Marshal.GetLastWin32Error();
+        h.Close();
+        return ok ? "ok" : "fsctl failed " + err;
+    }
+}
+'@
+[InPlaceJunction]::Make($Dir, $Target)
+"#;
+        let script = target.with_file_name("in-place-junction.ps1");
+        std::fs::write(&script, SCRIPT).unwrap();
+        let (dir, target): (PathBuf, PathBuf) = (dir.components().collect(), target.components().collect());
+        let out =
+            std::process::Command::new("pwsh").args(["-NoProfile", "-NonInteractive", "-File"]).arg(&script).arg(dir).arg(target).output().unwrap();
+        let said = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(said.trim(), "ok", "{}", String::from_utf8_lossy(&out.stderr));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_held_empty_folder_turned_into_a_junction_in_place_gets_nothing_written_through_it() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        convert_in_place(&out, &outside);
+        let _ = folder.publish(b"%PDF-1.7", [std::ffi::OsString::from("a.pdf")].into_iter());
+        let leaked: Vec<_> = std::fs::read_dir(&outside).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert!(leaked.is_empty(), "written outside the checked folder: {leaked:?}");
+    }
+
     #[test]
     fn doc_batch_dry_run_lists_outputs_without_writing() {
         let dir = tempfile::tempdir().unwrap();
