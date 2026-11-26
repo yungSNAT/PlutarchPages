@@ -320,9 +320,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   file held without delete sharing keeps the output folder non-empty (a folder with an entry cannot
   become a reparse point) whilst the temporary file, written through a handle that shares no
   delete or write and read back under one that shares no write, is renamed by path. An empty
-  output is refused, as only a file with data refuses a
-  symbolic link. Not covered: an empty file or folder made through a relative
-  symbolic link before it is deleted by handle, which stays if another process fills or holds it;
+  output is refused, as only a file with data refuses a symbolic link. Not covered: an empty
+  file or folder made through a relative symbolic link before it is deleted by handle, which stays if another process fills or holds it;
   a file another process puts at the temporary name, which can take the output name (that output
   then fails and the file is left alone); and network folders. This closes the link escapes the
   tests demonstrate; it is not a by-construction guarantee, which would need `OBJ_DONT_REPARSE` on

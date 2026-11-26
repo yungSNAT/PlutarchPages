@@ -60,11 +60,12 @@ administrator) can still have an empty file or folder appear for that moment any
 the batch itself may create, and it can stay if that process puts something in the folder or
 holds it open. The bytes are written through a handle that keeps the file from being moved or
 written by another process, and they are read back under a handle that still refuses other writers
-until the file is named, and any change made between the 2 handles fails that output; whilst the
-file is named the output folder briefly holds a second `.tmp` file, which keeps the folder from
-being turned into a link. The file
-is named by path: if another process puts its own file at the temporary name just before that, its
-file can take the output name, and that output then fails and the file is left alone. Clean-up
+until the file is named, and any change made between the 2 handles fails that output (so a process
+that may write to the output folder can make an output fail, for example by holding its temporary
+file open); whilst the file is named the output folder briefly holds a second `.tmp` file, which
+keeps the folder from being turned into a link. The file is named by path: if another process puts
+its own file at the temporary name just before that, its file can take the output name, and that
+output then fails and the file is left alone. Clean-up
 deletes only files and folders the batch made, each by its own handle. Network folders (UNC paths
 and drives mapped to a share) are not covered by these checks, nor is a process of the same user
 redefining a drive letter whilst the batch runs. These Windows checks are hardening: they close
