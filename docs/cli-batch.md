@@ -49,7 +49,7 @@ folder inside an input folder is excluded from discovery, including on reruns.
 The output folder cannot equal or contain a selected input folder. Each output is written
 through its folder as opened, one folder at a time from the top: a folder on the way that is a
 symbolic link or junction, even one made after the paths were checked, fails that file and
-nothing is written. On macOS every folder above the output folder must also be readable.
+nothing is written. On macOS the output folder and every folder above it must also be readable.
 
 The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not give this guarantee yet.
 

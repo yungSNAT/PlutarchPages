@@ -78,8 +78,8 @@ A name two rows share fails both. Names are compared ignoring case and Unicode
 normalisation, as Windows and macOS file systems compare them, so `Café` composed
 and decomposed clash. Each file is written atomically and never replaces an
 existing file: a taken name gets a number, `kept (2).pdf`, as in `batch`, and the output
-folder is opened as `batch` opens it (no links on the way; on macOS the folders above it must
-be readable).
+folder is opened as `batch` opens it (no links on the way; on macOS the output folder and the
+folders above it must be readable).
 
 Each file is staged as a temporary file in the output folder and renamed into
 place. If the process is killed or the power fails mid-row, that staging file

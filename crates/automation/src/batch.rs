@@ -308,7 +308,7 @@ pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
 #[cfg(any(unix, windows))]
 const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
-const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS every folder above the output folder must be readable: make them readable or choose another output folder; nothing was written";
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
 
 /// The output folder, held open from the file system root down.
 ///
@@ -325,8 +325,8 @@ impl Folder {
         use std::path::Component;
         // `O_PATH` (Linux, Android, FreeBSD 14) needs only search permission on the folders above,
         // as writing by path did. macOS has no `O_PATH`, and rustix offers it no `O_SEARCH`, so
-        // there each folder above must also be readable: a known limit, refused with a message
-        // saying what to do rather than written by path. A link met with `O_NOFOLLOW` fails with
+        // there the output folder and each folder above it must also be readable: a known limit,
+        // refused with a message saying what to do rather than written by path. A link met with `O_NOFOLLOW` fails with
         // ELOOP (EMLINK on FreeBSD, ENOTDIR with `O_PATH`).
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
