@@ -308,7 +308,7 @@ pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
 #[cfg(any(unix, windows))]
 const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
-const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
 
 /// The output folder, held open from the file system root down.
 ///
@@ -418,8 +418,11 @@ impl Folder {
 
 /// Windows: every folder from the drive root down is held open without `FILE_SHARE_DELETE`, so
 /// none can be renamed, moved or deleted (and so none swapped for a junction) until the file is
-/// named. Each is opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link.
-/// Elsewhere (wasm) the folder is only made.
+/// named. Each is opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link,
+/// including a volume mounted at a folder. Known limit: holding does not stop another process
+/// turning a held, empty folder into a junction in place (`FSCTL_SET_REPARSE_POINT`), and the file
+/// is still made and named by path, so such a conversion after opening is not caught; closing it
+/// needs a create and rename relative to the held handle. Elsewhere (wasm) the folder is only made.
 #[cfg(not(unix))]
 struct Folder {
     path: PathBuf,
