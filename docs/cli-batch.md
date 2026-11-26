@@ -60,8 +60,9 @@ administrator) can still have an empty file or folder appear for that moment any
 the batch itself may create, and it can stay if that process puts something in the folder or
 holds it open. The bytes are written through a handle that keeps the file from being moved or
 written by another process, and they are read back under a handle that still refuses other writers
-until the file is named; whilst the file is named the output folder briefly holds a second `.tmp`
-file, which keeps the folder from being turned into a link. The file
+until the file is named, and any change made between the 2 handles fails that output; whilst the
+file is named the output folder briefly holds a second `.tmp` file, which keeps the folder from
+being turned into a link. The file
 is named by path: if another process puts its own file at the temporary name just before that, its
 file can take the output name, and that output then fails and the file is left alone. Clean-up
 deletes only files and folders the batch made, each by its own handle. Network folders (UNC paths
@@ -71,7 +72,8 @@ the link escapes the tests demonstrate, and they are not a guarantee by construc
 need every relative open to refuse reparse points and a rename by handle). An empty output is
 refused on Windows, as an empty file could be turned into a link after it is checked. Once an
 output has its name, any process that may write to the output folder can still change,
-move or delete it, as with any file. On macOS and other systems without
+move, delete or replace it, as with any file, so the report can name a file the batch did not
+write. On macOS and other systems without
 `O_PATH` the output folder and every folder above it must also be readable, and a folder that has
 to be made needs a writable parent.
 

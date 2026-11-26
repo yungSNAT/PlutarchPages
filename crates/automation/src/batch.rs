@@ -624,8 +624,6 @@ impl Folder {
 
     /// Write `bytes` through a pin of `temp`, then name it.
     fn write_named(&self, temp: Made, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
-        use std::os::windows::fs::MetadataExt;
-        const REPARSE_POINT: u32 = 0x400;
         let mut file = self.pin(&temp, winx::file::AccessMode::GENERIC_READ | winx::file::AccessMode::GENERIC_WRITE)?;
         file.write_all(bytes).map_err(failed)?;
         file.sync_all().map_err(failed)?;
@@ -638,6 +636,16 @@ impl Folder {
             winx::file::ShareMode::FILE_SHARE_READ | winx::file::ShareMode::FILE_SHARE_DELETE,
         )
         .map_err(failed)?;
+        Self::holds_exactly(&mut held, bytes)?;
+        let named = self.take_name(temp, names);
+        drop(held);
+        named
+    }
+
+    /// `held`, at its start, is a plain file holding exactly `bytes`.
+    fn holds_exactly(held: &mut File, bytes: &[u8]) -> Result<()> {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
         // Whilst it was empty another process could turn it into a link, which the pin opened as
         // itself: the bytes went into the link and its name would read as the target. Once it
         // has data, no symbolic link can be set on it.
@@ -649,9 +657,7 @@ impl Folder {
         if written != bytes {
             return Err(failed("the file was changed whilst it was written; nothing was kept"));
         }
-        let named = self.take_name(temp, names);
-        drop(held);
-        named
+        Ok(())
     }
 
     /// Give `temp` the first free name, then check by its handle that the name holds it.
@@ -1130,6 +1136,22 @@ public static class InPlaceJunction {
         assert!(folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).is_err());
         assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
         drop(writer);
+    }
+
+    /// A file changed between the write and the second handle (written over, cut short or grown)
+    /// is refused before it is named.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_whose_bytes_changed_after_the_write_is_refused() {
+        let (_dir, base, _) = sandbox();
+        let path = base.join("t");
+        for other in [&b"theirs"[..], b"our", b"ours and more"] {
+            std::fs::write(&path, other).unwrap();
+            let error = Folder::holds_exactly(&mut File::open(&path).unwrap(), b"ours").unwrap_err().to_string();
+            assert!(error.contains("changed"), "{error}");
+        }
+        std::fs::write(&path, b"ours").unwrap();
+        Folder::holds_exactly(&mut File::open(&path).unwrap(), b"ours").unwrap();
     }
 
     /// An empty file can be turned into a link at any time, so no empty output is made.
