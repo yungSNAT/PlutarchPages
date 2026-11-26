@@ -72,6 +72,9 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   `cargo xtask fork-check` fails when the revision `Cargo.toml` names isn't the vendored base. The
   detached fuzz workspaces of the facades repeat the patch, and the PRC fuzz target moved to
   `crates/prc-render/fuzz` when the PRC reader became craft-prc.
+- `pdfcraft-cli audit --before <original>` (and `--before-password`) audits the original as
+  well and adds `leaks` and `before` to the JSON line and `leaks: N before -> M after` to stderr
+  (`apps/pdfcraft-cli/src/check.rs`, `options.rs`); without `--before` the output is upstream's.
 - Search & Redact has 2 more patterns, `tfn` (Australian tax file numbers) and `abn` (Australian
   Business Numbers), matched by format alone, in `crates/redact/src/patterns.rs`; tests in
   `crates/redact/src/patterns/tests/fork_tests.rs`. Keep both variants when a merge changes `Pattern`.
