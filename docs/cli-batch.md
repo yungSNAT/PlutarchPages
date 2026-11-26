@@ -65,7 +65,10 @@ is named by path: if another process puts its own file at the temporary name jus
 file can take the output name, and that output then fails and the file is left alone. Clean-up
 deletes only files and folders the batch made, each by its own handle. Network folders (UNC paths
 and drives mapped to a share) are not covered by these checks, nor is a process of the same user
-redefining a drive letter whilst the batch runs. On macOS and other systems without
+redefining a drive letter whilst the batch runs. These Windows checks are hardening: they close
+the link escapes the tests demonstrate, and they are not a guarantee by construction (that would
+need every relative open to refuse reparse points and a rename by handle). An empty output is
+refused on Windows, as an empty file could be turned into a link after it is checked. On macOS and other systems without
 `O_PATH` the output folder and every folder above it must also be readable, and a folder that has
 to be made needs a writable parent.
 

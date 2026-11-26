@@ -609,6 +609,10 @@ impl Folder {
 
     /// Write `bytes` to a temporary file in the folder, then give it the first free name.
     fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        // An empty file can be turned into a link at any time; one with data cannot.
+        if bytes.is_empty() {
+            return Err(failed("the output is empty, and an empty file could be turned into a link; nothing was written"));
+        }
         // The anchor: whilst it is held the output folder has an entry nobody else can remove.
         let anchor = self.make_temporary()?;
         let anchor_pin = self.pin(&anchor, winx::file::AccessMode::GENERIC_READ)?;
@@ -1093,6 +1097,16 @@ public static class InPlaceJunction {
         assert!(error.contains("link"), "{error}");
         assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
         assert_eq!(std::fs::read(outside.join("x")).unwrap(), b"victim");
+    }
+
+    /// An empty file can be turned into a link at any time, so no empty output is made.
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_output_is_refused_and_nothing_is_made() {
+        let (_dir, base, _) = sandbox();
+        let error = publish(&base.join("out/a.pdf"), b"").unwrap_err().to_string();
+        assert!(error.contains("empty"), "{error}");
+        assert_eq!(std::fs::read_dir(base.join("out")).unwrap().count(), 0, "no file is left in the output folder");
     }
 
     /// A held folder just made is turned in place into a relative symbolic link to `..\outside`;
