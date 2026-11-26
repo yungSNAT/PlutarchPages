@@ -321,11 +321,13 @@ impl Folder {
         use rustix::fs::{Mode, OFlags, mkdirat, openat};
         use rustix::io::Errno;
         use std::path::Component;
-        // `O_PATH` needs no read permission on the folders above; elsewhere they must be readable.
-        // A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on FreeBSD, ENOTDIR with `O_PATH`).
-        #[cfg(any(target_os = "linux", target_os = "android"))]
+        // `O_PATH` (Linux, Android, FreeBSD 14) needs only search permission on the folders above,
+        // as writing by path did; elsewhere (macOS) each must also be readable, and one that isn't
+        // fails with an error saying so. A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on
+        // FreeBSD, ENOTDIR with `O_PATH`).
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
         let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let refused =
             |e: Errno| if matches!(e, Errno::LOOP | Errno::NOTDIR | Errno::MLINK) { failed(LINKED_FOLDER) } else { failed(std::io::Error::from(e)) };
@@ -560,6 +562,26 @@ mod tests {
         assert_eq!(folder.publish(b"%PDF-1.7", [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap(), "a.pdf");
         assert_eq!(std::fs::read(base.join("moved/a.pdf")).unwrap(), b"%PDF-1.7");
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[test]
+    fn publish_needs_only_search_permission_above_the_output_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_dir, base, _) = sandbox();
+        let (locked, out) = (base.join("locked"), base.join("locked/out"));
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o111)).unwrap();
+        let result = if std::fs::read_dir(&locked).is_ok() {
+            eprintln!("skipping: this user reads the folder anyway (root)");
+            None
+        } else {
+            Some(publish(&out.join("a.pdf"), b"%PDF-1.7"))
+        };
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if let Some(result) = result {
+            assert_eq!(result.unwrap(), out.join("a.pdf"));
+        }
     }
 
     #[cfg(windows)]
