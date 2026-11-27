@@ -145,3 +145,6 @@ pub(crate) fn clear(_: &JsValue, args: &[JsValue], ctx: &mut Context) -> JsResul
     }
     Ok(JsValue::undefined())
 }
+
+#[cfg(test)]
+mod fork_tests;

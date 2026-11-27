@@ -7,6 +7,9 @@ use super::super::{XfaDoc, XfaEvent, XfaKind, XfaNode, XfaOutcome, run_xfa};
 use super::{XfaProp, XfaProps};
 use crate::Limits;
 
+#[path = "props_tests/fork_tests.rs"]
+mod fork_tests;
+
 fn p(tag: &str, attrs: &[(&str, &str)], children: Vec<XfaProp>) -> XfaProp {
     XfaProp { tag: tag.into(), attrs: attrs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), text: None, children }
 }

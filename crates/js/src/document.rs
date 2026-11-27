@@ -579,3 +579,6 @@ pub(crate) fn spawn_page_from_template(_: &JsValue, args: &[JsValue], ctx: &mut 
     host(ctx)?.borrow_mut().request(request);
     Ok(JsValue::null())
 }
+
+#[cfg(test)]
+mod fork_tests;

@@ -210,3 +210,6 @@ mod text_boundary_tests {
         assert!(response(&JsValue::undefined(), &[input], &mut ctx).unwrap().is_null());
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

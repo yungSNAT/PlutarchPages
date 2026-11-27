@@ -440,3 +440,6 @@ impl Interp<'_> {
         Ok(out)
     }
 }
+
+#[cfg(test)]
+mod fork_tests;
