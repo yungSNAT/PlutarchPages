@@ -19,4 +19,5 @@ fuzz_target!(|data: &[u8]| {
     };
     let _a2b = verify(&doc, Level::A2b);
     let _a3b = verify(&doc, Level::A3b);
+    let _a1b = verify(&doc, Level::A1b);
 });

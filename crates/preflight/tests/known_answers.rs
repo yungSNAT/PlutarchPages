@@ -634,3 +634,174 @@ fn converting_to_part_1_changes_nothing() {
     assert_eq!(report.remaining, before);
     assert!(!report.remaining.is_empty());
 }
+
+/// `doc`'s bytes with `from` (at the start of the file) written as `to`, of the same length so
+/// every offset still holds.
+fn rewritten(doc: &Document, from: &[u8], to: &[u8]) -> Document {
+    assert_eq!(from.len(), to.len());
+    let mut bytes = doc.bytes().to_vec();
+    let at = bytes.windows(from.len()).position(|w| w == from).expect("the bytes to rewrite");
+    bytes[at..at + to.len()].copy_from_slice(to);
+    Document::open(std::sync::Arc::new(bytes)).unwrap()
+}
+
+/// The issues `verify` reports for `doc` at 1b under `clause`, as their messages.
+fn messages(doc: &Document, clause: &str) -> Vec<String> {
+    verify(doc, Level::A1b).into_iter().filter(|i| i.clause == clause).map(|i| i.message).collect()
+}
+
+#[test]
+fn part_1_header_and_trailer() {
+    // 6.1.2: any %PDF-d.d version at the start, and a binary comment after it.
+    let ok = a1b(PAGE, "", &[]);
+    let version_2 = rewritten(&ok, b"%PDF-1.7", b"%PDF-2.0");
+    assert!(verify(&version_2, Level::A1b).is_empty(), "{:#?}", verify(&version_2, Level::A1b));
+    assert_reported(&version_2, Level::A2b, "6.1.2");
+    assert_reported(&rewritten(&ok, b"%PDF-1.7", b"%PDF-1.x"), Level::A1b, "6.1.2");
+    assert_reported(&rewritten(&ok, b"%\xE2\xE3\xCF\xD3", b"%abcd"), Level::A1b, "6.1.2");
+    // 6.1.3: an identifier (the build helper adds none when the trailer extra names /ID), and no
+    // encryption.
+    let profile = hex_stream("/N 3", &icc::srgb());
+    let packet = xmp(1, "B", None);
+    let no_id = page_document(PAGE, Some(&packet), &output_intent(5), &[&profile], "/IDX 1");
+    assert_reported(&no_id, Level::A1b, "6.1.3");
+    let mut encrypted = a1b(PAGE, "", &[]);
+    let params = NewEncryption {
+        algorithm: Algorithm::Aes256,
+        user_password: "",
+        owner_password: "owner",
+        permissions: -4,
+        encrypt_metadata: true,
+        seed: [7; 32],
+    };
+    encrypted.set_encryption(&params).unwrap();
+    assert_reported(&encrypted, Level::A1b, "6.1.3");
+}
+
+#[test]
+fn part_1_metadata_stream_and_identification() {
+    let profile = hex_stream("/N 3", &icc::srgb());
+    let packet = xmp(1, "B", None);
+    // 6.7.2: the stream is marked as XML metadata.
+    let untyped = format!("<< /Length {} >>\nstream\n{packet}\nendstream", packet.len());
+    let catalog = format!("{} /Metadata 6 0 R", output_intent(5));
+    assert_reported(&page_document(PAGE, None, &catalog, &[&profile, &untyped], ""), Level::A1b, "6.7.2");
+    // 6.7.11: conformance A or B, written exactly.
+    let level_a = page_document(PAGE, Some(&xmp(1, "A", None)), &output_intent(5), &[&profile], "");
+    assert!(verify(&level_a, Level::A1b).is_empty(), "{:#?}", verify(&level_a, Level::A1b));
+    assert_reported(&page_document(PAGE, Some(&xmp(1, "b", None)), &output_intent(5), &[&profile], ""), Level::A1b, "6.7.11");
+    // 6.7.3: the title matches the information dictionary's.
+    let titled = |info: &str| {
+        let info = format!("<< /Title ({info}) >>");
+        page_document(PAGE, Some(&xmp(1, "B", Some("A"))), &output_intent(5), &[&profile, &info], "/Info 6 0 R")
+    };
+    assert!(verify(&titled("A"), Level::A1b).is_empty(), "{:#?}", verify(&titled("A"), Level::A1b));
+    assert_reported(&titled("B"), Level::A1b, "6.7.3");
+    // 6.7.9: a predefined property with the wrong value type, under the part 1 clause.
+    let ns = "xmlns:dc=\"http://purl.org/dc/elements/1.1/\"";
+    let dated = packet.replacen(ns, &format!("{ns} xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\""), 1).replacen(
+        "<pdfaid:part>",
+        "<xmp:CreateDate>not a date</xmp:CreateDate>\n   <pdfaid:part>",
+        1,
+    );
+    let doc = page_document(PAGE, Some(&dated), &output_intent(5), &[&profile], "");
+    assert_reported(&doc, Level::A1b, "6.7.9");
+    assert_not_reported(&doc, Level::A1b, "6.6.2.3.1");
+}
+
+#[test]
+fn part_1_actions_in_additional_actions() {
+    // 6.6.1: an action written into a page's or an annotation's /AA is checked like any other.
+    let page_aa = |action: &str| format!("<< /Type /Page /Parent 2 0 R /AA << /O << {action} >> >> >>");
+    a1b_case("6.6.1", (&page_aa("/S /GoTo /D [4 0 R /Fit]"), "", &[]), (&page_aa("/S /JavaScript /JS (app.alert(1))"), "", &[]));
+    let link = |action: &str| format!("<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /F 4 /AA << /E << {action} >> >> >>");
+    a1b_case("6.6.1", (ANNOTATED, "", &[&link("/S /URI /URI (https://example.org)")]), (ANNOTATED, "", &[&link("/S /Launch /F (calc.exe)")]));
+    // The JavaScript name tree, and a field that is no widget with additional actions (6.6.2).
+    a1b_case("6.6.1", (PAGE, "", &[]), (PAGE, "/Names << /JavaScript << /Names [] >> >>", &[]));
+    let field = |extra: &str| format!("<< /FT /Tx /T (f) {extra} >>");
+    a1b_case("6.6.2", (PAGE, "/AcroForm << /Fields [6 0 R] >>", &[&field("")]), (PAGE, "/AcroForm << /Fields [6 0 R] >>", &[&field("/AA << >>")]));
+}
+
+#[test]
+fn part_1_colour_rules() {
+    // 6.2.3.3: a Default colour space covers its device space when there is no output intent.
+    let packet = xmp(1, "B", None);
+    let page = |spaces: &str| format!("<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Resources << /ColorSpace << {spaces} >> >> >>");
+    let red = content("1 0 0 rg 0 0 1 1 re f");
+    let covered = page("/DefaultRGB [/CalRGB << /WhitePoint [0.9505 1 1.089] >>]");
+    assert_not_reported(&page_document(&covered, Some(&packet), "", &["<< >>", &red], ""), Level::A1b, "6.2.3.3");
+    let gray = content("1 0 0 rg 0.5 g 0 0 1 1 re f");
+    assert_reported(&page_document(&covered, Some(&packet), "", &["<< >>", &gray], ""), Level::A1b, "6.2.3.3");
+    assert_reported(&page_document(&page(""), Some(&packet), "", &["<< >>", &red], ""), Level::A1b, "6.2.3.3");
+    // 6.2.3.4 is a part 2 rule only: 2 Separation spaces of one name may differ.
+    let tint = |c1: &str| format!("<< /FunctionType 2 /Domain [0 1] /C0 [1 1 1] /C1 [{c1}] /N 1 >>");
+    let spots = page("/CS1 [/Separation /Spot /DeviceRGB 7 0 R] /CS2 [/Separation /Spot /DeviceRGB 8 0 R]");
+    let doc = a1b(&spots, "", &[&content(""), &tint("1 0 0"), &tint("0 1 0")]);
+    assert!(verify(&doc, Level::A1b).is_empty(), "{:#?}", verify(&doc, Level::A1b));
+    // 6.2.2: the profile is for a printer or a display, in grey, RGB or CMYK.
+    let mut scanner = icc::srgb();
+    scanner[12..16].copy_from_slice(b"scnr");
+    assert_reported(&a1b_with(&hex_stream("/N 3", &scanner), PAGE, "", &[]), Level::A1b, "6.2.2");
+    let mut lab = icc::srgb();
+    lab[16..20].copy_from_slice(b"Lab ");
+    assert_reported(&a1b_with(&hex_stream("/N 3", &lab), PAGE, "", &[]), Level::A1b, "6.2.2");
+}
+
+#[test]
+fn part_1_graphics_states_and_xobjects() {
+    let gs = |state: &str| drawing(&format!("/ExtGState << /G << {state} >> >>"));
+    let empty = content("");
+    // 6.4: an alpha of 1 within a real's precision is 1; a blend mode must be a name.
+    a1b_case("6.4", (&gs("/CA 1.0000001 /ca 0.9999999"), "", &[&empty]), (&gs("/CA 0.99"), "", &[&empty]));
+    let odd = a1b(&gs("/BM 3"), "", &[&empty]);
+    assert_eq!(messages(&odd, "6.4"), ["A graphics state has a blend mode that isn't a name"]);
+    let repeated = a1b(&gs("/BM [/Multiply /Multiply /Screen]"), "", &[&empty]);
+    assert_eq!(messages(&repeated, "6.4").len(), 2, "{:#?}", messages(&repeated, "6.4"));
+    a1b_case("6.4", (PAGE, "", &[&form("")]), (PAGE, "", &[&form("/Group << /S /Transparency >>")]));
+    // 6.2.8 and 6.2.9: no transfer functions, standard rendering intents.
+    a1b_case("6.2.8", (&gs("/TR2 /Default"), "", &[&empty]), (&gs("/TR /Identity"), "", &[&empty]));
+    a1b_case("6.2.8", (&gs("/TR2 /Default"), "", &[&empty]), (&gs("/TR2 /Identity"), "", &[&empty]));
+    a1b_case("6.2.9", (&gs("/RI /Perceptual"), "", &[&empty]), (&gs("/RI /Vivid"), "", &[&empty]));
+    // 6.2.4: no Alternates on an image, no OPI on an image or a form.
+    let image =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\0\nendstream";
+    a1b_case("6.2.4", (PAGE, "", &[image]), (PAGE, "", &[&image.replace("/Length", "/Alternates [] /Length")]));
+    a1b_case("6.2.4", (PAGE, "", &[&form("")]), (PAGE, "", &[&form("/OPI << >>")]));
+    // 6.1.12: integers within 32 bits, names up to 127 bytes.
+    a1b_case("6.1.12", (PAGE, "", &["<< /K 2147483647 >>"]), (PAGE, "", &["<< /K 3000000000 >>"]));
+    let name = |n: usize| format!("<< /K /{} >>", "a".repeat(n));
+    a1b_case("6.1.12", (PAGE, "", &[&name(127)]), (PAGE, "", &[&name(128)]));
+}
+
+#[test]
+fn part_1_annotation_colour_and_appearances() {
+    // 6.5.3: a colour needs an RGB output intent, which a CMYK one is not.
+    let square = "<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /C [1 0 0] >>";
+    let cmyk = a1b_with(&hex_stream("/N 4", &cmyk_profile_header()), ANNOTATED, "", &[square]);
+    assert_reported(&cmyk, Level::A1b, "6.5.3");
+    // A field other than a button has a stream as its normal appearance.
+    let ap = form("");
+    let text = |n: &str| format!("<< /Type /Annot /Subtype /Widget /FT /Tx /T (f) /Rect [0 0 10 10] /F 4 /AP << /N {n} >> >>");
+    a1b_case("6.5.3", (ANNOTATED, "", &[&text("7 0 R"), &ap]), (ANNOTATED, "", &[&text("<< /On 7 0 R >>"), &ap]));
+    // An annotation with no type is reported as such.
+    let untyped = a1b(ANNOTATED, "", &["<< /Type /Annot /Rect [0 0 10 10] /F 4 >>"]);
+    assert_eq!(messages(&untyped, "6.5.2"), ["An annotation has no type (Subtype)"]);
+}
+
+#[test]
+fn part_1_a_default_space_covers_only_pages_that_define_it() {
+    // 2 pages drawing DeviceRGB with no output intent: covered when both define DefaultRGB, not
+    // when only the first does.
+    let packet = xmp(1, "B", None);
+    let metadata = xmp_object(&packet);
+    let page = |spaces: &str| format!("<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Resources << /ColorSpace << {spaces} >> >> >>");
+    let default = "/DefaultRGB [/CalRGB << /WhitePoint [0.9505 1 1.089] >>]";
+    let red = content("1 0 0 rg 0 0 1 1 re f");
+    let two = |second: &str| {
+        let catalog = "<< /Type /Catalog /Pages 2 0 R /Metadata 3 0 R >>";
+        let pages = "<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 /MediaBox [0 0 200 200] >>";
+        build(&[catalog, pages, &metadata, &page(default), &page(second), &red], "")
+    };
+    assert_not_reported(&two(default), Level::A1b, "6.2.3.3");
+    assert_reported(&two(""), Level::A1b, "6.2.3.3");
+}

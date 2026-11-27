@@ -15,7 +15,8 @@
 //!
 //! `data/pdfa-1b-agreement.tsv` records, file by file, how far we agreed when it was last
 //! measured (`pass`, `verdict` or `clause`). The test fails when the corpus is missing or
-//! incomplete, and when any recorded file agrees less than it did, so a gain on some files cannot
+//! incomplete, when a file's SHA-256 differs from the one recorded (another revision of the corpus),
+//! when a file cannot be opened, and when any recorded file agrees less than it did, so a gain on some files cannot
 //! hide a loss on others. A file that agrees more than its record is printed as a `RECORD` line,
 //! for the change that made it so to record; the figure the documentation quotes is the one this
 //! file holds.
@@ -25,8 +26,8 @@ use std::path::{Path, PathBuf};
 use pdfcraft_cos::Document;
 use pdfcraft_preflight::{Level, verify};
 
-/// veraPDF's answers, one file a line: path under `PDF_A-1b`, `PASS` or `FAIL`, and the rules
-/// (`clause-test`) it found broken, comma-separated.
+/// veraPDF's answers, one file a line: path under `PDF_A-1b`, `PASS` or `FAIL`, the rules
+/// (`clause-test`) it found broken, comma-separated, and the file's SHA-256.
 const ORACLE: &str = include_str!("data/verapdf-1.30.4-pdfa-1b.tsv");
 
 /// How far each file agreed when last measured: `pass`, `verdict` or `clause`, a tab and its path.
@@ -61,6 +62,7 @@ struct Expected<'a> {
     path: &'a str,
     pass: bool,
     clauses: Vec<&'a str>,
+    sha256: &'a str,
 }
 
 fn expected() -> Vec<Expected<'static>> {
@@ -73,7 +75,8 @@ fn expected() -> Vec<Expected<'static>> {
             let pass = cols.next() == Some("PASS");
             // A rule id is its clause, a dash and the test's number.
             let clauses = cols.next().unwrap_or_default().split(',').filter_map(|r| r.rsplit_once('-').map(|(c, _)| c)).collect();
-            Expected { path, pass, clauses }
+            let sha256 = cols.next().unwrap_or_default();
+            Expected { path, pass, clauses, sha256 }
         })
         .collect()
 }
@@ -90,14 +93,22 @@ fn agreement_with_verapdf_on_its_pdfa_1b_files() {
     let files = expected();
     assert_eq!(files.len(), 568, "the oracle lists every PDF_A-1b file of the corpus");
     let record = recorded();
-    let mut worse = Vec::new();
+    let (mut worse, mut changed, mut unopened) = (Vec::new(), Vec::new(), Vec::new());
     let (mut pass, mut on_pass, mut fail, mut on_fail, mut on_clause) = (0, 0, 0, 0, 0);
     let mut missed: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for f in &files {
         let bytes = std::fs::read(dir.join(f.path)).unwrap_or_else(|e| panic!("{}: {e}", f.path));
-        // A file we cannot open is one we would refuse: no issue list, so it counts as a fail.
-        let issues = Document::open(std::sync::Arc::new(bytes)).map(|doc| verify(&doc, Level::A1b));
-        let ours_fail = issues.as_ref().map_or(true, |i| !i.is_empty());
+        if sha256_hex(&bytes) != f.sha256 {
+            changed.push(f.path);
+            continue;
+        }
+        // A file we cannot open gets no verdict from us, so it agrees on nothing.
+        let Ok(doc) = Document::open(std::sync::Arc::new(bytes)) else {
+            unopened.push(f.path);
+            continue;
+        };
+        let issues = verify(&doc, Level::A1b);
+        let ours_fail = !issues.is_empty();
         let agreement = if f.pass {
             pass += 1;
             on_pass += usize::from(!ours_fail);
@@ -105,7 +116,7 @@ fn agreement_with_verapdf_on_its_pdfa_1b_files() {
         } else {
             fail += 1;
             on_fail += usize::from(ours_fail);
-            let named = issues.as_ref().is_ok_and(|i| i.iter().any(|i| f.clauses.contains(&i.clause)));
+            let named = issues.iter().any(|i| f.clauses.contains(&i.clause));
             on_clause += usize::from(named);
             if !named {
                 for c in &f.clauses {
@@ -133,5 +144,12 @@ fn agreement_with_verapdf_on_its_pdfa_1b_files() {
     println!("veraPDF passes {pass}: we agree on {on_pass}");
     println!("veraPDF fails {fail}: we agree on the verdict for {on_fail} and on a clause for {on_clause}");
     println!("clauses veraPDF found broken in a file where we named none of its clauses: {missed:?}");
+    assert!(changed.is_empty(), "files whose SHA-256 differs from the oracle's (not corpus 37772859): {changed:#?}");
+    assert!(unopened.is_empty(), "files that could not be opened: {unopened:#?}");
     assert!(worse.is_empty(), "files that agree less than data/pdfa-1b-agreement.tsv records: {worse:#?}");
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes).iter().map(|b| format!("{b:02x}")).collect()
 }

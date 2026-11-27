@@ -198,3 +198,9 @@ crate = "craft-prc"
 path = "src/acof/table.rs"
 licence = "MIT"
 documents = ["licenses/prc-rs-LICENSE.txt"]
+
+[[document]]
+source = "crates/preflight/tests/data/LICENSE-CC-BY-4.0.txt"
+licences = ["CC-BY-4.0"]
+destination = "crates/preflight/tests/data/LICENSE-CC-BY-4.0.txt"
+sha256 = "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"

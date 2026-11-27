@@ -251,7 +251,12 @@ pub const WORDINGS: &[&str] = &[
     "Reference XObjects aren't allowed",
     "A graphics state has a soft mask (SMask)",
     "A graphics state has the blend mode {}: only Normal and Compatible are allowed",
+    "A graphics state has a blend mode that isn't a name",
     "A graphics state has a constant alpha (CA or ca) other than 1",
+    "The file doesn't start with a %PDF-n.n header line",
+    "A form XObject has OPI information",
+    "The metadata stream isn't marked as XML metadata (Type Metadata, Subtype XML)",
+    "An annotation has no type (Subtype)",
     "An XObject has a soft mask (SMask)",
     "A transparency group is used",
     "A {} annotation has a constant alpha (CA) other than 1",
@@ -767,7 +772,12 @@ fn identification(doc: &Document, level: Level) -> Identification {
     let conf = xmp::identifier(&x, xmp::PDFA_ID, "conformance");
     Identification {
         missing: false,
-        unidentified: part.as_deref() != Some(&level.part().to_string()) || conf.as_deref().map(str::to_uppercase).as_deref() != Some("B"),
+        // Part 1 names its conformance exactly, A or B (a level A file is also a level B one).
+        unidentified: part.as_deref() != Some(&level.part().to_string())
+            || match level {
+                Level::A1b => !matches!(conf.as_deref(), Some("A" | "B")),
+                _ => conf.as_deref().map(str::to_uppercase).as_deref() != Some("B"),
+            },
         title_differs: info(doc, "Title").is_some_and(|title| xmp::value(&x, "dc:title").is_some_and(|t| t != title)),
     }
 }

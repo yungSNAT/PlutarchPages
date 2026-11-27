@@ -30,7 +30,8 @@ impl Automation {
 
     fn pdfa_level(&self, a: &Args) -> Result<pdfcraft_engine::pdfa::Level> {
         let l = a.opt_str("level")?.unwrap_or("2b");
-        pdfcraft_engine::pdfa::Level::from_id(l).ok_or_else(|| ToolError::InvalidArgs(format!("unknown PDF/A level {l:?} (1b, 2b or 3b)")))
+        pdfcraft_engine::pdfa::Level::from_id(l)
+            .ok_or_else(|| ToolError::InvalidArgs(format!("unknown PDF/A level {l:?} (verify takes 1b, 2b or 3b; Save as PDF/A takes 2b or 3b)")))
     }
 
     pub(crate) fn pdfa_verify(&self, a: &Args) -> Result<Value> {

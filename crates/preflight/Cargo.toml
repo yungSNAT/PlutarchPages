@@ -20,3 +20,4 @@ pdfcraft-model = { workspace = true }
 
 [dev-dependencies]
 flate2 = { workspace = true }
+sha2 = "0.11"
