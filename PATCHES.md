@@ -521,7 +521,7 @@ keeps them in `crates/audit/src/tests/fork_tests.rs`, and an inline `mod tests {
 `#[path = "<file stem>/fork_tests.rs"]`. Add new fork tests there, not among upstream's, and point
 `parity/` evidence at them.
 
-One upstream test is changed in place without changing what it asserts:
-`document_worker_capacity_is_bounded_and_reusable` in `crates/js/src/session.rs` waits for the
-freed worker slot in a loop whose every line runs on each pass, so Codecov's project figure does
-not move with thread timing. Where a merge edits that test, keep the fork's wait.
+Upstream's `document_worker_capacity_is_bounded_and_reusable` in `crates/js/src/session.rs` is
+changed in place without changing what it asserts: it waits for the freed worker slot with no
+branch of its own, so every line runs and Codecov's project figure does not move with thread
+timing. Where a merge edits that test, keep the fork's wait.

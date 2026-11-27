@@ -1083,17 +1083,13 @@ mod tests {
         let mut extra = ScriptSession::default();
         assert!(extra.start(job("1")).unwrap_err().contains("worker limit"));
         drop(workers.pop());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        // The worker thread releases its slot as it exits, so wait for that; every line runs on
-        // every pass, however soon the thread exits.
-        loop {
+        // The worker thread releases its slot as it exits: wait up to about 2 s for that. The wait
+        // has no branch of its own, so every line runs however soon the thread exits.
+        let freed = (0..400).any(|_| {
             std::thread::sleep(std::time::Duration::from_millis(5));
-            let freed = live_workers().load(std::sync::atomic::Ordering::SeqCst) < MAX_DOCUMENT_WORKERS;
-            assert!(freed || std::time::Instant::now() < deadline, "the dropped worker kept its slot");
-            if freed {
-                break;
-            }
-        }
+            live_workers().load(std::sync::atomic::Ordering::SeqCst) < MAX_DOCUMENT_WORKERS
+        });
+        assert!(freed, "the dropped worker kept its slot");
         assert_eq!(extra.run(job("digit('2')"), &[]).result.as_deref(), Some("2"));
         for worker in &mut workers {
             assert_eq!(worker.run(job("digit('3')"), &[]).result.as_deref(), Some("13"));
