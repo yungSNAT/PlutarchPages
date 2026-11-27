@@ -2375,3 +2375,10 @@ fn a_form_cut_short_on_one_page_is_read_again_on_the_next() {
     let said: Vec<String> = verify(&build(&objs, ""), Level::A2b).into_iter().filter(|i| i.clause == "6.2.10").map(|i| i.message).collect();
     assert_eq!(said, ["Page 2 has transparency but no device-independent blending colour space or PDF/A output intent"]);
 }
+
+/// Each level names the ISO 19005 part its clause numbers come from.
+#[test]
+fn levels_name_their_standard() {
+    let named: Vec<&str> = [Level::A1b, Level::A2b, Level::A3b].into_iter().map(Level::standard).collect();
+    assert_eq!(named, ["ISO 19005-1:2005", "ISO 19005-2:2011", "ISO 19005-3:2012"]);
+}

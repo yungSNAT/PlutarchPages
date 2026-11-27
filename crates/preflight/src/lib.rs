@@ -497,20 +497,25 @@ fn type3_procs_within(
     }
 }
 
+/// The content streams of the page `page`.
+fn page_contents(doc: &Document, page: &Dict) -> Vec<ObjRef> {
+    let contents = match page.get(b"Contents") {
+        Some(Object::Ref(r)) => match &*doc.get(*r) {
+            Object::Array(a) => a.clone(),
+            _ => vec![Object::Ref(*r)],
+        },
+        Some(Object::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    contents.iter().filter_map(Object::as_ref).collect()
+}
+
 /// The content streams that only a reference identifies, their dictionaries saying nothing: the
 /// pages' `/Contents` and Type 3 glyph procedures.
 fn referenced_content(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> std::collections::HashSet<ObjRef> {
     let mut out = std::collections::HashSet::new();
     for p in pdfcraft_model::pages(doc) {
-        let contents = match p.dict.get(b"Contents") {
-            Some(Object::Ref(r)) => match &*doc.get(*r) {
-                Object::Array(a) => a.clone(),
-                _ => vec![Object::Ref(*r)],
-            },
-            Some(Object::Array(a)) => a.clone(),
-            _ => Vec::new(),
-        };
-        out.extend(contents.iter().filter_map(Object::as_ref));
+        out.extend(page_contents(doc, &p.dict));
     }
     let mut read = std::collections::HashSet::new();
     for (_, o) in objs {
@@ -648,8 +653,8 @@ fn uses_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)])
         let Some(d) = dict_of(o) else { continue };
         // A resource dictionary's /ColorSpace, whether it is this object or the page's inline
         // /Resources.
-        let resources = d.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned());
-        for holder in [Some(d), resources.as_ref()].into_iter().flatten() {
+        let resources = d.get(b"Resources").map(|r| doc.resolve(r));
+        for holder in [Some(d), resources.as_deref().and_then(Object::as_dict)].into_iter().flatten() {
             if let Some(spaces) = holder.get(b"ColorSpace").map(|c| doc.resolve(c))
                 && let Some(spaces) = spaces.as_dict()
             {
@@ -1276,9 +1281,8 @@ fn check_embedded_file(level: Level, dict: &Dict, issue: &mut impl FnMut(&'stati
         Level::A3b if dict.get(b"AFRelationship").is_none() => {
             issue("6.8", "An embedded file has no AFRelationship", None, None, true);
         }
-        Level::A3b => {}
         // `part1` reports embedded files under its own clause; this walk is for parts 2 and 3.
-        Level::A1b => {}
+        Level::A3b | Level::A1b => {}
     }
 }
 

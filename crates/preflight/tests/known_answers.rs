@@ -805,3 +805,207 @@ fn part_1_a_default_space_covers_only_pages_that_define_it() {
     assert_not_reported(&two(default), Level::A1b, "6.2.3.3");
     assert_reported(&two(""), Level::A1b, "6.2.3.3");
 }
+
+/// A part 1 file with no output intent: the page `page` and `more` as objects 6 onwards (object 5
+/// is empty).
+fn a1b_no_intent(page: &str, more: &[&str]) -> Document {
+    let mut objs = vec!["<< >>"];
+    objs.extend_from_slice(more);
+    page_document(page, Some(&xmp(1, "B", None)), "", &objs, "")
+}
+
+/// A form XObject drawing `ops`, with `dict` as its other entries.
+fn drawing_form(dict: &str, ops: &str) -> String {
+    format!("<< /Type /XObject /Subtype /Form /BBox [0 0 1 1] {dict} /Length {} >>\nstream\n{ops}\nendstream", ops.len())
+}
+
+/// A colour space that is no device space.
+const CAL_RGB: &str = "[/CalRGB << /WhitePoint [0.9505 1 1.089] >>]";
+
+/// Red, drawn.
+const RED: &str = "1 0 0 rg 0 0 1 1 re f";
+
+/// A page drawing object 6 with `spaces` in its `/ColorSpace` and `more` in its resources.
+fn coloured_page(spaces: &str, more: &str) -> String {
+    format!("<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Resources << /ColorSpace << {spaces} >> {more} >> >>")
+}
+
+#[test]
+fn part_1_a_default_space_covers_only_the_content_drawn_under_it() {
+    // 6.2.3.3 with no output intent: a form draws under its own resources, not the page's.
+    let default = format!("/DefaultRGB {CAL_RGB}");
+    let page = coloured_page(&default, "/XObject << /Fm 7 0 R >>");
+    let draw = content("/Fm Do");
+    let own = drawing_form(&format!("/Resources << /ColorSpace << {default} >> >>"), RED);
+    assert_not_reported(&a1b_no_intent(&page, &[&draw, &own]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&page, &[&draw, &drawing_form("/Resources << >>", RED)]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&page, &[&draw, &drawing_form("", RED)]), Level::A1b, "6.2.3.3");
+    // So does an annotation's appearance stream.
+    let annotated = format!("<< /Type /Page /Parent 2 0 R /Annots [6 0 R] /Resources << /ColorSpace << {default} >> >> >>");
+    let square = "<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /AP << /N 7 0 R >> >>";
+    assert_not_reported(&a1b_no_intent(&annotated, &[square, &own]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&annotated, &[square, &drawing_form("/Resources << >>", RED)]), Level::A1b, "6.2.3.3");
+    // And a Type 3 font's glyphs, under the font's resources.
+    let text = content("BT /F1 1 Tf (a) Tj ET");
+    let type3 = |resources: &str| {
+        format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1 1] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 8 0 R >> /Encoding << /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] {resources} >>"
+        )
+    };
+    let glyph = content(RED);
+    let font_page = coloured_page("", "/Font << /F1 7 0 R >>");
+    let covered = type3(&format!("/Resources << /ColorSpace << {default} >> >>"));
+    assert_not_reported(&a1b_no_intent(&font_page, &[&text, &covered, &glyph]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&font_page, &[&text, &type3(""), &glyph]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_a_default_space_must_be_a_colour_space() {
+    // A Default entry that is no colour space, or a device space, covers nothing.
+    let red = content(RED);
+    let space = |value: &str| coloured_page(&format!("/DefaultRGB {value}"), "");
+    assert_not_reported(&a1b_no_intent(&space(CAL_RGB), &[&red]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&space("7 0 R"), &[&red, CAL_RGB]), Level::A1b, "6.2.3.3");
+    for value in ["null", "99 0 R", "/DeviceRGB", "5", "[/DeviceRGB]"] {
+        assert_reported(&a1b_no_intent(&space(value), &[&red]), Level::A1b, "6.2.3.3");
+    }
+    // A colour space a resource dictionary names is used under that dictionary.
+    let indexed = format!("/DefaultRGB {CAL_RGB} /CS0 [/Indexed /DeviceRGB 0 <000000>]");
+    assert_not_reported(&a1b_no_intent(&coloured_page(&indexed, ""), &[&content("")]), Level::A1b, "6.2.3.3");
+    let bare = "/CS0 [/Indexed /DeviceRGB 0 <000000>]";
+    assert_reported(&a1b_no_intent(&coloured_page(bare, ""), &[&content("")]), Level::A1b, "6.2.3.3");
+    // An image's colour space counts as covered only when all content is drawn under the Default.
+    let image =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n\0\0\0\nendstream";
+    let page = coloured_page(&format!("/DefaultRGB {CAL_RGB}"), "/XObject << /Im 7 0 R >>");
+    let draw = content("/Im Do");
+    assert_not_reported(&a1b_no_intent(&page, &[&draw, image]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&page, &[&draw, image, &form("")]), Level::A1b, "6.2.3.3");
+    // With an RGB intent, DeviceCMYK in a form needs the form's own DefaultCMYK.
+    let cmyk = "0 0 0 1 k 0 0 1 1 re f";
+    let cmyk_default = format!("/DefaultCMYK {CAL_RGB}");
+    let page = coloured_page(&cmyk_default, "/XObject << /Fm 7 0 R >>");
+    let draw = content("/Fm Do");
+    let own = drawing_form(&format!("/Resources << /ColorSpace << {cmyk_default} >> >>"), cmyk);
+    a1b_case("6.2.3.3", (&page, "", &[&draw, &own]), (&page, "", &[&draw, &drawing_form("/Resources << >>", cmyk)]));
+    // Content that cannot be read (here, with a filter no reader has) may draw in any space.
+    let broken = content(RED).replace("<<", "<< /Filter /NoSuchDecode");
+    a1b_case("6.2.3.3", (&drawing(""), "", &[&content("")]), (&drawing(""), "", &[&broken]));
+    assert!(messages(&a1b(&drawing(""), "", &[&broken]), "6.2.3.3").contains(&"Some content could not be read for device colour".to_owned()));
+    // DeviceRGB with a CMYK intent.
+    let doc = a1b_with(&hex_stream("/N 4", &cmyk_profile_header()), &drawing(""), "", &[&content(RED)]);
+    assert!(messages(&doc, "6.2.3.3").contains(&"DeviceRGB is used, but the PDF/A output intent isn't an RGB profile".to_owned()));
+}
+
+#[test]
+fn part_1_referenced_actions_are_checked_whatever_they_hold() {
+    // 6.6.1: an action an action entry points at is checked, with /P and /K or without.
+    let js = "<< /S /JavaScript /JS (app.alert(1)) /P 4 0 R /K 0 >>";
+    let go_to = "<< /S /GoTo /D [4 0 R /Fit] /P 4 0 R /K 0 >>";
+    a1b_case("6.6.1", (PAGE, "/OpenAction 6 0 R", &[go_to]), (PAGE, "/OpenAction 6 0 R", &[js]));
+    let page_aa = "<< /Type /Page /Parent 2 0 R /AA << /O 6 0 R >> >>";
+    a1b_case("6.6.1", (page_aa, "", &[go_to]), (page_aa, "", &[js]));
+    let link = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /F 4 /A 7 0 R >>";
+    let uri = "<< /S /URI /URI (https://example.org) /P 4 0 R /K 0 >>";
+    let launch = "<< /S /Launch /F (calc.exe) /P 4 0 R /K 0 >>";
+    a1b_case("6.6.1", (ANNOTATED, "", &[link, uri]), (ANNOTATED, "", &[link, launch]));
+    // A dictionary with /S that no action entry points at is no action: a page label, a border
+    // style, a structure element.
+    let label = a1b(PAGE, "/PageLabels << /Nums [0 6 0 R] >>", &["<< /S /D >>"]);
+    let bordered = a1b(ANNOTATED, "", &["<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /BS 7 0 R >>", "<< /W 1 /S /S >>"]);
+    let element = a1b(PAGE, "", &["<< /S /P /P 7 0 R >>", "<< /Type /StructTreeRoot >>"]);
+    for doc in [label, bordered, element] {
+        assert!(verify(&doc, Level::A1b).is_empty(), "{:#?}", verify(&doc, Level::A1b));
+    }
+}
+
+#[test]
+fn part_1_a_shared_object_is_read_in_each_of_its_roles() {
+    // Object 7 is one page's resource dictionary and the other page's ExtGState dictionary, whose
+    // /G the second page draws with; whichever page comes first, /G is checked (6.4).
+    let packet = xmp(1, "B", None);
+    let metadata = xmp_object(&packet);
+    let profile = hex_stream("/N 3", &icc::srgb());
+    let catalog = format!("<< /Type /Catalog /Pages 2 0 R /Metadata 3 0 R {} >>", output_intent(6));
+    let pages = "<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 /MediaBox [0 0 200 200] >>";
+    let as_resources = "<< /Type /Page /Parent 2 0 R /Resources 7 0 R >>";
+    let as_states = "<< /Type /Page /Parent 2 0 R /Contents 8 0 R /Resources << /ExtGState 7 0 R >> >>";
+    let draw = content("/G gs");
+    for (fourth, fifth) in [(as_resources, as_states), (as_states, as_resources)] {
+        let doc = build(&[&catalog, pages, &metadata, fourth, fifth, &profile, "<< /G << /CA 0.5 >> >>", &draw], "");
+        assert_eq!(pdfcraft_model::pages(&doc).len(), 2);
+        assert_reported(&doc, Level::A1b, "6.4");
+    }
+}
+
+#[test]
+fn part_1_reaches_every_case_of_its_rules() {
+    // 6.5.2: an annotation written straight into a page's list.
+    let direct = |annot: &str| format!("<< /Type /Page /Parent 2 0 R /Annots [<< /Type /Annot /Subtype /{annot} /Rect [0 0 10 10] /F 4 >>] >>");
+    a1b_case("6.5.2", (&direct("Square"), "", &[]), (&direct("Polygon"), "", &[]));
+    // 6.2.9: a rendering intent that is no name.
+    let gs = |state: &str| drawing(&format!("/ExtGState << /G {state} >>"));
+    let empty = content("");
+    // A state named twice is read once, and an entry that is no dictionary is no state.
+    let twice = drawing("/ExtGState << /G 7 0 R /H 7 0 R /I 5 >>");
+    a1b_case("6.4", (&twice, "", &[&empty, "<< /CA 1 >>"]), (&twice, "", &[&empty, "<< /CA 0.5 >>"]));
+    // 6.2.3.3: a page's contents given as a reference to an array of streams.
+    let listed = "<< /Type /Page /Parent 2 0 R /Contents 7 0 R /Resources << >> >>";
+    a1b_case("6.2.3.3", (listed, "", &[&content(RED), "[6 0 R]"]), (listed, "", &[&content("0 0 0 1 k"), "[6 0 R]"]));
+    // 6.5.3: an appearance dictionary with no normal appearance.
+    let only_d = a1b(ANNOTATED, "", &["<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /AP << /D 7 0 R >> >>", &form("")]);
+    assert_eq!(messages(&only_d, "6.5.3"), ["A Square annotation's appearance dictionary holds entries other than N"]);
+    // Part 2 words a drawn font with no name of its own.
+    let page = drawing("/Font << /F1 7 0 R >>");
+    let profile = hex_stream("/N 3", &icc::srgb());
+    let part2 = page_document(
+        &page,
+        Some(&a2b_packet(None)),
+        &output_intent(5),
+        &[&profile, &content("BT /F1 12 Tf (a) Tj ET"), "<< /Type /Font /Subtype /Type1 >>"],
+        "",
+    );
+    let said: Vec<String> = verify(&part2, Level::A2b).into_iter().filter(|i| i.clause == "6.2.11.4").map(|i| i.message).collect();
+    assert_eq!(said, ["A font isn't embedded"]);
+    assert_eq!(messages(&a1b(&gs("<< /RI 5 >>"), "", &[&empty]), "6.2.9"), ["A graphics state has a rendering intent that isn't a name"]);
+    // 6.4: a graphics state of its own object, and an image with a soft mask.
+    a1b_case("6.4", (&gs("7 0 R"), "", &[&empty, "<< /Type /ExtGState /CA 1 >>"]), (&gs("7 0 R"), "", &[&empty, "<< /Type /ExtGState /CA 0.5 >>"]));
+    let image =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n\0\nendstream";
+    let masked = image.replace("/Length", "/SMask 7 0 R /Length");
+    a1b_case("6.4", (PAGE, "", &[image, image]), (PAGE, "", &[&masked, image]));
+    // 6.1.12: a CMap mapping to a CID above 65535.
+    let font = "<< /Type /Font /Subtype /Type0 /BaseFont /X /Encoding 7 0 R /DescendantFonts [] >>";
+    let cmap = |cid: u32| content(&format!("1 begincidrange <00> <00> {cid} endcidrange"));
+    a1b_case("6.1.12", (PAGE, "", &[font, &cmap(65535)]), (PAGE, "", &[font, &cmap(65536)]));
+    // 6.3.4: a drawn font with no name.
+    let page = drawing("/Font << /F1 7 0 R >>");
+    let text = content("BT /F1 12 Tf (a) Tj ET");
+    assert_eq!(messages(&a1b(&page, "", &[&text, "<< /Type /Font /Subtype /Type1 >>"]), "6.3.4"), ["A font isn't embedded"]);
+    // 6.2.5: a form with a /PS entry.
+    a1b_case("6.2.5", (PAGE, "", &[&form(""), &empty]), (PAGE, "", &[&form("/PS 7 0 R"), &empty]));
+    // 6.5.3: a normal appearance that is neither states nor a stream.
+    let square = |n: &str| format!("<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /AP << /N {n} >> >>");
+    let ap = form("");
+    a1b_case("6.5.3", (ANNOTATED, "", &[&square("7 0 R"), &ap]), (ANNOTATED, "", &[&square("5"), &ap]));
+    // A widget's field type comes from its nearest parent that has one, and a loop of parents gives
+    // none.
+    let widget = "<< /Type /Annot /Subtype /Widget /Parent 8 0 R /Rect [0 0 10 10] /F 4 /AP << /N 7 0 R >> >>";
+    let text_field = "<< /Parent 9 0 R >>";
+    a1b_case(
+        "6.5.3",
+        (ANNOTATED, "", &[widget, &ap, text_field, "<< /FT /Tx /T (f) >>"]),
+        (ANNOTATED, "", &[widget, &ap, text_field, "<< /FT /Btn /T (b) >>"]),
+    );
+    let looped = a1b(ANNOTATED, "", &[widget, &ap, "<< /Parent 8 0 R >>"]);
+    assert!(verify(&looped, Level::A1b).is_empty(), "{:#?}", verify(&looped, Level::A1b));
+    // 6.7.8: an extension schema description without its namespace, in any metadata stream.
+    let xmp = concat!(
+        r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">"#,
+        r#"<rdf:Description rdf:about="" xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/" "#,
+        r#"xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#"><pdfaExtension:schemas><rdf:Bag><rdf:li rdf:parseType="Resource">"#,
+        r#"<pdfaSchema:schema>S</pdfaSchema:schema><pdfaSchema:prefix>e</pdfaSchema:prefix></rdf:li></rdf:Bag></pdfaExtension:schemas>"#,
+        r#"</rdf:Description></rdf:RDF></x:xmpmeta>"#
+    );
+    assert_reported(&a1b(PAGE, "", &[&xmp_object(xmp)]), Level::A1b, "6.7.8");
+}

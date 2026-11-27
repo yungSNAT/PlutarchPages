@@ -10,7 +10,8 @@ use pdfcraft_cos::Document;
 /// What the header of `doc`, as it will be saved, breaks of 6.1.2.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Header {
-    /// The first line isn't `%PDF-1.0` to `%PDF-1.7` at the start of the file.
+    /// The first line isn't `%PDF-` and a version the check allows (`1.0` to `1.7` for parts 2
+    /// and 3) at the start of the file.
     pub(crate) version: bool,
     /// The second line isn't a comment of at least four bytes above 127.
     pub(crate) comment: bool,
