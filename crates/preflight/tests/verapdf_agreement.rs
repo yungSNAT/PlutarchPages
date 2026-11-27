@@ -45,7 +45,7 @@ enum Agreement {
 fn recorded() -> std::collections::HashMap<&'static str, Agreement> {
     RECORDED
         .lines()
-        .filter_map(|l| l.split_once('	'))
+        .filter_map(|l| l.split_once('\t'))
         .map(|(status, path)| {
             let agreement = match status {
                 "verdict" => Agreement::Verdict,
@@ -127,7 +127,7 @@ fn agreement_with_verapdf_on_its_pdfa_1b_files() {
                 Agreement::Full => "clause",
                 _ => "verdict",
             };
-            println!("RECORD	{status}	{}", f.path);
+            println!("RECORD\t{status}\t{}", f.path);
         }
     }
     println!("veraPDF passes {pass}: we agree on {on_pass}");

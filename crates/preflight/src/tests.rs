@@ -85,10 +85,18 @@ fn wordings_are_complete() {
     // `issue(` and `located_issue(`, written on one line or, when rustfmt breaks it, on several.
     while let Some(at) = rest.find("issue(") {
         rest = &rest[at + 6..];
-        let Some(clause) = rest.trim_start().strip_prefix('"') else { continue };
-        // Step over the clause, then take the wording that follows it.
-        let Some(end) = clause.find('"') else { break };
-        rest = &clause[end + 1..];
+        // Step over the clause (a literal, or `clause` and `clauses.0` where a helper is told the
+        // clause of the part being verified), then take the wording that follows it.
+        let call = rest.trim_start();
+        if let Some(clause) = call.strip_prefix('"') {
+            let Some(end) = clause.find('"') else { break };
+            rest = &clause[end + 1..];
+        } else if call.starts_with("clause") {
+            let Some(comma) = call.find(',') else { break };
+            rest = &call[comma..];
+        } else {
+            continue;
+        }
         let Some(text) = rest.strip_prefix(',').map(str::trim_start).and_then(|r| r.strip_prefix('"')) else { continue };
         let Some(end) = text.find('"') else { break };
         said.push(&text[..end]);

@@ -499,9 +499,11 @@ fn part_1_actions_are_an_allow_list() {
     let hide = "/OpenAction << /S /Hide /T (x) >>";
     a1b_case("6.6.1", (PAGE, go_to, &[]), (PAGE, hide, &[]));
     a1b_case("6.6.1", (PAGE, "/OpenAction << /S /Named /N /NextPage >>", &[]), (PAGE, "/OpenAction << /S /Named /N /Print >>", &[]));
-    // Part 2 allows Hide; part 1 does not.
+    // Part 2 allows embedded go-to actions (PDF 1.6); part 1 does not.
+    let embedded = "/OpenAction << /S /GoToE /D [0 /Fit] >>";
+    a1b_case("6.6.1", (PAGE, go_to, &[]), (PAGE, embedded, &[]));
     let profile = hex_stream("/N 3", &icc::srgb());
-    let catalog = format!("{} {hide}", output_intent(5));
+    let catalog = format!("{} {embedded}", output_intent(5));
     assert_not_reported(&page_document(PAGE, Some(&a2b_packet(None)), &catalog, &[&profile], ""), Level::A2b, "6.5.1");
     // Page additional actions are a part 2 rule only.
     let acting = a1b("<< /Type /Page /Parent 2 0 R /AA << >> >>", "", &[]);

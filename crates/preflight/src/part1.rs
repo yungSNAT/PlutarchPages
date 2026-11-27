@@ -93,7 +93,7 @@ pub(super) fn check(
     };
     for (r, o) in &objs {
         if let Some(d) = super::dict_of(o) {
-            object(d, &**o, drawing.contains(r), annot_pages.get(r).copied());
+            object(d, o, drawing.contains(r), annot_pages.get(r).copied());
         }
     }
     // Annotations written straight into a page's list are no object of their own.
