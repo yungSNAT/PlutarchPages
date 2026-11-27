@@ -14,16 +14,12 @@ struct Defaults {
 
 impl Defaults {
     const NONE: Defaults = Defaults { gray: false, rgb: false, cmyk: false };
+    const ALL: Defaults = Defaults { gray: true, rgb: true, cmyk: true };
 
-    /// The Default spaces of the resource dictionary `resources` (a `/Resources` value). An entry
-    /// counts only when it is a colour space array that is no device space: a null, a dangling
-    /// reference, a number or `/DeviceRGB` itself changes nothing.
-    fn of(doc: &Document, resources: Option<&Object>) -> Defaults {
-        let resources = resources.map(|r| doc.resolve(r));
-        resources.as_deref().and_then(Object::as_dict).map_or(Defaults::NONE, |r| Defaults::in_dict(doc, r))
-    }
-
-    /// [`Defaults::of`] the resource dictionary `resources` itself.
+    /// The Default spaces of the resource dictionary `resources` itself. An entry counts only when
+    /// it is a device-independent colour space (CalGray, CalRGB, Lab or ICCBased): a null, a
+    /// dangling reference, a number, a device space, or an Indexed, Separation, DeviceN or Pattern
+    /// space (which draw in a device space of their own) changes nothing.
     fn in_dict(doc: &Document, resources: &Dict) -> Defaults {
         let spaces = resources.get(b"ColorSpace").map(|c| doc.resolve(c));
         let Some(spaces) = spaces.as_deref().and_then(Object::as_dict) else { return Defaults::NONE };
@@ -32,7 +28,7 @@ impl Defaults {
                 s.as_array()
                     .and_then(|a| a.first())
                     .map(|k| doc.resolve(k))
-                    .is_some_and(|k| k.as_name().is_some_and(|k| !matches!(k, b"DeviceGray" | b"DeviceRGB" | b"DeviceCMYK")))
+                    .is_some_and(|k| k.as_name().is_some_and(|k| matches!(k, b"CalGray" | b"CalRGB" | b"Lab" | b"ICCBased")))
             })
         };
         Defaults { gray: real(b"DefaultGray"), rgb: real(b"DefaultRGB"), cmyk: real(b"DefaultCMYK") }
@@ -51,47 +47,107 @@ impl Defaults {
     }
 }
 
+/// What a content stream's resources give it.
+struct Holder {
+    defaults: Defaults,
+    /// The objects its `/XObject` and `/Shading` entries name.
+    names: Vec<ObjRef>,
+    /// It has no `/XObject` or no `/Shading` of its own, so a `Do` or `sh` may name the page's.
+    falls_back: bool,
+}
+
+impl Holder {
+    /// The holder whose `/Resources` value is `resources`.
+    fn of(doc: &Document, resources: Option<&Object>) -> Holder {
+        let resources = resources.map(|r| doc.resolve(r));
+        let Some(r) = resources.as_deref().and_then(Object::as_dict) else {
+            return Holder { defaults: Defaults::NONE, names: Vec::new(), falls_back: true };
+        };
+        let (mut names, mut falls_back) = (Vec::new(), false);
+        for key in [b"XObject".as_slice(), b"Shading"] {
+            match r.get(key).map(|x| doc.resolve(x)).as_deref().and_then(Object::as_dict) {
+                Some(named) => names.extend(named.iter().filter_map(|(_, v)| v.as_ref())),
+                None => falls_back = true,
+            }
+        }
+        Holder { defaults: Defaults::in_dict(doc, r), names, falls_back }
+    }
+}
+
 /// 6.2.3.3: the device colour that no Default colour space covers (ISO 32000-1 8.6.5.6), and
 /// whether some content could not be read. A content stream draws under its own resources: a
 /// page's (inherited ones included), or a form's, pattern's, appearance stream's or Type 3 font's
 /// own, never those of the page that draws it. A colour space in a resource dictionary is used
-/// under that dictionary. Which content draws an image or a shading isn't followed, so its
-/// `/ColorSpace` is covered only when every resource dictionary that content draws under covers it.
+/// under that dictionary. An image or a shading is drawn under every resource dictionary that
+/// names it, and, when a page names it, under any other content that may fall back to the page's
+/// resources and draws something; one that nothing names (a soft mask, say) is judged under every
+/// resource dictionary content draws under.
 pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> crate::DeviceColour {
-    // What each content stream draws under: a stream drawn under several holds only what all cover.
-    let mut under: HashMap<ObjRef, Defaults> = HashMap::new();
-    let mut add = |r: ObjRef, d: Defaults| {
-        under.entry(r).and_modify(|e| *e = e.and(d)).or_insert(d);
-    };
-    for p in pdfcraft_model::pages(doc) {
-        let d = Defaults::of(doc, p.dict.get(b"Resources"));
-        for r in crate::page_contents(doc, &p.dict) {
-            add(r, d);
+    // What each content stream draws under (a stream drawn under several holds only what all
+    // cover) and whether it may fall back; what each named object is drawn under.
+    let mut under: HashMap<ObjRef, (Defaults, bool)> = HashMap::new();
+    let mut named: HashMap<ObjRef, Defaults> = HashMap::new();
+    let mut add = |content: &[ObjRef], h: &Holder| {
+        for r in content {
+            under.entry(*r).and_modify(|(d, f)| (*d, *f) = (d.and(h.defaults), *f || h.falls_back)).or_insert((h.defaults, h.falls_back));
         }
+        for n in &h.names {
+            named.entry(*n).and_modify(|d| *d = d.and(h.defaults)).or_insert(h.defaults);
+        }
+    };
+    let mut on_pages = HashSet::new();
+    for p in pdfcraft_model::pages(doc) {
+        let mut h = Holder::of(doc, p.dict.get(b"Resources"));
+        h.falls_back = false;
+        on_pages.extend(h.names.iter().copied());
+        add(&crate::page_contents(doc, &p.dict), &h);
     }
     for (r, o) in objs {
         let Some(d) = crate::dict_of(o) else { continue };
         if matches!(&**o, Object::Stream(s) if crate::is_content(&s.dict)) {
-            add(*r, Defaults::of(doc, d.get(b"Resources")));
+            add(&[*r], &Holder::of(doc, d.get(b"Resources")));
         }
         if d.name(b"Subtype") == Some(b"Type3")
             && let Some(procs) = d.get(b"CharProcs").map(|c| doc.resolve(c))
             && let Some(procs) = procs.as_dict()
         {
-            let own = Defaults::of(doc, d.get(b"Resources"));
-            for p in procs.iter().filter_map(|(_, p)| p.as_ref()) {
-                add(p, own);
-            }
+            let glyphs: Vec<ObjRef> = procs.iter().filter_map(|(_, p)| p.as_ref()).collect();
+            add(&glyphs, &Holder::of(doc, d.get(b"Resources")));
         }
     }
     // Any other content (the glyphs of a Type 3 font written straight into a resource dictionary)
     // has no Default space known to apply.
     for r in crate::referenced_content(doc, objs) {
-        under.entry(r).or_insert(Defaults::NONE);
+        under.entry(r).or_insert((Defaults::NONE, true));
     }
-    let everywhere = under.values().copied().reduce(Defaults::and).unwrap_or(Defaults::NONE);
+    let everywhere = under.values().map(|(d, _)| *d).reduce(Defaults::and).unwrap_or(Defaults::NONE);
     let mut out = crate::DeviceColour::default();
+    // What content that may fall back to a page's resources, and draws, is drawn under.
+    let mut fallback = Defaults::ALL;
     let mut budget = pdfcraft_cos::DecodeBudget::new(crate::MAX_COLOUR_DECODED, usize::MAX);
+    for (r, o) in objs {
+        // Content is the expensive part: once all three spaces are uncovered no more is read.
+        if !(out.gray && out.rgb && out.cmyk)
+            && let Some(&(own, falls_back)) = under.get(r)
+            && let Object::Stream(s) = &**o
+        {
+            let mut used = crate::DeviceColour::default();
+            let draws = match budget.decode(s) {
+                Ok(data) => {
+                    let _ = crate::content_colour(&data, &mut used);
+                    falls_back && pdfcraft_content::ops(&data).any(|op| matches!(op.op.as_slice(), b"Do" | b"sh"))
+                }
+                Err(_) => {
+                    out.incomplete = true;
+                    falls_back
+                }
+            };
+            own.uncover(used, &mut out);
+            if draws {
+                fallback = fallback.and(own);
+            }
+        }
+    }
     // A shared resource dictionary is read once.
     let mut read = HashSet::new();
     for (r, o) in objs {
@@ -112,21 +168,12 @@ pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync
         {
             let mut used = crate::DeviceColour::default();
             crate::mark_cs_object(doc, cs, &mut used, 0);
-            everywhere.uncover(used, &mut out);
-        }
-        // Content is the expensive part: once all three spaces are uncovered no more is read.
-        if !(out.gray && out.rgb && out.cmyk)
-            && let Some(&own) = under.get(r)
-            && let Object::Stream(s) = &**o
-        {
-            let mut used = crate::DeviceColour::default();
-            match budget.decode(s) {
-                Ok(data) => {
-                    let _ = crate::content_colour(&data, &mut used);
-                }
-                Err(_) => out.incomplete = true,
-            }
-            own.uncover(used, &mut out);
+            let drawn = match named.get(r) {
+                Some(&d) if on_pages.contains(r) => d.and(fallback),
+                Some(&d) => d,
+                None => everywhere,
+            };
+            drawn.uncover(used, &mut out);
         }
     }
     out

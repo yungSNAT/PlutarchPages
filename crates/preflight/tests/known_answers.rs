@@ -861,12 +861,27 @@ fn part_1_a_default_space_covers_only_the_content_drawn_under_it() {
 
 #[test]
 fn part_1_a_default_space_must_be_a_colour_space() {
-    // A Default entry that is no colour space, or a device space, covers nothing.
+    // A Default entry covers only as a device-independent colour space: not as no colour space, a
+    // device space, or a space that draws in a device space of its own.
     let red = content(RED);
     let space = |value: &str| coloured_page(&format!("/DefaultRGB {value}"), "");
     assert_not_reported(&a1b_no_intent(&space(CAL_RGB), &[&red]), Level::A1b, "6.2.3.3");
     assert_not_reported(&a1b_no_intent(&space("7 0 R"), &[&red, CAL_RGB]), Level::A1b, "6.2.3.3");
-    for value in ["null", "99 0 R", "/DeviceRGB", "5", "[/DeviceRGB]"] {
+    let profile = hex_stream("/N 3", &icc::srgb());
+    assert_not_reported(&a1b_no_intent(&space("[/ICCBased 7 0 R]"), &[&red, &profile]), Level::A1b, "6.2.3.3");
+    let spaces = [
+        "null",
+        "99 0 R",
+        "/DeviceRGB",
+        "5",
+        "[/DeviceRGB]",
+        "[/Indexed /DeviceRGB 0 <000000>]",
+        "[/Separation /X /DeviceRGB 7 0 R]",
+        "[/DeviceN [/X /Y /Z] /DeviceRGB 7 0 R]",
+        "[/Pattern]",
+        "[/Foo]",
+    ];
+    for value in spaces {
         assert_reported(&a1b_no_intent(&space(value), &[&red]), Level::A1b, "6.2.3.3");
     }
     // A colour space a resource dictionary names is used under that dictionary.
@@ -874,13 +889,32 @@ fn part_1_a_default_space_must_be_a_colour_space() {
     assert_not_reported(&a1b_no_intent(&coloured_page(&indexed, ""), &[&content("")]), Level::A1b, "6.2.3.3");
     let bare = "/CS0 [/Indexed /DeviceRGB 0 <000000>]";
     assert_reported(&a1b_no_intent(&coloured_page(bare, ""), &[&content("")]), Level::A1b, "6.2.3.3");
-    // An image's colour space counts as covered only when all content is drawn under the Default.
+    // An image's colour space is used under each resource dictionary that names it.
     let image =
         "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n\0\0\0\nendstream";
-    let page = coloured_page(&format!("/DefaultRGB {CAL_RGB}"), "/XObject << /Im 7 0 R >>");
+    let default = format!("/DefaultRGB {CAL_RGB}");
+    let page = coloured_page(&default, "/XObject << /Im 7 0 R >>");
     let draw = content("/Im Do");
     assert_not_reported(&a1b_no_intent(&page, &[&draw, image]), Level::A1b, "6.2.3.3");
-    assert_reported(&a1b_no_intent(&page, &[&draw, image, &form("")]), Level::A1b, "6.2.3.3");
+    // A form with empty resources elsewhere (an appearance that draws nothing) changes nothing.
+    let annotated = format!(
+        "<< /Type /Page /Parent 2 0 R /Contents 6 0 R /Annots [8 0 R] /Resources << /ColorSpace << {default} >> /XObject << /Im 7 0 R >> >> >>"
+    );
+    let link = "<< /Type /Annot /Subtype /Link /Rect [0 0 10 10] /F 4 /AP << /N 9 0 R >> >>";
+    let blank = drawing_form("/Resources << >>", "");
+    assert_not_reported(&a1b_no_intent(&annotated, &[&draw, image, link, &blank]), Level::A1b, "6.2.3.3");
+    // But a form with no XObjects of its own that draws one may draw the page's, under its own
+    // resources.
+    let both = coloured_page(&default, "/XObject << /Im 7 0 R /Fm 8 0 R >>");
+    let fallback = drawing_form("/Resources << >>", "/Im Do");
+    assert_reported(&a1b_no_intent(&both, &[&content("/Fm Do"), image, &fallback]), Level::A1b, "6.2.3.3");
+    // An image only a form names is drawn under the form's resources.
+    let outer = coloured_page("", "/XObject << /Fm 8 0 R >>");
+    let naming = |spaces: &str| drawing_form(&format!("/Resources << /ColorSpace << {spaces} >> /XObject << /Im 7 0 R >> >>"), "/Im Do");
+    assert_not_reported(&a1b_no_intent(&outer, &[&content("/Fm Do"), image, &naming(&default)]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&outer, &[&content("/Fm Do"), image, &naming("")]), Level::A1b, "6.2.3.3");
+    // One that nothing names is judged under every resource dictionary content draws under.
+    assert_not_reported(&a1b_no_intent(&coloured_page(&default, ""), &[&content(""), image]), Level::A1b, "6.2.3.3");
     // With an RGB intent, DeviceCMYK in a form needs the form's own DefaultCMYK.
     let cmyk = "0 0 0 1 k 0 0 1 1 re f";
     let cmyk_default = format!("/DefaultCMYK {CAL_RGB}");
