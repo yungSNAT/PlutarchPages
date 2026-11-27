@@ -202,13 +202,18 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `packaging/windows/win_checks.rs` (with `win_checks_{json,policy,tests}.rs`) replaces the PowerShell font-notice
   validation and installer policy fixture logic in `font-notices.ps1`, `test-font-notices.ps1` and
   `test-install-policy.ps1`, which compile the standalone Rust helper on demand with `rustc --edition=2024 -D warnings`.
-- `packaging/windows/package.rs` (with `package_{pe,fs,meta,tests}.rs`) replaces the build, PE header checks,
+- `packaging/windows/package.rs` (with `package_{pe,fs,meta,sign,tests}.rs`) replaces the build, PE header checks,
   staging, model/font notice bundling, WiX invocation, portable staging/ZIP orchestration and CLI smoke
-  test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim.
-  Retained scripts stay non-Rust under documented constraints: `check-install-policy.ps1`, `test-msi.ps1` and
-  `test-install.ps1` depend on Windows Installer COM/MSI APIs (`WindowsInstaller.Installer`, constraint 2);
-  `sign.ps1` is a thin Windows SDK `signtool.exe` wrapper; `security-audit.ps1` is a read-only
-  Authenticode/YARA inspector.
+  test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim,
+  and the Authenticode signing of upstream's `sign.ps1` (`package_sign.rs`: the same signtool arguments,
+  with the Azure Trusted Signing client fetched by `curl.exe`, checked against its pinned SHA-256 and
+  unpacked by `tar.exe`). If a merge changes or brings back `sign.ps1`, port the change to
+  `package_sign.rs` and delete it.
+  `check-install-policy.ps1`, `test-msi.ps1` and `test-install.ps1` stay PowerShell: they drive a Windows
+  Installer session (`WindowsInstaller.Installer`: a safe-mode package session, condition evaluation,
+  type-51 actions), no safe Rust binding drives one (msica 0.4.1 and msi 0.11.1 checked on 27 November
+  2026), and FFI would need `unsafe`, which the workspace forbids. `security-audit.ps1` is a read-only
+  Authenticode/YARA inspector, still PowerShell.
 - `packaging/unix_package.rs` (with `unix_package_{env,fs,linux,freebsd,macos,flatpak,web,cert,tests}.rs`)
   replaces the Unix and web packaging orchestration in `packaging/linux/package.sh`,
   `packaging/linux/flatpak-bundle.sh`, `packaging/freebsd/package.sh`, `packaging/macos/package.sh`,

@@ -188,7 +188,7 @@ neither the MSI nor the portable zip needs the Visual C++ redistributable.
   The supplied checkout must match the existing binaries when using `-SkipBuild`.
   That presence check does not establish byte-for-byte payload or installation coverage;
   final package qualification still checks all notices against the staged files.
-- **Signing:** `packaging/windows/sign.ps1` signs both executables and the MSI with `signtool`
+- **Signing:** `packaging/windows/package_sign.rs` (run by `package.ps1`) signs both executables and the MSI with `signtool`
   (SHA-256, RFC 3161 timestamp), from a `.pfx` (`WINDOWS_CERTIFICATE`) or Azure Trusted Signing
   (`AZURE_*`), whichever is configured. It is the one place to change when signing changes.
 
