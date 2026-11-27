@@ -503,3 +503,6 @@ impl Interp<'_> {
         Ok(Some(value))
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

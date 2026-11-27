@@ -298,3 +298,6 @@ impl XHost {
         h.record(XfaEffect::RemoveInstance { som });
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

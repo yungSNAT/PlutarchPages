@@ -417,65 +417,301 @@ impl Folder {
 }
 
 /// Windows: every folder from the drive root down is held open without `FILE_SHARE_DELETE`, so
-/// none can be renamed, moved or deleted (and so none swapped for a junction) until the file is
-/// named. Each is opened as itself (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link,
-/// including a volume mounted at a folder. Known limit: holding does not stop another process
-/// turning a held, empty folder into a junction in place (`FSCTL_SET_REPARSE_POINT`), and the file
-/// is still made and named by path, so such a conversion after opening is not caught; closing it
-/// needs a create and rename relative to the held handle. Elsewhere (wasm) the folder is only made.
-#[cfg(not(unix))]
+/// none can be renamed, moved or deleted until the file is named, and each is opened as itself
+/// (`FILE_FLAG_OPEN_REPARSE_POINT`) and refused if it is a link, including a volume mounted at a
+/// folder. A held folder can still be turned into a link in place whilst it is empty, and a
+/// relative symbolic link set that way is followed by a create relative to the folder, so:
+///
+/// - nothing is taken on trust from where it was asked for: each folder held, and each file or
+///   folder made relative to its held parent, must be an entry of that parent by the final path
+///   of its own handle (`GetFinalPathNameByHandleW`); one made elsewhere is deleted again by its
+///   own handle, unless another process keeps it, and the publish fails;
+/// - a held folder whose entry is held in turn can no longer be emptied, so never converted (NTFS
+///   and ReFS refuse a reparse point on a folder with an entry); an anchor file held without
+///   delete sharing does the same for the output folder whilst the file is named by path;
+/// - the bytes are written through a handle held without delete or write sharing, so the file
+///   cannot be moved or written by another process meanwhile, then read back under a handle that
+///   shares no writing until the file is named; it must not have been turned into a link whilst it was
+///   empty, and the name taken must then hold that file;
+/// - clean-up deletes only what publish made, each by its own handle, never by name.
+///
+/// Elsewhere (wasm) the folder is only made.
+#[cfg(windows)]
 struct Folder {
     path: PathBuf,
-    #[cfg(windows)]
-    _held: Vec<File>,
+    /// From the drive root down, each with its final path; the last is the output folder.
+    held: Vec<(File, PathBuf)>,
 }
 
-#[cfg(not(unix))]
-impl Folder {
-    #[cfg(windows)]
-    fn open_checked(dir: &Path) -> Result<Self> {
-        use std::os::windows::fs::OpenOptionsExt;
-        use std::path::Component;
-        const FILE_SHARE_READ_WRITE: u32 = 0x1 | 0x2;
-        const BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT: u32 = 0x0200_0000 | 0x0020_0000;
-        let hold = |path: &Path| {
-            std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ_WRITE).custom_flags(BACKUP_SEMANTICS_AND_OPEN_REPARSE_POINT).open(path)
-        };
-        let (mut path, mut held) = (PathBuf::new(), Vec::new());
-        for component in dir.components() {
-            match component {
-                Component::Prefix(_) => {
-                    path.push(component);
-                    continue;
-                }
-                Component::RootDir => path.push(component),
-                Component::Normal(name) => path.push(name),
-                Component::CurDir | Component::ParentDir => return Err(failed(LINKED_FOLDER)),
-            }
-            let file = match hold(&path) {
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    // Its parent is held, so the name is made in the folder already checked.
-                    std::fs::create_dir(&path)
-                        .or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(e) })
-                        .map_err(failed)?;
-                    hold(&path)
-                }
-                opened => opened,
-            }
-            .map_err(failed)?;
-            // Not a directory, or a name surrogate (symbolic link, junction or mount point).
-            if !file.metadata().map_err(failed)?.is_dir() {
-                return Err(failed(LINKED_FOLDER));
-            }
-            held.push(file);
-        }
-        if held.is_empty() {
-            return Err(failed("output folder is not absolute"));
-        }
-        Ok(Self { path, _held: held })
+/// A file or folder publish made, deleted by its own handle on drop unless kept.
+#[cfg(windows)]
+struct Made(Option<File>);
+
+#[cfg(windows)]
+impl Made {
+    fn get(&self) -> Result<&File> {
+        self.0.as_ref().ok_or_else(|| failed("the file made was already closed"))
     }
 
-    #[cfg(not(windows))]
+    /// Close the handle and keep what it refers to.
+    fn keep(mut self) {
+        self.0 = None;
+    }
+
+    /// A second handle to the same file (no name is looked up).
+    fn reopen(file: &File, access: winx::file::AccessMode, share: winx::file::ShareMode) -> std::io::Result<File> {
+        use std::os::windows::io::AsHandle;
+        winx::file::reopen_file(file.as_handle(), access, share, winx::file::Flags::FILE_FLAG_OPEN_REPARSE_POINT)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Made {
+    fn drop(&mut self) {
+        use fs_at::os::windows::FileExt;
+        use winx::file::{AccessMode, ShareMode};
+        if let Some(file) = self.0.take() {
+            let all = ShareMode::FILE_SHARE_READ | ShareMode::FILE_SHARE_WRITE | ShareMode::FILE_SHARE_DELETE;
+            // Directly when the handle has DELETE access (a folder made), else through a second
+            // handle to the same file that has it.
+            if let Err((file, _)) = file.delete_by_handle()
+                && let Ok(deleting) = Self::reopen(&file, AccessMode::DELETE, all)
+            {
+                let _ = deleting.delete_by_handle();
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Folder {
+    const SHARE_READ_WRITE: u32 = 0x1 | 0x2;
+    const BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const READ_ATTRIBUTES: u32 = 0x80;
+
+    /// `path` opened as itself, by path, without `FILE_SHARE_DELETE`. A folder another batch has
+    /// just made is open with delete access until that batch has checked it, so a sharing
+    /// violation is tried again for about a second.
+    fn hold_path(path: &Path) -> std::io::Result<File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let mut tries = 0;
+        loop {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(Self::SHARE_READ_WRITE)
+                .custom_flags(Self::BACKUP_SEMANTICS | Self::OPEN_REPARSE_POINT)
+                .open(path)
+            {
+                Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) && tries < 200 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                held => return held,
+            }
+        }
+    }
+
+    fn refused(e: std::io::Error) -> crate::ToolError {
+        // `ERROR_DIRECTORY`, or `ERROR_CANT_RESOLVE_FILENAME`: a link met relative to a held
+        // folder, or a held folder turned into one.
+        const ERROR_DIRECTORY: i32 = 267;
+        const ERROR_CANT_RESOLVE_FILENAME: i32 = 1921;
+        match e.raw_os_error() {
+            Some(ERROR_DIRECTORY | ERROR_CANT_RESOLVE_FILENAME) => failed(LINKED_FOLDER),
+            _ => failed(e),
+        }
+    }
+
+    /// Where `file` is now, by its own handle, which must be an entry of the held folder whose
+    /// final path is `parent`.
+    fn placed_in(file: &File, parent: &Path) -> Result<PathBuf> {
+        let at = winx::file::get_file_path(file).map_err(failed)?;
+        if at.file_name().is_some() && at.parent() == Some(parent) { Ok(at) } else { Err(failed(LINKED_FOLDER)) }
+    }
+
+    fn leaf(&self) -> Result<&(File, PathBuf)> {
+        self.held.last().ok_or_else(|| failed("output folder is not absolute"))
+    }
+
+    fn open_checked(dir: &Path) -> Result<Self> {
+        use std::path::Component;
+        let mut folder = Self { path: PathBuf::new(), held: Vec::new() };
+        for component in dir.components() {
+            match component {
+                Component::Prefix(_) => folder.path.push(component),
+                Component::RootDir => {
+                    folder.path.push(component);
+                    let root = Self::hold_path(&folder.path).map_err(failed)?;
+                    if !root.metadata().map_err(failed)?.is_dir() {
+                        return Err(failed(LINKED_FOLDER));
+                    }
+                    let at = winx::file::get_file_path(&root).map_err(failed)?;
+                    folder.held.push((root, at));
+                }
+                Component::Normal(name) => folder.enter_checked(name)?,
+                Component::CurDir | Component::ParentDir => return Err(failed(LINKED_FOLDER)),
+            }
+        }
+        if folder.held.len() < 2 {
+            return Err(failed("output folder is not absolute"));
+        }
+        Ok(folder)
+    }
+
+    /// Hold the folder `name` in the current one, making it there if it is missing.
+    fn enter_checked(&mut self, name: &std::ffi::OsStr) -> Result<()> {
+        let (parent, parent_at) = self.leaf()?;
+        let path = self.path.join(name);
+        let pinned = match Self::hold_path(&path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match fs_at::OpenOptions::default().mkdir_at(parent, name) {
+                    Ok(made) => {
+                        // Made through a parent turned into a relative symbolic link, it is
+                        // elsewhere: `made` deletes it again.
+                        let made = Made(Some(made));
+                        Self::placed_in(made.get()?, parent_at)?;
+                        made.keep();
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(e) => return Err(Self::refused(e)),
+                }
+                Self::hold_path(&path)
+            }
+            held => held,
+        }
+        .map_err(failed)?;
+        // Not a directory, or a name surrogate (symbolic link, junction or mount point); or the
+        // path no longer leads to an entry of the held parent.
+        if !pinned.metadata().map_err(failed)?.is_dir() {
+            return Err(failed(LINKED_FOLDER));
+        }
+        let at = Self::placed_in(&pinned, parent_at)?;
+        self.held.push((pinned, at));
+        self.path = path;
+        Ok(())
+    }
+
+    /// A new, empty file with a free temporary name, made relative to the output folder; the
+    /// handle reads attributes only and shares everything, so it pins nothing.
+    fn make_temporary(&self) -> Result<Made> {
+        use fs_at::os::windows::OpenOptionsExt;
+        use std::hash::BuildHasher;
+        let (leaf, _) = self.leaf()?;
+        for _ in 0..64 {
+            let name = format!(".tmp{:016x}", std::collections::hash_map::RandomState::new().hash_one(0u8));
+            let mut options = fs_at::OpenOptions::default();
+            options.create_new(true).desired_access(Self::READ_ATTRIBUTES);
+            match options.open_at(leaf, &name) {
+                Ok(file) => return Ok(Made(Some(file))),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(Self::refused(e)),
+            }
+        }
+        Err(failed("no free temporary name in the output folder"))
+    }
+
+    /// `made` held without delete or write sharing, once it is shown to be in the output folder.
+    /// Fails if another process already has it open for writing.
+    fn pin(&self, made: &Made, access: winx::file::AccessMode) -> Result<File> {
+        let (_, leaf_at) = self.leaf()?;
+        let pinned = Made::reopen(made.get()?, access, winx::file::ShareMode::FILE_SHARE_READ).map_err(failed)?;
+        Self::placed_in(&pinned, leaf_at)?;
+        Ok(pinned)
+    }
+
+    /// Write `bytes` to a temporary file in the folder, then give it the first free name.
+    fn publish(&self, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        // An empty file can be turned into a link at any time; one with data cannot.
+        if bytes.is_empty() {
+            return Err(failed("the output is empty, and an empty file could be turned into a link; nothing was written"));
+        }
+        // The anchor: whilst it is held the output folder has an entry nobody else can remove.
+        let anchor = self.make_temporary()?;
+        let anchor_pin = self.pin(&anchor, winx::file::AccessMode::GENERIC_READ)?;
+        let named = self.make_temporary().and_then(|temp| self.write_named(temp, bytes, names));
+        drop(anchor_pin);
+        named
+    }
+
+    /// Write `bytes` through a pin of `temp`, then name it.
+    fn write_named(&self, temp: Made, bytes: &[u8], names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        let mut file = self.pin(&temp, winx::file::AccessMode::GENERIC_READ | winx::file::AccessMode::GENERIC_WRITE)?;
+        file.write_all(bytes).map_err(failed)?;
+        file.sync_all().map_err(failed)?;
+        drop(file);
+        // The rename needs delete sharing, so a second handle that still shares no writing holds
+        // the file until it is named; a writer that got in between makes this fail.
+        let mut held = Made::reopen(
+            temp.get()?,
+            winx::file::AccessMode::GENERIC_READ,
+            winx::file::ShareMode::FILE_SHARE_READ | winx::file::ShareMode::FILE_SHARE_DELETE,
+        )
+        .map_err(failed)?;
+        Self::holds_exactly(&mut held, bytes)?;
+        let named = self.take_name(temp, names);
+        drop(held);
+        named
+    }
+
+    /// `held`, at its start, is a plain file holding exactly `bytes`.
+    fn holds_exactly(held: &mut File, bytes: &[u8]) -> Result<()> {
+        use std::os::windows::fs::MetadataExt;
+        const REPARSE_POINT: u32 = 0x400;
+        // Whilst it was empty another process could turn it into a link, which the pin opened as
+        // itself: the bytes went into the link and its name would read as the target. Once it
+        // has data, no symbolic link can be set on it.
+        if held.metadata().map_err(failed)?.file_attributes() & REPARSE_POINT != 0 {
+            return Err(failed("the file was turned into a link whilst it was written; nothing was kept"));
+        }
+        let mut written = Vec::with_capacity(bytes.len());
+        held.read_to_end(&mut written).map_err(failed)?;
+        if written != bytes {
+            return Err(failed("the file was changed whilst it was written; nothing was kept"));
+        }
+        Ok(())
+    }
+
+    /// Give `temp` the first free name, then check by its handle that the name holds it.
+    fn take_name(&self, temp: Made, names: impl Iterator<Item = std::ffi::OsString>) -> Result<std::ffi::OsString> {
+        let (_, leaf_at) = self.leaf()?;
+        let at = Self::placed_in(temp.get()?, leaf_at)?;
+        let from = self.path.join(at.file_name().ok_or_else(|| failed(LINKED_FOLDER))?);
+        for name in names {
+            let candidate = self.path.join(&name);
+            // `MoveFileExW` without replacing, by path: every folder on it is held and has an
+            // entry, so none can be a link. The name is never removed by `tempfile`.
+            let path = tempfile::TempPath::try_from_path(&from).map_err(failed)?;
+            match path.persist_noclobber(&candidate) {
+                Ok(()) => {
+                    if winx::file::get_file_path(temp.get()?).is_ok_and(|now| now == leaf_at.join(&name)) {
+                        temp.keep();
+                        return Ok(name);
+                    }
+                    // Another file was put at the temporary name and took the name; it is left
+                    // alone, and `temp` deletes ours wherever it went.
+                    return Err(failed("the file was replaced whilst it was being named; nothing was kept"));
+                }
+                Err(e) => {
+                    let _ = e.path.keep();
+                    if e.error.kind() != std::io::ErrorKind::AlreadyExists && candidate.symlink_metadata().is_err() {
+                        return Err(failed(e.error));
+                    }
+                }
+            }
+        }
+        Err(failed("all 10000 output names are occupied"))
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+struct Folder {
+    path: PathBuf,
+}
+
+#[cfg(not(any(unix, windows)))]
+impl Folder {
     fn open_checked(dir: &Path) -> Result<Self> {
         std::fs::create_dir_all(dir).map_err(failed)?;
         Ok(Self { path: dir.to_path_buf() })
@@ -554,6 +790,16 @@ mod tests {
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "no folder is made through the link");
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn a_link_planted_at_the_output_name_is_not_followed() {
+        let (_dir, base, outside) = sandbox();
+        std::fs::create_dir(base.join("out")).unwrap();
+        link_dir(&base.join("out/a.pdf"), &outside);
+        assert_eq!(publish(&base.join("out/a.pdf"), b"%PDF-1.7").unwrap(), base.join("out/a (2).pdf"));
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0, "nothing is written through the link");
+    }
+
     #[test]
     fn publish_makes_missing_folders_and_never_replaces_a_file() {
         let (_dir, base, _) = sandbox();
@@ -608,6 +854,453 @@ mod tests {
         assert!(std::fs::rename(base.join("parent"), base.join("moved")).is_err(), "its parent is held");
         drop(folder);
         std::fs::rename(&out, base.join("moved")).unwrap();
+    }
+
+    /// `path` with every separator `\`, as Windows tools take it.
+    #[cfg(windows)]
+    fn win(path: &Path) -> String {
+        path.components().collect::<PathBuf>().to_string_lossy().into_owned()
+    }
+
+    /// Sets a mount-point reparse point on the existing folder `dir`, pointing at `target` (a
+    /// folder, which makes a junction, or `Volume{...}\`, which mounts a volume there), as another
+    /// process could whilst publish holds it: no rename and no delete, only `FSCTL_SET_REPARSE_POINT`
+    /// through a handle opened for `access` (`FILE_WRITE_ATTRIBUTES` is not subject to sharing).
+    /// Returns what the script said: `ok`, or the Windows error.
+    #[cfg(windows)]
+    fn convert_in_place(dir: &Path, target: &str, access: u32) -> String {
+        reparse_in_place(dir, target, access, false)
+    }
+
+    /// Sets a relative directory symbolic link (`SYMLINK_FLAG_RELATIVE`, `target` such as
+    /// `..\outside`) on the existing folder `dir` in place, as [`convert_in_place`] does a junction.
+    /// `None`, with a message, when this user may not make symbolic links.
+    #[cfg(windows)]
+    fn relative_symlink_in_place(dir: &Path, target: &str) -> Option<()> {
+        match reparse_in_place(dir, target, FILE_WRITE_ATTRIBUTES, true).as_str() {
+            "ok" => Some(()),
+            // ERROR_PRIVILEGE_NOT_HELD: no SeCreateSymbolicLinkPrivilege and no Developer Mode.
+            "fsctl failed 1314" => {
+                eprintln!("skipping: this user cannot make symbolic links");
+                None
+            }
+            said => panic!("{said}"),
+        }
+    }
+
+    #[cfg(windows)]
+    fn reparse_in_place(dir: &Path, target: &str, access: u32, relative_symlink: bool) -> String {
+        const SCRIPT: &str = r#"param([string]$Dir, [string]$Target, [uint32]$Access, [string]$Kind)
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+public static class InPlaceJunction {
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr sa, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    static extern bool DeviceIoControl(SafeFileHandle h, uint code, byte[] inBuf, int inLen, IntPtr outBuf, int outLen, out int returned, IntPtr overlapped);
+    public static string Make(string dir, string target, uint access, string kind) {
+        SafeFileHandle h = CreateFileW(dir, access, 7, IntPtr.Zero, 3, 0x02000000 | 0x00200000, IntPtr.Zero);
+        if (h.IsInvalid) return "open failed " + Marshal.GetLastWin32Error();
+        byte[] buf;
+        if (kind == "symrel") {
+            // IO_REPARSE_TAG_SYMLINK: a 20-byte header (with Flags), then the names.
+            byte[] name = Encoding.Unicode.GetBytes(target);
+            buf = new byte[20 + 2 * name.Length];
+            BitConverter.GetBytes(0xA000000Cu).CopyTo(buf, 0);
+            BitConverter.GetBytes((ushort)(12 + 2 * name.Length)).CopyTo(buf, 4);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 10);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 12);
+            BitConverter.GetBytes((ushort)name.Length).CopyTo(buf, 14);
+            BitConverter.GetBytes(1u).CopyTo(buf, 16);
+            name.CopyTo(buf, 20);
+            name.CopyTo(buf, 20 + name.Length);
+        } else {
+            byte[] sub = Encoding.Unicode.GetBytes("\\??\\" + target);
+            int pathLen = sub.Length + 4;
+            buf = new byte[16 + pathLen];
+            BitConverter.GetBytes(0xA0000003u).CopyTo(buf, 0);
+            BitConverter.GetBytes((ushort)(8 + pathLen)).CopyTo(buf, 4);
+            BitConverter.GetBytes((ushort)sub.Length).CopyTo(buf, 10);
+            BitConverter.GetBytes((ushort)(sub.Length + 2)).CopyTo(buf, 12);
+            sub.CopyTo(buf, 16);
+        }
+        int r;
+        bool ok = DeviceIoControl(h, 0x000900A4, buf, buf.Length, IntPtr.Zero, 0, out r, IntPtr.Zero);
+        int err = Marshal.GetLastWin32Error();
+        h.Close();
+        return ok ? "ok" : "fsctl failed " + err;
+    }
+}
+'@
+[InPlaceJunction]::Make($Dir, $Target, $Access, $Kind)
+"#;
+        // pwsh refuses a `\\?\` script path, which the canonical sandbox has.
+        let script = PathBuf::from(win(&dir.with_file_name("in-place-junction.ps1")).trim_start_matches(r"\\?\"));
+        std::fs::write(&script, SCRIPT).unwrap();
+        let out = std::process::Command::new("pwsh")
+            .args(["-NoProfile", "-NonInteractive", "-File"])
+            .arg(&script)
+            .arg(win(dir))
+            .arg(target)
+            .arg(access.to_string())
+            .arg(if relative_symlink { "symrel" } else { "junction" })
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if said.is_empty() { String::from_utf8_lossy(&out.stderr).trim().to_string() } else { said }
+    }
+
+    #[cfg(windows)]
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+    #[cfg(windows)]
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+
+    #[cfg(windows)]
+    fn names(dir: &Path) -> Vec<std::ffi::OsString> {
+        std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name()).collect()
+    }
+
+    #[cfg(windows)]
+    fn a_held_empty_folder_turned_into_a_junction_gets_nothing(access: u32) {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        assert_eq!(convert_in_place(&out, &win(&outside), access), "ok");
+        let error = folder.publish(b"%PDF-1.7", [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside).is_empty(), "written outside the checked folder: {:?}", names(&outside));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_held_empty_folder_turned_into_a_junction_in_place_gets_nothing_written_through_it() {
+        a_held_empty_folder_turned_into_a_junction_gets_nothing(FILE_WRITE_ATTRIBUTES);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_held_empty_folder_turned_into_a_junction_by_a_writer_gets_nothing_written_through_it() {
+        a_held_empty_folder_turned_into_a_junction_gets_nothing(GENERIC_WRITE);
+    }
+
+    /// The design rests on this: NTFS refuses a reparse point on a folder that has an entry.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_with_an_entry_cannot_be_turned_into_a_junction() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir(&out).unwrap();
+        std::fs::write(out.join("entry"), b"").unwrap();
+        assert_eq!(convert_in_place(&out, &win(&outside), FILE_WRITE_ATTRIBUTES), "fsctl failed 145");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_just_made_and_turned_into_a_junction_gets_no_folder_made_through_it() {
+        let (_dir, base, outside) = sandbox();
+        let made = base.join("new");
+        let mut folder = Folder::open_checked(&made).unwrap();
+        assert_eq!(convert_in_place(&made, &win(&outside), FILE_WRITE_ATTRIBUTES), "ok");
+        let error = folder.enter_checked("sub".as_ref()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside).is_empty(), "made outside the checked folder: {:?}", names(&outside));
+    }
+
+    /// The only entry of a held folder is moved out, the emptied folder is turned into a junction
+    /// to where the entry went, and the walk goes on by path: the path now leads outside.
+    #[cfg(windows)]
+    #[test]
+    fn an_entry_moved_out_of_a_held_folder_turned_into_a_junction_is_refused() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir_all(out.join("inner")).unwrap();
+        let mut folder = Folder::open_checked(&out).unwrap();
+        std::fs::rename(out.join("inner"), outside.join("inner")).unwrap();
+        assert_eq!(convert_in_place(&out, &win(&outside), FILE_WRITE_ATTRIBUTES), "ok");
+        let error = folder.enter_checked("inner".as_ref()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside.join("inner")).is_empty());
+    }
+
+    /// Moves each temporary file of `out` that another process can move into `to`, and puts a
+    /// file of its own at that name.
+    #[cfg(windows)]
+    fn swap_temporaries(out: &Path, to: &Path) {
+        for name in names(out) {
+            if std::fs::rename(out.join(&name), to.join(&name)).is_ok() {
+                std::fs::write(out.join(&name), b"theirs").unwrap();
+            }
+        }
+    }
+
+    /// Another process moves the temporary file away and puts its own file at the temporary name
+    /// just before it is named: the rename then gives the other file the output name. The publish
+    /// fails, leaves that file alone and removes only the file it made.
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_file_swapped_before_it_is_named_is_not_published() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let taken = std::iter::once(()).map(|()| {
+            swap_temporaries(&out, &outside);
+            std::ffi::OsString::from("a.pdf")
+        });
+        let error = folder.publish(b"ours", taken).unwrap_err().to_string();
+        assert!(error.contains("replaced"), "{error}");
+        assert_eq!(std::fs::read(out.join("a.pdf")).unwrap(), b"theirs", "the other file is not removed");
+        assert!(names(&outside).is_empty(), "the file made is not kept: {:?}", names(&outside));
+    }
+
+    /// A failed publish removes only what it made: a file another process put at a temporary name
+    /// survives, and the folder is left holding only that file.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_put_at_a_temporary_name_survives_a_failed_publish() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let taken = std::iter::once(()).filter_map(|()| {
+            swap_temporaries(&out, &outside);
+            None::<std::ffi::OsString>
+        });
+        let error = folder.publish(b"ours", taken).unwrap_err().to_string();
+        assert!(error.contains("occupied"), "{error}");
+        let left: Vec<Vec<u8>> = names(&out).iter().map(|name| std::fs::read(out.join(name)).unwrap()).collect();
+        assert_eq!(left, [b"theirs".to_vec()]);
+        assert!(names(&outside).is_empty(), "the file made is not kept: {:?}", names(&outside));
+    }
+
+    /// Whilst the file is named, another process moves out every entry of the output folder it
+    /// can: the anchor stays, so the folder cannot be turned into a link.
+    #[cfg(windows)]
+    #[test]
+    fn the_output_folder_keeps_an_entry_whilst_the_file_is_named() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let said = std::cell::RefCell::new(String::new());
+        let taken = std::iter::once(()).map(|()| {
+            for name in names(&out) {
+                let _ = std::fs::rename(out.join(&name), outside.join(&name));
+            }
+            *said.borrow_mut() = convert_in_place(&out, &win(&outside), FILE_WRITE_ATTRIBUTES);
+            std::ffi::OsString::from("a.pdf")
+        });
+        let _ = folder.publish(b"%PDF-1.7", taken);
+        assert_eq!(said.into_inner(), "fsctl failed 145");
+    }
+
+    /// A file made in the output folder is moved out before it is pinned: the pin reports where
+    /// the file now is, so it is refused, and the file is then deleted by its handle.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_moved_out_before_it_is_pinned_is_refused_and_deleted() {
+        let (_dir, base, outside) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let made = folder.make_temporary().unwrap();
+        let [name] = names(&out).try_into().unwrap();
+        std::fs::rename(out.join(&name), outside.join(&name)).unwrap();
+        let error = folder.pin(&made, winx::file::AccessMode::GENERIC_READ).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        drop(made);
+        assert!(names(&outside).is_empty(), "{:?}", names(&outside));
+    }
+
+    /// The empty temporary file is turned into a relative symbolic link to another file before it
+    /// is pinned and written: the output name would read as that file, so the publish fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_file_turned_into_a_link_before_it_is_written_is_not_published() {
+        let (_dir, base, outside) = sandbox();
+        std::fs::write(outside.join("x"), b"victim").unwrap();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let anchor = folder.make_temporary().unwrap();
+        let _pin = folder.pin(&anchor, winx::file::AccessMode::GENERIC_READ).unwrap();
+        let before = names(&out);
+        let temp = folder.make_temporary().unwrap();
+        let [name] = names(&out).into_iter().filter(|n| !before.contains(n)).collect::<Vec<_>>().try_into().unwrap();
+        if relative_symlink_in_place(&out.join(name), r"..\outside\x").is_none() {
+            return;
+        }
+        let error = folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
+        assert_eq!(std::fs::read(outside.join("x")).unwrap(), b"victim");
+    }
+
+    /// Another process holds the temporary file open for writing before it is pinned: it could
+    /// change the bytes, or empty the file and turn it into a link, so the publish fails.
+    #[cfg(windows)]
+    #[test]
+    fn a_temporary_file_another_process_can_write_is_not_published() {
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        let folder = Folder::open_checked(&out).unwrap();
+        let before = names(&out);
+        let temp = folder.make_temporary().unwrap();
+        let [name] = names(&out).into_iter().filter(|n| !before.contains(n)).collect::<Vec<_>>().try_into().unwrap();
+        let writer = std::fs::OpenOptions::new().write(true).open(out.join(&name)).unwrap();
+        assert!(folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).is_err());
+        assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
+        drop(writer);
+    }
+
+    /// A batch that has just made the output folder holds it with delete access for a moment; a
+    /// concurrent publish into it waits for that instead of failing with a sharing violation.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_another_writer_has_just_made_is_held_once_it_lets_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_ALL: u32 = 0x7;
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let making = std::fs::OpenOptions::new().access_mode(DELETE).share_mode(SHARE_ALL).custom_flags(Folder::BACKUP_SEMANTICS).open(&out).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(making);
+        });
+        let published = publish(&out.join("a.pdf"), b"%PDF-1.7");
+        release.join().unwrap();
+        assert_eq!(published.unwrap(), out.join("a.pdf"));
+    }
+
+    /// A folder held with delete access for the whole publish fails it after about a second,
+    /// instead of making it wait for ever.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_held_with_delete_access_fails_the_publish_in_bounded_time() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_ALL: u32 = 0x7;
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let held = std::fs::OpenOptions::new().access_mode(DELETE).share_mode(SHARE_ALL).custom_flags(Folder::BACKUP_SEMANTICS).open(&out).unwrap();
+        let started = std::time::Instant::now();
+        let error = publish(&out.join("a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        let took = started.elapsed();
+        drop(held);
+        assert!(error.contains("os error 32"), "{error}");
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        assert!(!out.join("a.pdf").exists());
+    }
+
+    /// A file changed between the write and the second handle (written over, cut short or grown)
+    /// is refused before it is named.
+    #[cfg(windows)]
+    #[test]
+    fn a_file_whose_bytes_changed_after_the_write_is_refused() {
+        let (_dir, base, _) = sandbox();
+        let path = base.join("t");
+        for other in [&b"theirs"[..], b"our", b"ours and more"] {
+            std::fs::write(&path, other).unwrap();
+            let error = Folder::holds_exactly(&mut File::open(&path).unwrap(), b"ours").unwrap_err().to_string();
+            assert!(error.contains("changed"), "{error}");
+        }
+        std::fs::write(&path, b"ours").unwrap();
+        Folder::holds_exactly(&mut File::open(&path).unwrap(), b"ours").unwrap();
+    }
+
+    /// An empty file can be turned into a link at any time, so no empty output is made.
+    #[cfg(windows)]
+    #[test]
+    fn an_empty_output_is_refused_and_nothing_is_made() {
+        let (_dir, base, _) = sandbox();
+        let error = publish(&base.join("out/a.pdf"), b"").unwrap_err().to_string();
+        assert!(error.contains("empty"), "{error}");
+        assert_eq!(std::fs::read_dir(base.join("out")).unwrap().count(), 0, "no file is left in the output folder");
+    }
+
+    /// A held folder just made is turned in place into a relative symbolic link to `..\outside`;
+    /// a relative create resolves that against the folder itself, so it lands in `outside`.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_just_made_and_turned_into_a_relative_symlink_gets_no_folder_made_through_it() {
+        let (_dir, base, outside) = sandbox();
+        let made = base.join("new");
+        let mut folder = Folder::open_checked(&made).unwrap();
+        if relative_symlink_in_place(&made, r"..\outside").is_none() {
+            return;
+        }
+        let error = folder.enter_checked("sub".as_ref()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside).is_empty(), "made outside the checked folder: {:?}", names(&outside));
+    }
+
+    /// The held output folder `b\out` is turned into a relative symbolic link to `..\outside`, and
+    /// a junction `outside` beside `b` leads to `b\outside`, so the folder reached by path
+    /// (`b\..\outside`) and the one reached relative to the held folder (`out\..\outside`) are the
+    /// same: every check that compares the two agrees, and the file must still not land there.
+    #[cfg(windows)]
+    #[test]
+    fn a_held_output_folder_turned_into_a_relative_symlink_gets_nothing_published_through_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join(r"b\outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        link_dir(&dir.path().join("outside"), &outside);
+        let out = dir.path().canonicalize().unwrap().join(r"b\out");
+        let folder = Folder::open_checked(&out).unwrap();
+        if relative_symlink_in_place(&out, r"..\outside").is_none() {
+            return;
+        }
+        let result = folder.publish(b"%PDF-1.7 ours", [std::ffi::OsString::from("a.pdf")].into_iter());
+        assert!(names(&outside).is_empty(), "written outside the checked folder: {:?} ({result:?})", names(&outside));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publish_refuses_an_output_folder_that_is_a_directory_symlink() {
+        let (_dir, base, outside) = sandbox();
+        match std::os::windows::fs::symlink_dir(&outside, base.join("out")) {
+            Ok(()) => {}
+            // ERROR_PRIVILEGE_NOT_HELD: no SeCreateSymbolicLinkPrivilege and no Developer Mode.
+            Err(e) if e.raw_os_error() == Some(1314) => return eprintln!("skipping: this user cannot make symbolic links"),
+            Err(e) => panic!("{e}"),
+        }
+        let error = publish(&base.join("out/a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(names(&outside).is_empty());
+    }
+
+    /// The volume holding the sandbox, as `Volume{...}\`.
+    #[cfg(windows)]
+    fn volume_of(path: &Path) -> String {
+        let Some(std::path::Component::Prefix(prefix)) = path.components().next() else { panic!("no drive in {path:?}") };
+        let drive = format!("{}\\", prefix.as_os_str().to_string_lossy().trim_start_matches(r"\\?\"));
+        let out = std::process::Command::new("mountvol").arg(&drive).arg("/L").output().unwrap();
+        let said = String::from_utf8_lossy(&out.stdout);
+        said.trim().trim_start_matches(r"\\?\").to_string()
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_volume_mounted_at_the_output_folder_gets_nothing_written_to_it() {
+        let (_dir, base, _) = sandbox();
+        let volume = volume_of(&base);
+        assert!(volume.starts_with("Volume{"), "{volume}");
+        let name = format!("plutarch-mount-test-{}.pdf", std::process::id());
+        // Mounted before the walk, and mounted at a held, empty folder after it.
+        let early = base.join("early");
+        std::fs::create_dir(&early).unwrap();
+        assert_eq!(convert_in_place(&early, &volume, FILE_WRITE_ATTRIBUTES), "ok");
+        let error = publish(&early.join(&name), b"%PDF-1.7").unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        let late = base.join("late");
+        let folder = Folder::open_checked(&late).unwrap();
+        assert_eq!(convert_in_place(&late, &volume, FILE_WRITE_ATTRIBUTES), "ok");
+        let error = folder.publish(b"%PDF-1.7", [std::ffi::OsString::from(&name)].into_iter()).unwrap_err().to_string();
+        assert!(error.contains("link"), "{error}");
+        assert!(!early.join(&name).exists() && !late.join(&name).exists(), "nothing reached the volume's root");
     }
 
     #[test]

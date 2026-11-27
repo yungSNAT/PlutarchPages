@@ -98,3 +98,6 @@ pub(super) fn parse_num(s: &str) -> Option<f64> {
 pub(super) fn is_numeric_text(s: &str) -> bool {
     s.trim().parse::<f64>().is_ok_and(f64::is_finite)
 }
+
+#[cfg(test)]
+mod fork_tests;

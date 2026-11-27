@@ -810,7 +810,9 @@ mod tests {
         let form_page = refs(root.get(b"Kids").unwrap())[12];
         let acroform = doc.get_dictionary(catalog.get(b"AcroForm").unwrap().as_reference().unwrap()).unwrap();
         assert_eq!(acroform.get(b"Fields").unwrap().as_array().unwrap().len(), 13);
+        assert!(!acroform.get(b"NeedAppearances").unwrap().as_bool().unwrap());
         let form_annots = refs(doc.get_dictionary(form_page).unwrap().get(b"Annots").unwrap());
+        assert_eq!(form_annots.len(), 18);
         let links: Vec<_> = form_annots.iter().filter(|&&id| subtype(doc, id) == "Link").collect();
         assert_eq!(links.len(), 2);
 

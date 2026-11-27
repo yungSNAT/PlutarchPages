@@ -317,3 +317,6 @@ fn settle(readings: &mut Vec<Reading>) -> bool {
     }
     readings.len() <= MAX_READINGS
 }
+
+#[cfg(test)]
+mod fork_tests;

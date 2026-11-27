@@ -428,3 +428,6 @@ impl Default for Limits {
         Limits { loop_iterations: 1_000_000, recursion: 256 }
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

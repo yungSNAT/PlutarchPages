@@ -206,3 +206,6 @@ fn lex_number(chars: &[char], i: &mut usize, line: usize) -> Result<f64, String>
     let text: String = chars[start..*i].iter().collect();
     text.parse().map_err(|_| format!("line {line}: bad number {text}"))
 }
+
+#[cfg(test)]
+mod fork_tests;

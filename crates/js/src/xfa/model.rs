@@ -247,3 +247,6 @@ pub(crate) fn clip_result(out: &mut XfaOutcome) {
         out.result = Some(r);
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

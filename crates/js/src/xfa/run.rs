@@ -178,3 +178,6 @@ pub(crate) fn run_here(
     clip_result(&mut out);
     out
 }
+
+#[cfg(test)]
+mod fork_tests;

@@ -507,7 +507,7 @@ mod tests {
         // Helpers that are only called with a resolved path. `doc_batch` (batch.rs) resolves its
         // inputs and out_dir, walks only inside them (skipping links) and resolves every
         // discovered file again before `process` reads it or `publish` writes it (`open_checked`
-        // opens the checked output folder without following links). `doc_bates_multi`
+        // and the Windows helpers under it open the checked output folder without following links). `doc_bates_multi`
         // resolves its paths before checking output collisions and using the probe helpers.
         const RESOLVED_BY_CALLER: &[&str] = &[
             "write_atomic",
@@ -521,6 +521,11 @@ mod tests {
             "walk",
             "publish",
             "open_checked",
+            "hold_path",
+            "placed_in",
+            "enter_checked",
+            "make_temporary",
+            "take_name",
             "read_source",
             "check_unique_outputs",
             "probe_files_for_resolved_outputs",

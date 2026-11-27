@@ -432,3 +432,6 @@ fn is_identifier(name: &str) -> bool {
                 | "typeof"
         )
 }
+
+#[cfg(test)]
+mod fork_tests;

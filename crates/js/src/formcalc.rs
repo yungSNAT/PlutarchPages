@@ -28,6 +28,9 @@ mod parser;
 mod value;
 mod words;
 
+#[cfg(test)]
+mod fork_test_support;
+
 use ast::Stmt;
 pub(crate) use dates::days_in;
 #[cfg(test)]
@@ -203,6 +206,8 @@ pub fn run_formcalc_within(script: &str, event: &XfaEvent, doc: &XfaDoc, root: X
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod fork_tests;
 
     #[test]
     fn fixed_does_not_print_negative_zero() {

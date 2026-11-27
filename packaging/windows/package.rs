@@ -9,6 +9,7 @@
 mod package_fs;
 mod package_meta;
 mod package_pe;
+mod package_sign;
 mod package_tests;
 
 use package_fs::{
@@ -83,10 +84,7 @@ fn stage_core_files(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>) -> Result<Pa
     ] {
         copy_file_checked(&src, &stage.join(name))?;
     }
-    let sign_script = paths.script_dir.join("sign.ps1");
-    let gui_staged = stage.join("pdfcraft.exe").display().to_string();
-    let cli_staged = stage.join("pdfcraft-cli.exe").display().to_string();
-    run_ps_script(meta.shell_bin, &sign_script, &[&gui_staged, &cli_staged])?;
+    package_sign::sign_files(&[&stage.join("pdfcraft.exe"), &stage.join("pdfcraft-cli.exe")])?;
     Ok(stage)
 }
 
@@ -188,7 +186,7 @@ fn build_and_check_msi(paths: &BuildPaths<'_>, meta: &PackageMeta<'_>, stage: &P
     if pdb.exists() {
         fs::remove_file(pdb)?;
     }
-    run_ps_script(meta.shell_bin, &paths.script_dir.join("sign.ps1"), &[&msi_s])?;
+    package_sign::sign_files(&[&msi])?;
     Ok(msi)
 }
 

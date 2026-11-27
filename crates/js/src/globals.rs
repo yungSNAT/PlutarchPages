@@ -701,3 +701,6 @@ pub(crate) fn event_object(ctx: &mut Context, e: &Event) -> JsResult<(JsObject, 
         .build();
     Ok((event, store))
 }
+
+#[cfg(test)]
+mod fork_tests;

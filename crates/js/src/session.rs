@@ -651,6 +651,8 @@ impl ScriptSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    mod fork_tests;
     /// Create a small button-event job with document globals used by persistent-session regressions.
     fn job(source: &str) -> Job {
         Job {

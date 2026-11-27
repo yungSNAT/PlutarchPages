@@ -173,3 +173,6 @@ pub(super) fn format_date(y: i64, m: u32, d: u32, picture: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod fork_tests;

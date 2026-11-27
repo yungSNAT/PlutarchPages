@@ -72,6 +72,9 @@ pub mod xfa_session;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod fork_test_support;
+
 mod geometry;
 pub use geometry::{rotate_rect, unrotate_rect};
 

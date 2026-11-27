@@ -463,7 +463,7 @@ pub fn render_oracle(args: &[String]) -> anyhow::Result<()> {
             theirs_cmd.arg("-hide-annotations");
         }
         theirs_cmd.arg(file);
-        let theirs = run_capture_bytes(&mut theirs_cmd, 30).and_then(|b| pdfcraft_oracle::pixels::decode_pgm(&b));
+        let theirs = capture_oracle_image(&mut theirs_cmd, 30);
         // An oracle that cannot read a file says nothing about our fidelity, and a file we cannot
         // read is `xtask check`'s business, not this one's. Count each side and move on.
         if ours.is_none() {
@@ -530,14 +530,25 @@ fn pixels_of(w: usize, h: usize, buf: &[u8]) -> Option<pdfcraft_oracle::pixels::
 fn run_capture(cmd: &mut Command, timeout_s: u64) -> Option<String> {
     // `read_to_string` left the buffer empty when the output was not UTF-8; `from_utf8` keeps
     // exactly that behaviour now that the capture itself is byte-oriented.
-    Some(String::from_utf8(run_capture_bytes(cmd, timeout_s)?).unwrap_or_default())
+    let (_, stdout) = run_capture_bytes(cmd, timeout_s)?;
+    Some(String::from_utf8(stdout).unwrap_or_default())
 }
 
-/// [`run_capture`] for output that is not text — an oracle's image on stdout, for instance.
-fn run_capture_bytes(cmd: &mut Command, timeout_s: u64) -> Option<Vec<u8>> {
+/// An oracle's image on stdout, or `None` when the oracle failed: a failed renderer can still
+/// write a complete-looking image.
+fn capture_oracle_image(cmd: &mut Command, timeout_s: u64) -> Option<(usize, usize, Vec<u8>)> {
+    let (status, stdout) = run_capture_bytes(cmd, timeout_s)?;
+    if !status.success() {
+        return None;
+    }
+    pdfcraft_oracle::pixels::decode_pgm(&stdout)
+}
+
+/// [`run_capture`] for output that is not text, with the exit status. `None` when the child, or
+/// a descendant still holding its stdout, outlasts the timeout.
+fn run_capture_bytes(cmd: &mut Command, timeout_s: u64) -> Option<(std::process::ExitStatus, Vec<u8>)> {
     let mut child = cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
     let start = std::time::Instant::now();
-    let mut out = Vec::new();
     let mut stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         use std::io::Read;
@@ -545,20 +556,25 @@ fn run_capture_bytes(cmd: &mut Command, timeout_s: u64) -> Option<Vec<u8>> {
         let _ = stdout.read_to_end(&mut s);
         s
     });
+    let mut status = None;
     loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed().as_secs() > timeout_s => {
+        if status.is_none() {
+            status = child.try_wait().ok()?;
+        }
+        if let Some(status) = status
+            && reader.is_finished()
+        {
+            return Some((status, reader.join().ok()?));
+        }
+        if start.elapsed().as_secs() > timeout_s {
+            if status.is_none() {
                 let _ = child.kill();
                 let _ = child.wait();
-                return None;
             }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
-            Err(_) => return None,
+            return None;
         }
+        std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    out.extend_from_slice(&reader.join().ok()?);
-    Some(out)
 }
 
 /// The words of `s`, in the order they were extracted.
@@ -625,6 +641,8 @@ fn f1(a: &BTreeMap<String, usize>, b: &BTreeMap<String, usize>) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{PrivateDir, f1, order_score, root, word_sequence, words};
+
+    mod fork_tests;
 
     /// Each run gets a new folder of its own, private to the user, gone when the run ends.
     #[test]
@@ -812,7 +830,8 @@ mod tests {
         let err = super::run(Command::new("/nonexistent/tool"), "absent").unwrap_err();
         assert_eq!(err.to_string(), "absent: failed to spawn");
 
-        assert_eq!(super::run_capture_bytes(&mut sh(r"printf '\000\377ok'; printf 'noise' >&2; exit 9"), 5).unwrap(), b"\0\xffok");
+        let (status, stdout) = super::run_capture_bytes(&mut sh(r"printf '\000\377ok'; printf 'noise' >&2; exit 9"), 5).unwrap();
+        assert_eq!((status.code(), stdout.as_slice()), (Some(9), b"\0\xffok".as_slice()));
         assert_eq!(super::run_capture(&mut sh(r"printf '\377'"), 5).unwrap(), "", "output that is not UTF-8 reads as empty");
         assert_eq!(super::run_capture(&mut sh("printf 'text'"), 5).unwrap(), "text");
         assert!(super::run_capture(&mut Command::new("/nonexistent/tool"), 5).is_none());

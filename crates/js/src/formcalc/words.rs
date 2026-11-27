@@ -192,6 +192,8 @@ const HTML_ENTITIES: &[(&str, char)] = &[
 mod tests {
     use super::{HTML_ENTITIES, LATIN1_ENTITIES, decode_entities};
 
+    mod fork_tests;
+
     #[test]
     fn every_listed_html_entity_decodes_including_eight_byte_boundary() {
         for (i, &name) in LATIN1_ENTITIES.iter().enumerate() {

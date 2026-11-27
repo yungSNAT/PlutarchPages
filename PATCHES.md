@@ -62,6 +62,32 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   step until a save (`Editor::held`). Code in `crates/redact/src/elsewhere.rs` and `metadata.rs`
   and `crates/engine/src/session/save.rs`; tests in both crates' `tests/fork_tests.rs`. Upstream's
   `crates/redact/src/tests/elsewhere.rs` expects the new counts' fields as zero.
+- **Auto-tag running text** fails towards content when a line may hold an amount. A band line on
+  every page is a header or footer only if it holds no currency sign of any script (Unicode
+  category Sc) and no digits other than years: 4 ASCII digits from 1900 to 2099 with no `-`
+  (U+002D), `−` (U+2212) or `(` directly before them and no `)` directly after
+  (`Annual report 2026`, `(c) 2026 Firm` run; `300`, `(500)`, `-2026`, `(2026)`, `AUD 500`,
+  `GST 10%` don't; other scripts' digits never read as a year). Known limit: an amount from 1900
+  to 2099 repeated on every page without those marks reads as a year and runs, whether unsigned
+  (`Total 2000`) or signed another way (`[2026]`, `（2026）`, `–2026`, `- 2026`, `2026-`,
+  `Balance 2000 CR`). A line whose numbers change runs only if it
+  reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
+  number steps by one a page (any start, unnumbered pages skipped). Round brackets and a minus on
+  one side only (`(3)`, `-3`, `3-`) mark an amount, so such a changing number stays content;
+  `[3]` and `- 3 -` run. Known limit: a bare number in square brackets or between paired dashes
+  that steps by one a page runs as a page number whatever its size (`[500]`, `[501]`;
+  `- 500 -`, `- 501 -`), as neither shape marks an amount
+  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes). So do a
+  changing number with an en or em dash on one side only (`–5`, `5–`, `—5`, `– 5`) and one
+  with a `-` inside square brackets (`[-5]`), as only `-` and `−` count as a minus and
+  the one-sided check reads the bracket first.
+  Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
+  page, become footer artifacts that screen readers skip. A page number beside other words
+  (`Annual report, page 3`) stays content here. Code `repeats` in
+  `crates/a11y/src/autotag_running.rs`, with tests `differing_amounts_at_the_same_height_stay_content`,
+  `the_same_line_without_an_amount_still_repeats`, `total_2000_on_every_page_runs_as_a_year` and
+  `page_numbers_that_step_with_the_page_are_still_artifacts` in
+  `crates/a11y/src/autotag_running/tests/fork_tests.rs`.
 
 ## Only here
 
@@ -202,13 +228,20 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `packaging/windows/win_checks.rs` (with `win_checks_{json,policy,tests}.rs`) replaces the PowerShell font-notice
   validation and installer policy fixture logic in `font-notices.ps1`, `test-font-notices.ps1` and
   `test-install-policy.ps1`, which compile the standalone Rust helper on demand with `rustc --edition=2024 -D warnings`.
-- `packaging/windows/package.rs` (with `package_{pe,fs,meta,tests}.rs`) replaces the build, PE header checks,
+- `packaging/windows/package.rs` (with `package_{pe,fs,meta,sign,tests}.rs`) replaces the build, PE header checks,
   staging, model/font notice bundling, WiX invocation, portable staging/ZIP orchestration and CLI smoke
-  test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim.
-  Retained scripts stay non-Rust under documented constraints: `check-install-policy.ps1`, `test-msi.ps1` and
-  `test-install.ps1` depend on Windows Installer COM/MSI APIs (`WindowsInstaller.Installer`, constraint 2);
-  `sign.ps1` is a thin Windows SDK `signtool.exe` wrapper; `security-audit.ps1` is a read-only
-  Authenticode/YARA inspector.
+  test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim,
+  and the Authenticode signing of upstream's `sign.ps1` (`package_sign.rs`: the same signtool arguments,
+  with the Azure Trusted Signing client fetched by `curl.exe`, checked against its pinned SHA-256 and
+  unpacked by `tar.exe`). If a merge changes or brings back `sign.ps1`, port the change to
+  `package_sign.rs` and delete it.
+  A signing secret that is set but blank counts as unset, so the files are left unsigned with the
+  warning. `check-install-policy.ps1`, `test-msi.ps1` and `test-install.ps1` stay PowerShell: they use
+  the Windows Installer API (`WindowsInstaller.Installer`: a safe-mode package session with condition
+  evaluation and type-51 actions in the first 2, `RelatedProducts` in `test-install.ps1`), no safe Rust
+  binding covers those calls (msica 0.4.1 and msi 0.11.1 checked on 27 November 2026), and FFI would
+  need `unsafe`, which the workspace forbids. `security-audit.ps1` is a read-only
+  Authenticode/YARA inspector, still PowerShell.
 - `packaging/unix_package.rs` (with `unix_package_{env,fs,linux,freebsd,macos,flatpak,web,cert,tests}.rs`)
   replaces the Unix and web packaging orchestration in `packaging/linux/package.sh`,
   `packaging/linux/flatpak-bundle.sh`, `packaging/freebsd/package.sh`, `packaging/macos/package.sh`,
@@ -309,6 +342,25 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   reads records up to a limit, and `import_table` shares its CSV reader (`csv_records`), now
   stopping after the names and first row it takes (`crates/xfdf/src/tests/fork_tests.rs`). When upstream changes `import_table`'s CSV
   reading, make the change in `csv_records`.
+- Batch output through the folder as opened: `publish` in `crates/automation/src/batch.rs` (used by
+  `doc_batch` and `form_fill_batch`) opens the output folder one name at a time from the root,
+  refusing links, and makes and names each file relative to it, so a folder swapped for a link
+  after the path check cannot redirect the write. Unix uses `rustix` `openat`. Windows has no
+  handle-relative create in std and the workspace forbids `unsafe`, so it uses `fs_at` (made
+  relative to a held folder, deleted by handle) and `winx` (`GetFinalPathNameByHandleW`,
+  `ReOpenFile`): each folder is held without `FILE_SHARE_DELETE`; each file and folder made is
+  checked by its own handle to be in its held parent and deleted by that handle if not; an anchor
+  file held without delete sharing keeps the output folder non-empty (a folder with an entry cannot
+  become a reparse point) whilst the temporary file, written through a handle that shares no
+  delete or write and read back under one that shares no write, is renamed by path. An empty
+  output is refused, as only a file with data refuses a symbolic link. Not covered: an empty
+  file or folder made through a relative symbolic link before it is deleted by handle, which
+  stays if another process fills or holds it; a file another process puts at the temporary name,
+  which can take the output name (that output then fails and the file is left alone); and
+  network folders. This closes the link escapes the
+  tests demonstrate; it is not a by-construction guarantee, which would need `OBJ_DONT_REPARSE` on
+  every relative open and a rename by handle. Tests in the same file. Keep it over upstream's
+  `create_dir_all` and `tempfile` unless upstream makes publishing handle-relative.
 - LibreOffice has one route, `crates/external`: off until the user turns on External converters,
   with a version floor, a cancel flag and a process-tree kill. Its folder is owner-only on Unix and
   it stops LibreOffice once the files it writes anywhere in that folder pass the size limit (or
@@ -423,6 +475,11 @@ upstream change inside the hunk, as the pick's lines are already in it. Delete t
   the fork's collecting pass, and `crates/redact/src/interp.rs` at the `error` field of `Output` beside
   the fork's `Shared` and `Cleared`. In both, keep the fork's lines and any upstream change
   inside the hunk.
+- Auto-tag marks running headers, footers and page numbers as pagination artifacts: upstream
+  #7810 (`6f1c601a`, 26 November 2026), picked as one commit against its first parent. Its lines
+  are upstream's apart from the fork change 'Auto-tag running text' above (in
+  `crates/a11y/src/autotag_running.rs`: keep it when the merge brings upstream's version); the
+  following merge brings #8160 too (R4915).
 
 ## Merging upstream
 

@@ -143,3 +143,6 @@ fn quote(text: &str) -> String {
     out.push('"');
     out
 }
+
+#[cfg(test)]
+mod fork_tests;

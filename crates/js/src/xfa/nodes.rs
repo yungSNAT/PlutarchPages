@@ -414,3 +414,6 @@ pub(super) fn resolver(ctx: &mut Context, from: usize, many: bool) -> JsResult<J
     }
     Ok(function(ctx, NativeFunction::from_copy_closure_with_captures(resolve, key)).into())
 }
+
+#[cfg(test)]
+mod fork_tests;

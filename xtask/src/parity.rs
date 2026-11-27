@@ -296,4 +296,32 @@ mod tests {
         }
         assert!(validate(&[f("organize.y", "shipped")], &cmds, &tools, &repo)[0].contains("at least one test"));
     }
+
+    #[test]
+    fn validate_covers_craft_pdf_evidence_and_all_field_errors() {
+        let repo = root();
+        let cmds = HashSet::from(["page.rotate".to_string()]);
+        let tools = HashSet::from(["page_rotate".to_string()]);
+
+        assert_eq!(evidence_error("craft-pdf::src/lib.rs::unit_test", &repo), None);
+
+        let mut bad = f("organize.bad", "shipped");
+        bad.title = "   ".into();
+        bad.area = "Z".into();
+        bad.tier = "P9".into();
+        bad.milestone = "M99".into();
+        bad.tools = vec!["no_such_tool".into()];
+        bad.evidence = vec!["craft-pdf::src/lib.rs::unit_test".into()];
+        let all = validate(&[bad], &cmds, &tools, &repo).join("\n");
+        for needle in ["empty title", "unknown area", "unknown tier", "milestone", "automation table"] {
+            assert!(all.contains(needle), "missing {needle:?} in:\n{all}");
+        }
+    }
+
+    #[test]
+    fn run_reports_default_partial_and_json_on_committed_manifest() {
+        run(&[]).unwrap();
+        run(&["--partial".into()]).unwrap();
+        run(&["--json".into()]).unwrap();
+    }
 }

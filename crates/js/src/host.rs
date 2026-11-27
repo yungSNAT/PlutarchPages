@@ -325,3 +325,6 @@ mod string_budget_review_tests {
         assert_eq!(text_with_budget(&JsValue::null(), &mut ctx, 0, "text limit").unwrap(), "");
     }
 }
+
+#[cfg(test)]
+mod fork_tests;
