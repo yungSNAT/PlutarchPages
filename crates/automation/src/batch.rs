@@ -844,8 +844,19 @@ mod tests {
             Some(publish(&out.join("a.pdf"), b"%PDF-1.7"))
         };
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
-        if let Some(result) = result {
-            assert_eq!(result.unwrap(), out.join("a.pdf"));
+        // macOS 12 and earlier (Darwin 21 and earlier) ignore `O_EXEC` and open for reading, so
+        // there the folder is refused with the message that says so.
+        #[cfg(target_vendor = "apple")]
+        let searchable = {
+            let release = std::process::Command::new("uname").arg("-r").output().unwrap().stdout;
+            String::from_utf8_lossy(&release).split('.').next().and_then(|major| major.trim().parse::<u32>().ok()).unwrap() >= 22
+        };
+        #[cfg(not(target_vendor = "apple"))]
+        let searchable = true;
+        match result {
+            Some(result) if searchable => assert_eq!(result.unwrap(), out.join("a.pdf")),
+            Some(result) => assert!(result.unwrap_err().to_string().contains("macOS 12 and earlier")),
+            None => {}
         }
     }
 
