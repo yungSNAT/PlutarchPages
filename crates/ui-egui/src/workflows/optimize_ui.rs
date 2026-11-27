@@ -496,6 +496,7 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
+    mod fork_tests;
 
     #[test]
     fn the_progress_card_shows_the_stage_and_cancels() {
@@ -541,11 +542,6 @@ mod tests {
         assert_eq!(stage_label(OptimizeStage::Reading { done: 11, total: 51 }), "Optimizing… reading page 12 of 51");
         assert_eq!(stage_label(OptimizeStage::Reading { done: 51, total: 51 }), "Optimizing… reading page 51 of 51");
         assert_eq!(stage_label(OptimizeStage::Discarding), "Optimizing… removing user data");
-        assert_eq!(stage_label(OptimizeStage::Fragments), "Optimizing… merging image fragments");
-        assert_eq!(stage_label(OptimizeStage::Images { done: 0, total: 0 }), "Optimizing… image 1 of 1");
-        assert_eq!(stage_label(OptimizeStage::CleaningUp), "Optimizing… cleaning up");
-        assert_eq!(stage_label(OptimizeStage::Merging), "Optimizing… merging identical objects");
-        assert_eq!(stage_label(OptimizeStage::Writing), "Optimizing… writing the copy");
     }
 
     #[test]
