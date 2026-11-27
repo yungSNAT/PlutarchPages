@@ -1084,9 +1084,15 @@ mod tests {
         assert!(extra.start(job("1")).unwrap_err().contains("worker limit"));
         drop(workers.pop());
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while live_workers().load(std::sync::atomic::Ordering::SeqCst) == MAX_DOCUMENT_WORKERS {
-            assert!(std::time::Instant::now() < deadline);
+        // The worker thread releases its slot as it exits, so wait for that; every line runs on
+        // every pass, however soon the thread exits.
+        loop {
             std::thread::sleep(std::time::Duration::from_millis(5));
+            let freed = live_workers().load(std::sync::atomic::Ordering::SeqCst) < MAX_DOCUMENT_WORKERS;
+            assert!(freed || std::time::Instant::now() < deadline, "the dropped worker kept its slot");
+            if freed {
+                break;
+            }
         }
         assert_eq!(extra.run(job("digit('2')"), &[]).result.as_deref(), Some("2"));
         for worker in &mut workers {
