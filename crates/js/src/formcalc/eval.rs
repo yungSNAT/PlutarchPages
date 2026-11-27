@@ -1,5 +1,5 @@
 use super::ast::{Expr, Stmt};
-use super::value::{Val, is_numeric_text, num_text};
+use super::value::{Val, is_numeric_text};
 use super::{
     CALLS_TOO_DEEP, Flow, Func, HashMap, HashSet, Interp, LIST_TOO_LONG, LOOPED_TOO_MUCH, MAX_LIST, Message, MessageButtons, MessageIcon, R, Rc,
     TOO_DEEP, XfaEffect, child_named, clip, descendants_named, instances, reset_names, resolve_som,
@@ -130,8 +130,6 @@ impl Interp<'_> {
                     (Val::Null, Val::Null) => Some(std::cmp::Ordering::Equal),
                     (Val::Null, _) | (_, Val::Null) => None,
                     (Val::Str(s), Val::Str(t)) if !(is_numeric_text(s) && is_numeric_text(t)) => Some(s.cmp(t)),
-                    (Val::Str(s), Val::Num(_)) if !is_numeric_text(s) => Some(s.as_str().cmp(num_text(self.to_num(&b)).as_str())),
-                    (Val::Num(_), Val::Str(t)) if !is_numeric_text(t) => Some(num_text(self.to_num(&a)).as_str().cmp(t.as_str())),
                     _ => self.to_num(&a).partial_cmp(&self.to_num(&b)),
                 };
                 let r = match (op, ord) {
