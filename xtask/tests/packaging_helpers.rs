@@ -9,7 +9,9 @@ fn run_unit_tests(source: &str, name: &str) {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("xtask sits in the workspace root");
     let out = Path::new(env!("CARGO_TARGET_TMPDIR")).join("packaging-helpers");
     std::fs::create_dir_all(&out).expect("create the helper test folder");
-    let bin = out.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    // Per process: 2 runs sharing a target folder must not overwrite (or, on Windows, fail to
+    // replace) each other's running binary.
+    let bin = out.join(format!("{name}-{}{}", std::process::id(), std::env::consts::EXE_SUFFIX));
     let build = Command::new("rustc")
         .args(["--edition=2024", "-D", "warnings", "--test"])
         .arg(root.join(source))
