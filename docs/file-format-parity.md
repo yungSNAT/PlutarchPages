@@ -1,6 +1,6 @@
 # File format parity
 
-> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-11-27 · **Change:** minor (PDF/A-1b verified in part and measured on a public test corpus) · **Target:** Adobe Acrobat Pro (Acrobat DC, continuous track 26.002.21931, macOS)
+> **Last reviewed:** 2026-10-12 · **Last updated:** 2026-11-27 · **Change:** minor (PDF/A-1b verified in part) · **Target:** Adobe Acrobat Pro (Acrobat DC, continuous track 26.002.21931, macOS)
 
 Every format Acrobat Pro reads or writes, and PdfCraft's support for it. Acrobat's list comes from
 its bundle's `Info.plist` `CFBundleDocumentTypes` (what it opens) and its public documentation
@@ -26,7 +26,7 @@ features total).
 | Certificate-encrypted PDF (public-key handler) | R W | none (clear message) | none | `core.unsupported-handlers` |
 | Linearized PDF (Fast Web View) | R W | R (as normal PDF); no W | none for W | `core.linearization` planned |
 | Damaged PDF | R (repair) | R (repair, logged) | high | `core.repair-broken-files`, nightly fuzzing |
-| PDF/A-1, 2, 3, 4 | R W, verify | R; verify/convert 2b and 3b (partial); verify 1b (the ISO 19005-1 clauses in `crates/preflight/src/part1.rs`) | basic | `optimize.pdfa-*`; 1b on the 568 PDF/A-1b files of the PDF Association's PDF/A test corpus (github.com/veraPDF/veraPDF-corpus, commit 37772859), measured 27 Nov 2026: the verdict the corpus expects on 484, 246 of the 263 files it expects to pass and 238 of the 305 it expects to fail, so 17 conforming files get false failures (`crates/preflight/tests/verapdf_agreement.rs`); 2b and 3b not yet measured |
+| PDF/A-1, 2, 3, 4 | R W, verify | R; verify/convert 2b and 3b (partial); verify 1b (the ISO 19005-1 clauses in `crates/preflight/src/part1.rs`) | basic | `optimize.pdfa-*`; 1b checks only the clauses `part1.rs` lists |
 | PDF/X, PDF/UA, PDF/E, PDF/VT | R W, verify | R only | none | [pdf-spec-parity.md](pdf-spec-parity.md) |
 | PDF Portfolio (collection) | R W | R as a PDF with attachments; no portfolio view | none | `organize.portfolio-*` planned |
 | XFA forms (in PDF) | R W (fill) | R, lay out dynamic forms, fill, save datasets (partial) | basic | `form.xfa-*` partial; `crates/xfa` tests |
