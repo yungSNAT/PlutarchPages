@@ -17,6 +17,9 @@ struct TempDir(PathBuf);
 impl TempDir {
     fn new(prefix: &str) -> Result<Self> {
         let base = env::temp_dir(); // nosemgrep: rust.lang.security.temp-dir.temp-dir
+        // The helpers refuse a link anywhere on a path, and macOS links /var to /private/var.
+        #[cfg(unix)]
+        let base = base.canonicalize()?;
         for _ in 0..32 {
             let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_nanos());
             let seq = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
