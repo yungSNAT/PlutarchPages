@@ -228,6 +228,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
 - `packaging/windows/win_checks.rs` (with `win_checks_{json,policy,tests}.rs`) replaces the PowerShell font-notice
   validation and installer policy fixture logic in `font-notices.ps1`, `test-font-notices.ps1` and
   `test-install-policy.ps1`, which compile the standalone Rust helper on demand with `rustc --edition=2024 -D warnings`.
+  `xtask/tests/packaging_helpers.rs` compiles it, `package.rs` and `unix_package.rs` with `--test` and runs their
+  unit tests, so the workspace tests (the CI gate and coverage) run them.
 - `packaging/windows/package.rs` (with `package_{pe,fs,meta,sign,tests}.rs`) replaces the build, PE header checks,
   staging, model/font notice bundling, WiX invocation, portable staging/ZIP orchestration and CLI smoke
   test in `package.ps1` (still delegating `Compress-Archive` to PowerShell), which keeps only its thin shim,
@@ -240,8 +242,14 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   the Windows Installer API (`WindowsInstaller.Installer`: a safe-mode package session with condition
   evaluation and type-51 actions in the first 2, `RelatedProducts` in `test-install.ps1`), no safe Rust
   binding covers those calls (msica 0.4.1 and msi 0.11.1 checked on 27 November 2026), and FFI would
-  need `unsafe`, which the workspace forbids. `security-audit.ps1` is a read-only
-  Authenticode/YARA inspector, still PowerShell.
+  need `unsafe`, which the workspace forbids. `security-audit.ps1`, a read-only Authenticode/YARA
+  inspector, stays PowerShell too: it reports `Get-AuthenticodeSignature`'s status with the signer and
+  the timestamper for any signed file (executables, MSI packages, catalog-signed files), also when the
+  signature is not trusted. The safe wrappers (codesign-verify 0.2.0, verifysign 1.1.2, checked on 27
+  November 2026) give a signer only for a trusted signature and no timestamper, and `WinVerifyTrust`
+  through `windows-sys` needs `unsafe`. Parsing the signature in safe Rust (the authenticode crate for
+  the signer, `cms` for the timestamp countersignature, a wrapper's error code for the status) would
+  cover executables only, not MSI or catalog-signed files, so it is not taken.
 - `packaging/unix_package.rs` (with `unix_package_{env,fs,linux,freebsd,macos,flatpak,web,cert,tests}.rs`)
   replaces the Unix and web packaging orchestration in `packaging/linux/package.sh`,
   `packaging/linux/flatpak-bundle.sh`, `packaging/freebsd/package.sh`, `packaging/macos/package.sh`,
