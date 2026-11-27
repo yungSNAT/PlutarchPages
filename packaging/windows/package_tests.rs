@@ -8,6 +8,10 @@ mod unit_tests {
     use super::super::package_fs::{copy_file_checked, ensure_real_dir_path, reset_real_dir};
     use super::super::package_meta::{arch_spec, resolve_dir_path, resolve_version, strip_windows_verbatim, utc_date_from_unix_secs, validate_flags};
     use super::super::package_pe::verify_pe_bytes;
+    use super::super::package_sign::{
+        Source, azure_args, azure_metadata, certificate_args, decode_base64, find_x64_dlib, hex, json_escape, newest_x64_signtool, select_source,
+        sha256,
+    };
     use super::super::{
         PortableSources, Result, clear_existing_zip, copy_notice_line, copy_portable_notices, parse_args, remove_part_entry, stage_portable_dir,
     };
@@ -280,6 +284,122 @@ mod unit_tests {
         assert!(p_stage.join("models").join("ATTRIBUTION.txt").is_file());
         copy_portable_notices(&docs, &tmp.0)?;
         assert!(tmp.0.join("OFL-Inter.txt").is_file());
+        Ok(())
+    }
+
+    #[test]
+    fn sha256_matches_the_fips_vectors_and_block_edges() {
+        let cases: [(Vec<u8>, &str); 10] = [
+            (b"".to_vec(), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            (b"abc".to_vec(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"),
+            (
+                b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".to_vec(),
+                "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            ),
+            (vec![b'a'; 55], "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"),
+            (vec![b'a'; 56], "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"),
+            (vec![b'a'; 63], "7d3e74a05d7db15bce4ad9ec0658ea98e3f06eeecf16b4c6fff2da457ddc2f34"),
+            (vec![b'a'; 64], "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"),
+            (vec![b'a'; 65], "635361c48bb9eab14198e76ea8ab7f1a41685d6ad62aa9146d301d4f17eb0ae0"),
+            (vec![b'a'; 120], "2f3d335432c70b580af0e8e1b3674a7c020d683aa5f73aaaedfdc55af904c21c"),
+            (vec![b'a'; 1_000_000], "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"),
+        ];
+        for (input, want) in cases {
+            assert_eq!(hex(&sha256(&input)), want, "length {}", input.len());
+        }
+    }
+
+    #[test]
+    fn base64_decodes_like_from_base64_string_and_refuses_bad_input() -> Result {
+        assert_eq!(decode_base64("TWFu")?, b"Man");
+        assert_eq!(decode_base64("TWE=")?, b"Ma");
+        assert_eq!(decode_base64("TQ==")?, b"M");
+        assert_eq!(decode_base64(" TW\r\nFu TQ ==\n")?, b"ManM");
+        assert_eq!(decode_base64("+/+/")?, [0xfb, 0xff, 0xbf]);
+        assert_eq!(decode_base64("")?, b"");
+        for bad in ["T\x0cQ==", "TWF", "TQ=", "TQ===", "T===", "TQ==TQ==", "TW-u", "TW_u", "TWFu!"] {
+            let err = decode_base64(bad).err().map(|e| e.to_string());
+            assert_eq!(err.as_deref(), Some("WINDOWS_CERTIFICATE is not valid base64"), "{bad}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_certificate_wins_and_azure_needs_every_variable() {
+        let env = |set: &'static [&'static str]| move |name: &str| set.contains(&name).then(|| "x".to_owned());
+        assert_eq!(select_source(env(&[])), None);
+        assert_eq!(select_source(env(&["WINDOWS_CERTIFICATE_PASSWORD"])), None);
+        assert_eq!(select_source(env(&["WINDOWS_CERTIFICATE"])), Some(Source::Certificate));
+        assert_eq!(
+            select_source(env(&["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_ACCOUNT"])),
+            None
+        );
+        assert_eq!(
+            select_source(env(&[
+                "AZURE_TENANT_ID",
+                "AZURE_CLIENT_ID",
+                "AZURE_CLIENT_SECRET",
+                "AZURE_SIGNING_ENDPOINT",
+                "AZURE_SIGNING_ACCOUNT",
+                "AZURE_CERT_PROFILE"
+            ])),
+            Some(Source::Azure)
+        );
+        assert_eq!(
+            select_source(env(&[
+                "WINDOWS_CERTIFICATE",
+                "AZURE_TENANT_ID",
+                "AZURE_CLIENT_ID",
+                "AZURE_CLIENT_SECRET",
+                "AZURE_SIGNING_ENDPOINT",
+                "AZURE_SIGNING_ACCOUNT",
+                "AZURE_CERT_PROFILE"
+            ])),
+            Some(Source::Certificate)
+        );
+    }
+
+    #[test]
+    fn signtool_arguments_match_the_former_script() {
+        let common = ["sign", "/v", "/fd", "SHA256", "/td", "SHA256", "/d", "PlutarchPages", "/du", "https://github.com/yungSNAT/PlutarchPages"];
+        let strings = |v: Vec<std::ffi::OsString>| v.into_iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        let mut want: Vec<String> = common.iter().map(|s| (*s).to_owned()).collect();
+        want.extend(["/tr", "http://ts", "/f", "c.pfx"].map(str::to_owned));
+        assert_eq!(strings(certificate_args("http://ts", Path::new("c.pfx"), None)), want);
+        want.extend(["/p", " pw "].map(str::to_owned));
+        assert_eq!(strings(certificate_args("http://ts", Path::new("c.pfx"), Some(" pw "))), want);
+        let mut want: Vec<String> = common.iter().map(|s| (*s).to_owned()).collect();
+        want.extend(["/tr", "http://acs", "/dlib", "d.dll", "/dmdf", "m.json"].map(str::to_owned));
+        assert_eq!(strings(azure_args("http://acs", Path::new("d.dll"), Path::new("m.json"))), want);
+    }
+
+    #[test]
+    fn azure_metadata_is_escaped_json() {
+        assert_eq!(
+            azure_metadata("https://eus.codesigning.azure.net", "acc\"t", "p\\f\n"),
+            "{\"Endpoint\": \"https://eus.codesigning.azure.net\", \"CodeSigningAccountName\": \"acc\\\"t\", \"CertificateProfileName\": \"p\\\\f\\u000a\"}\n"
+        );
+        assert_eq!(json_escape("plain é"), "plain é");
+    }
+
+    #[test]
+    fn the_newest_x64_signtool_and_the_x64_dlib_are_found() -> Result {
+        let tmp = TempDir::new("pkg-sign")?;
+        for rel in ["10.0.1.0/x64", "10.0.2.0/x64", "10.0.3.0/x86", "10.0.3.0/arm64"] {
+            fs::create_dir_all(tmp.0.join(rel))?;
+            fs::write(tmp.0.join(rel).join("signtool.exe"), b"")?;
+        }
+        assert_eq!(newest_x64_signtool(&tmp.0), Some(tmp.0.join("10.0.2.0/x64").join("signtool.exe")));
+        assert_eq!(newest_x64_signtool(&tmp.0.join("10.0.3.0")), None);
+        assert_eq!(newest_x64_signtool(&tmp.0.join("missing")), None);
+        let client = tmp.0.join("client");
+        for rel in ["bin/x86", "bin/x64", "bin/arm64"] {
+            fs::create_dir_all(client.join(rel))?;
+            fs::write(client.join(rel).join("Azure.CodeSigning.Dlib.dll"), b"")?;
+        }
+        assert_eq!(find_x64_dlib(&client), Some(client.join("bin/x64").join("Azure.CodeSigning.Dlib.dll")));
+        fs::remove_file(client.join("bin/x64").join("Azure.CodeSigning.Dlib.dll"))?;
+        assert_eq!(find_x64_dlib(&client), None, "an x64 folder above the client does not count");
         Ok(())
     }
 }
