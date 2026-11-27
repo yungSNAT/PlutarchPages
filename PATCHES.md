@@ -209,10 +209,12 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   with the Azure Trusted Signing client fetched by `curl.exe`, checked against its pinned SHA-256 and
   unpacked by `tar.exe`). If a merge changes or brings back `sign.ps1`, port the change to
   `package_sign.rs` and delete it.
-  `check-install-policy.ps1`, `test-msi.ps1` and `test-install.ps1` stay PowerShell: they drive a Windows
-  Installer session (`WindowsInstaller.Installer`: a safe-mode package session, condition evaluation,
-  type-51 actions), no safe Rust binding drives one (msica 0.4.1 and msi 0.11.1 checked on 27 November
-  2026), and FFI would need `unsafe`, which the workspace forbids. `security-audit.ps1` is a read-only
+  A signing secret that is set but blank counts as unset, so the files are left unsigned with the
+  warning. `check-install-policy.ps1`, `test-msi.ps1` and `test-install.ps1` stay PowerShell: they use
+  the Windows Installer API (`WindowsInstaller.Installer`: a safe-mode package session with condition
+  evaluation and type-51 actions in the first 2, `RelatedProducts` in `test-install.ps1`), no safe Rust
+  binding covers those calls (msica 0.4.1 and msi 0.11.1 checked on 27 November 2026), and FFI would
+  need `unsafe`, which the workspace forbids. `security-audit.ps1` is a read-only
   Authenticode/YARA inspector, still PowerShell.
 - `packaging/unix_package.rs` (with `unix_package_{env,fs,linux,freebsd,macos,flatpak,web,cert,tests}.rs`)
   replaces the Unix and web packaging orchestration in `packaging/linux/package.sh`,

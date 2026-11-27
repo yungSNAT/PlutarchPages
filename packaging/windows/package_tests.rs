@@ -317,7 +317,7 @@ mod unit_tests {
         assert_eq!(decode_base64(" TW\r\nFu TQ ==\n")?, b"ManM");
         assert_eq!(decode_base64("+/+/")?, [0xfb, 0xff, 0xbf]);
         assert_eq!(decode_base64("")?, b"");
-        for bad in ["TWF", "TQ=", "TQ===", "T===", "TQ==TQ==", "TW-u", "TW_u", "TWFu!"] {
+        for bad in ["T\x0cQ==", "TWF", "TQ=", "TQ===", "T===", "TQ==TQ==", "TW-u", "TW_u", "TWFu!"] {
             let err = decode_base64(bad).err().map(|e| e.to_string());
             assert_eq!(err.as_deref(), Some("WINDOWS_CERTIFICATE is not valid base64"), "{bad}");
         }
@@ -327,8 +327,6 @@ mod unit_tests {
     #[test]
     fn the_certificate_wins_and_azure_needs_every_variable() {
         let env = |set: &'static [&'static str]| move |name: &str| set.contains(&name).then(|| "x".to_owned());
-        let azure =
-            ["AZURE_TENANT_ID", "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_SIGNING_ENDPOINT", "AZURE_SIGNING_ACCOUNT", "AZURE_CERT_PROFILE"];
         assert_eq!(select_source(env(&[])), None);
         assert_eq!(select_source(env(&["WINDOWS_CERTIFICATE_PASSWORD"])), None);
         assert_eq!(select_source(env(&["WINDOWS_CERTIFICATE"])), Some(Source::Certificate));
@@ -359,7 +357,6 @@ mod unit_tests {
             ])),
             Some(Source::Certificate)
         );
-        assert_eq!(azure.len(), 6);
     }
 
     #[test]

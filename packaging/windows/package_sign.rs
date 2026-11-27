@@ -231,11 +231,11 @@ pub fn json_escape(s: &str) -> String {
     out
 }
 
-/// Standard base64 (RFC 4648 section 4) with whitespace ignored, as .NET's `FromBase64String` reads it.
+/// Standard base64 (RFC 4648 section 4) ignoring space, tab, CR and LF, as .NET's `FromBase64String` reads it.
 pub fn decode_base64(text: &str) -> Result<Vec<u8>> {
     let bad = || "WINDOWS_CERTIFICATE is not valid base64".to_owned();
     let (mut out, mut acc, mut bits, mut symbols, mut pad) = (Vec::new(), 0u32, 0u32, 0usize, 0usize);
-    for c in text.bytes().filter(|c| !c.is_ascii_whitespace()) {
+    for c in text.bytes().filter(|c| !matches!(c, b' ' | b'\t' | b'\r' | b'\n')) {
         let value = match c {
             b'A'..=b'Z' => c - b'A',
             b'a'..=b'z' => c - b'a' + 26,
@@ -348,6 +348,8 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if let Err(e) = fs::remove_dir_all(&self.0) {
+            eprintln!("WARNING: could not remove the signing folder {}: {e}", self.0.display());
+        }
     }
 }
