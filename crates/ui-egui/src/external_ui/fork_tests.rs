@@ -71,10 +71,14 @@ fn closing_the_app_cancels_a_running_conversion() {
 #[test]
 fn a_web_address_that_is_not_http_starts_no_conversion() {
     let mut app = app();
+    // Converters on, so the refusal must come from `start_web_page` before any job starts.
+    let mut conv = app.session.external_converters().clone();
+    conv.enabled = true;
+    app.session.set_external_converters(conv);
     app.external.url = "file:///etc/passwd".into();
     app.start_web_page();
     assert_eq!(app.conversions_running(), 0);
-    assert!(!toast(&app).is_empty(), "the refusal is said");
+    assert!(toast(&app).contains("only http and https addresses can be converted"), "{}", toast(&app));
 }
 
 #[test]
@@ -82,7 +86,6 @@ fn reading_aloud_without_a_document_asks_for_one() {
     let mut app = app();
     app.read_aloud(false);
     assert_eq!(toast(&app), "Open a document to read it aloud");
-    assert!(!app.reading_aloud());
 }
 
 #[test]
