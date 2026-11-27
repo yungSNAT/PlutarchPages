@@ -1,6 +1,5 @@
 use super::*;
 
-#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn a_late_paper_list_does_not_interfere_with_the_selected_printer() {
     let mut app = PdfCraftApp::new();
