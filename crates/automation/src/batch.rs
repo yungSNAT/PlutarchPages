@@ -307,8 +307,8 @@ pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
 
 #[cfg(any(unix, windows))]
 const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
-const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple"))))]
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on systems without O_PATH or O_SEARCH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
 
 /// The output folder, held open from the file system root down.
 ///
@@ -336,18 +336,22 @@ impl Folder {
         use rustix::fs::{Mode, OFlags, mkdirat, openat};
         use rustix::io::Errno;
         use std::path::Component;
-        // `O_PATH` (Linux, Android, FreeBSD 14) needs only search permission on the folders above,
-        // as writing by path did. macOS has no `O_PATH`, and rustix offers it no `O_SEARCH`, so
-        // there the output folder and each folder above it must also be readable: a known limit,
-        // refused with a message saying what to do rather than written by path. A link met with `O_NOFOLLOW` fails with
-        // ELOOP (EMLINK on FreeBSD, ENOTDIR with `O_PATH`).
+        // `O_PATH` (Linux, Android, FreeBSD 14) and `O_SEARCH` (macOS) need only search permission
+        // on the folders above, as writing by path did. rustix names no `O_SEARCH`, so it is built
+        // from `O_EXEC` (0x40000000 in `<sys/fcntl.h>` and the libc crate) and `O_DIRECTORY`. Other
+        // systems open each folder for reading, so there the output folder and each folder above it
+        // must also be readable: a known limit, refused with a message saying what to do rather than
+        // written by path. A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on FreeBSD, ENOTDIR
+        // with `O_PATH`).
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        #[cfg(target_vendor = "apple")]
+        let flags = OFlags::from_bits_retain(0x4000_0000) | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple")))]
         let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let refused = |e: Errno| match e {
             Errno::LOOP | Errno::NOTDIR | Errno::MLINK => failed(LINKED_FOLDER),
-            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple")))]
             Errno::ACCESS => failed(UNREADABLE_FOLDER),
             e => failed(std::io::Error::from(e)),
         };
