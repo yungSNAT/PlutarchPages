@@ -81,7 +81,7 @@ and decomposed clash. Each file is written atomically and never replaces an
 existing file: a taken name gets a number, `kept (2).pdf`, as in `batch`, and the output
 folder is opened as `batch` opens it (no links on the way; on Windows a volume mounted at a folder is
 refused too; on macOS
-and other systems without `O_PATH` the output folder and the folders above it must be readable,
+12 and earlier and other systems without `O_PATH` the output folder and the folders above it must be readable,
 and a folder that has to be made needs a writable parent).
 
 Each file is staged as a temporary file in the output folder and renamed into

@@ -307,8 +307,8 @@ pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
 
 #[cfg(any(unix, windows))]
 const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple"))))]
-const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on systems without O_PATH or O_SEARCH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be searched, read or written; on macOS 12 and earlier and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
 
 /// The output folder, held open from the file system root down.
 ///
@@ -336,12 +336,13 @@ impl Folder {
         use rustix::fs::{Mode, OFlags, mkdirat, openat};
         use rustix::io::Errno;
         use std::path::Component;
-        // `O_PATH` (Linux, Android, FreeBSD 14) and `O_SEARCH` (macOS) need only search permission
-        // on the folders above, as writing by path did. rustix names no `O_SEARCH`, so it is built
-        // from `O_EXEC` (0x40000000 in `<sys/fcntl.h>` and the libc crate) and `O_DIRECTORY`. Other
-        // systems open each folder for reading, so there the output folder and each folder above it
-        // must also be readable: a known limit, refused with a message saying what to do rather than
-        // written by path. A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on FreeBSD, ENOTDIR
+        // `O_PATH` (Linux, Android, FreeBSD 14) and `O_SEARCH` (macOS 13 and later) need only search
+        // permission on each folder, as writing by path did. rustix names no `O_SEARCH`, so it is
+        // built from `O_EXEC` (0x40000000 in `<sys/fcntl.h>` and the libc crate) and `O_DIRECTORY`;
+        // macOS 12 and earlier ignore that bit and open for reading. There, and on the other systems,
+        // which open each folder for reading, the output folder and each folder above it must also be
+        // readable: a known limit, refused with a message saying what to do rather than written by
+        // path. A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on FreeBSD, ENOTDIR
         // with `O_PATH`).
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
@@ -351,7 +352,7 @@ impl Folder {
         let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let refused = |e: Errno| match e {
             Errno::LOOP | Errno::NOTDIR | Errno::MLINK => failed(LINKED_FOLDER),
-            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple")))]
+            #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
             Errno::ACCESS => failed(UNREADABLE_FOLDER),
             e => failed(std::io::Error::from(e)),
         };
