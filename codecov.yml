@@ -1,11 +1,14 @@
-# Codecov reports coverage for the README badge. The CI gate decides merges, so
-# Codecov's own statuses are informational and it posts no comments.
+# Codecov reports coverage for the README badge and gates every pull request: each
+# changed coverable line must be hit, and the project figure must not fall. It posts
+# no comments.
 coverage:
   status:
     project:
       default:
-        informational: true
+        target: auto
+        threshold: 0%
     patch:
       default:
-        informational: true
+        target: 100%
+        threshold: 0%
 comment: false
