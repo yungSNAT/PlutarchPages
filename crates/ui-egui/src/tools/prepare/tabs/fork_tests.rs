@@ -64,6 +64,12 @@ fn harness<'a>(format: Format, validate: Validate, tab: fn(&mut egui::Ui, &mut F
     harness
 }
 
+/// Opens the `n`th combo box of the tab, in drawing order (the category box is the first).
+fn open_combo(h: &mut egui_kittest::Harness<'_, FieldDraft>, n: usize) {
+    h.get_all_by_role(egui::accesskit::Role::ComboBox).nth(n).unwrap().click();
+    h.run_steps(2);
+}
+
 fn format(ui: &mut egui::Ui, d: &mut FieldDraft) {
     format_tab(ui, d, &Tokens::get(ui.ctx()));
 }
@@ -72,8 +78,7 @@ fn format(ui: &mut egui::Ui, d: &mut FieldDraft) {
 fn picking_a_category_gives_its_default_format_and_an_example() {
     let mut h = harness(Format::None, Validate::None, format);
     h.get_by_label("The value is shown as typed.");
-    h.get_by_label("None").click();
-    h.run_steps(2);
+    open_combo(&mut h, 0);
     h.get_by_label("Percentage").click();
     h.run_steps(3);
     let picked = Format::Percent { decimals: 2, sep: 0 };
@@ -85,15 +90,13 @@ fn picking_a_category_gives_its_default_format_and_an_example() {
 #[test]
 fn the_arbitrary_mask_entry_switches_a_special_format_to_a_mask_and_back() {
     let mut h = harness(Format::Special(0), Validate::None, format);
-    h.get_by_label("Zip Code").click();
-    h.run_steps(2);
+    open_combo(&mut h, 1);
     h.get_by_label("Arbitrary Mask").click();
     h.run_steps(3);
     assert_eq!(h.state().format, Format::Mask("999-999".into()));
     h.get_by_label("Mask:");
 
-    h.get_by_label("Arbitrary Mask").click();
-    h.run_steps(2);
+    open_combo(&mut h, 1);
     h.get_by_label("Phone Number").click();
     h.run_steps(3);
     assert_eq!(h.state().format, Format::Special(2));
