@@ -28,6 +28,12 @@ fn differing_amounts_at_the_same_height_stay_content() {
         ["\u{2212}500", "\u{2212}501", "\u{2212}502"],
         ["500-", "501-", "502-"],
         ["-1", "-2", "-3"],
+        ["\u{2013}500", "\u{2013}501", "\u{2013}502"],
+        ["500\u{2013}", "501\u{2013}", "502\u{2013}"],
+        ["\u{2014}500", "\u{2014}501", "\u{2014}502"],
+        ["\u{2013} 500", "\u{2013} 501", "\u{2013} 502"],
+        ["[-500]", "[-501]", "[-502]"],
+        ["[\u{2013}500]", "[\u{2013}501]", "[\u{2013}502]"],
     ] {
         let pages: Vec<Vec<Evidence>> = texts.iter().map(|t| vec![line(t, 60.0)]).collect();
         assert_eq!(run(&pages, Some(10.0)), [[None], [None], [None]], "{texts:?}");
@@ -95,6 +101,10 @@ fn page_numbers_that_step_with_the_page_are_still_artifacts() {
     assert_eq!(run(&pages, Some(10.0)), [vec![Some(Edge::Bottom)], vec![], vec![Some(Edge::Bottom)]]);
     let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("- {n} -"), 30.0)]).collect();
     assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "- n -");
+    let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("\u{2013} {n} \u{2013}"), 30.0)]).collect();
+    assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "– n –");
+    let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("[- {n} -]"), 30.0)]).collect();
+    assert!(run(&pages, Some(10.0)).iter().flatten().all(|e| *e == Some(Edge::Bottom)), "[- n -]");
     // Round brackets also mark negative amounts, so a changing `(n)` fails towards content.
     let pages: Vec<Vec<Evidence>> = (1..4).map(|n| vec![line(&format!("({n})"), 30.0)]).collect();
     assert!(run(&pages, Some(10.0)).iter().flatten().all(Option::is_none), "(n)");

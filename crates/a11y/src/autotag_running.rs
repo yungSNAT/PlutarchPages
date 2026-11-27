@@ -99,9 +99,7 @@ fn is_heading_sequence(window: &[Member<'_>], key: &str, body: Option<f64>) -> b
 /// `Total 100`, `Total 101` and an `Amount due` line on every page stay content; upstream marks
 /// them as footers. Known limit: a bare number in square brackets or between paired dashes that
 /// steps by one a page runs as a page number whatever its size (`[500]`, `[501]`; `- 500 -`,
-/// `- 501 -`), as neither shape marks an amount. So do a changing number with an en or em dash
-/// on one side only (`–5`, `5–`, `—5`, `– 5`) and one with a `-` inside square brackets
-/// (`[-5]`): [`is_page_number`] counts only `-` and U+2212 as a minus, before the brackets go.
+/// `- 501 -`), as neither shape marks an amount.
 fn repeats(window: &[Member<'_>], key: &str) -> bool {
     let Some(first) = window.first().map(|m| folded(&m.evidence.text)) else {
         return false;
@@ -185,10 +183,12 @@ fn folded(text: &str) -> String {
 
 /// A normalised key that is a page number alone or with its label: `#`, `page #`, `p. #`,
 /// `# of #`, `page # of #`, `#/#`, optionally in dashes or square brackets. Round brackets and a
-/// minus on one side only (`(#)`, `-#`, `#-`) mark an amount; `- # -` decorates a page number.
+/// dash or minus on one side only, inside square brackets or not (`(#)`, `-#`, `#–`, `[-#]`),
+/// mark an amount; `- # -` and `– # –` decorate a page number.
 fn is_page_number(key: &str) -> bool {
-    let minus = |c: char| matches!(c, '-' | '\u{2212}');
-    if key.contains(['(', ')']) || key.starts_with(minus) != key.ends_with(minus) {
+    let minus = |c: char| matches!(c, '-' | '\u{2212}' | '\u{2013}' | '\u{2014}');
+    let inner = key.trim_matches(|c: char| matches!(c, '[' | ']' | ' '));
+    if key.contains(['(', ')']) || inner.starts_with(minus) != inner.ends_with(minus) {
         return false;
     }
     let bare = key.trim_matches(|c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '[' | ']' | ' '));
