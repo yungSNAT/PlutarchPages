@@ -10113,6 +10113,21 @@ fn pdfa_through_tools() {
 }
 
 #[test]
+fn pdfa_1b_is_verified_but_not_converted_through_tools() {
+    let dir = workdir("pdfa-1b");
+    let mut a = auto(&dir);
+    let doc = ok(&mut a, "doc_create", json!({ "from": "text", "text": "Archive me" }))["doc"].as_u64().unwrap();
+    let r = ok(&mut a, "pdfa_verify", json!({ "doc": doc, "level": "1b" }));
+    assert_eq!((&r["level"], &r["standard"], &r["compliant"]), (&json!("PDF/A-1b"), &json!("ISO 19005-1:2005"), &json!(false)), "{r}");
+    // ISO 19005-1 numbers the missing metadata 6.7.2, where part 2 says 6.6.2.1.
+    assert!(r["issues"].as_array().unwrap().iter().any(|i| i["clause"] == "6.7.2"), "{r}");
+    assert_eq!(ok(&mut a, "pdfa_verify", json!({ "doc": doc }))["standard"], "ISO 19005-2:2011");
+    let before = ok(&mut a, "doc_info", json!({ "doc": doc }));
+    assert!(matches!(a.call("pdfa_convert", &json!({ "doc": doc, "level": "1b" })), Err(ToolError::InvalidArgs(_))));
+    assert_eq!(ok(&mut a, "doc_info", json!({ "doc": doc })), before, "a refused conversion leaves the document as it was");
+}
+
+#[test]
 fn print_readiness_through_tools() {
     let dir = workdir("print-readiness");
     let mut a = auto(&dir);

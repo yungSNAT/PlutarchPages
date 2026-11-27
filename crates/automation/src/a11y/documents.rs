@@ -30,7 +30,7 @@ impl Automation {
 
     fn pdfa_level(&self, a: &Args) -> Result<pdfcraft_engine::pdfa::Level> {
         let l = a.opt_str("level")?.unwrap_or("2b");
-        pdfcraft_engine::pdfa::Level::from_id(l).ok_or_else(|| ToolError::InvalidArgs(format!("unknown PDF/A level {l:?} (2b or 3b)")))
+        pdfcraft_engine::pdfa::Level::from_id(l).ok_or_else(|| ToolError::InvalidArgs(format!("unknown PDF/A level {l:?} (1b, 2b or 3b)")))
     }
 
     pub(crate) fn pdfa_verify(&self, a: &Args) -> Result<Value> {
@@ -44,6 +44,7 @@ impl Automation {
         let d = doc.standards();
         Ok(json!({
             "level": level.label(),
+            "standard": level.standard(),
             "compliant": issues.is_empty(),
             "issues": issues,
             "declared": { "pdfa": d.pdfa.map(|(p, c)| format!("PDF/A-{p}{}", c.to_lowercase())), "pdfua": d.pdfua, "output_intents": d.output_intents },
@@ -102,6 +103,9 @@ impl Automation {
 
     pub(crate) fn pdfa_convert(&mut self, a: &Args) -> Result<Value> {
         let level = self.pdfa_level(a)?;
+        if level == pdfcraft_engine::pdfa::Level::A1b {
+            return Err(ToolError::InvalidArgs("Save as PDF/A converts to 2b or 3b; PDF/A-1b can be verified only".into()));
+        }
         let id = self.doc(a)?.id;
         let warnings = self.apply_with_warnings(id, pdfcraft_engine::Edit::ConvertPdfA { level })?;
         Ok(with_warnings(self.pdfa_verify(a)?, warnings))

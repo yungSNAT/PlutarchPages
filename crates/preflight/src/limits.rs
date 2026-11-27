@@ -44,13 +44,38 @@ const MAX_CONTENT_BYTES: usize = 256 << 20;
 /// The page boundaries, of which only the media and crop boxes are inherited.
 const BOXES: [&[u8]; 5] = [b"MediaBox", b"CropBox", b"BleedBox", b"TrimBox", b"ArtBox"];
 
+/// The limits of one PDF version's Annex C that differ between the parts of ISO 19005.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Table {
+    /// The largest real value.
+    max_real: f64,
+    /// The nonzero real value closest to zero, when the part forbids nearer ones.
+    min_real: Option<f64>,
+    /// The longest string, in bytes.
+    max_string: usize,
+}
+
+/// ISO 32000-1 Table C.1, as PDF/A-2 and 3 apply it.
+pub(crate) const PDF_1_7: Table = Table { max_real: MAX_REAL, min_real: Some(MIN_REAL), max_string: MAX_STRING };
+
+/// PDF Reference 1.4 Table C.1, as PDF/A-1 applies it (ISO 19005-1 6.1.12): reals within ±32767
+/// and strings of at most 65535 bytes.
+pub(crate) const PDF_1_4: Table = Table { max_real: 32767.0, min_real: None, max_string: 65535 };
+
+impl Default for Table {
+    fn default() -> Self {
+        PDF_1_7
+    }
+}
+
 /// Which limits a value went past.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct Exceeded {
     pub(crate) int: bool,
     pub(crate) real: bool,
     pub(crate) string: bool,
     pub(crate) name: bool,
+    table: Table,
 }
 
 impl Exceeded {
@@ -69,8 +94,11 @@ impl Exceeded {
         }
         match o {
             Object::Int(i) => self.int |= !(MIN_INT..=MAX_INT).contains(i),
-            Object::Real(r) => self.real |= !r.is_finite() || r.abs() > MAX_REAL || (*r != 0.0 && r.abs() < MIN_REAL),
-            Object::String(s) => self.string |= s.bytes.len() > MAX_STRING,
+            Object::Real(r) => {
+                let t = self.table;
+                self.real |= !r.is_finite() || r.abs() > t.max_real || t.min_real.is_some_and(|min| *r != 0.0 && r.abs() < min);
+            }
+            Object::String(s) => self.string |= s.bytes.len() > self.table.max_string,
             Object::Name(n) => self.name(n),
             Object::Array(a) => {
                 for v in a {
@@ -106,11 +134,12 @@ impl Exceeded {
     }
 }
 
-/// The limits that the trailer, the indirect objects `objs` and the content streams go past.
+/// The limits of `table` that the trailer, the indirect objects `objs` and the content streams go
+/// past.
 /// `content` holds the content streams only a reference identifies (a page's `/Contents`, Type 3
 /// glyph procedures), besides form XObjects and appearance streams, which say so themselves.
-pub(crate) fn exceeded(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)], content: &HashSet<ObjRef>) -> Exceeded {
-    let mut found = Exceeded::default();
+pub(crate) fn exceeded(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)], content: &HashSet<ObjRef>, table: Table) -> Exceeded {
+    let mut found = Exceeded { table, ..Exceeded::default() };
     found.dict(doc.trailer(), 0);
     for (_, o) in objs {
         if found.all() {

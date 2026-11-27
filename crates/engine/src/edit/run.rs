@@ -930,6 +930,9 @@ pub(crate) fn run_edit(doc: &mut pdfcraft_cos::Document, edit: &Edit, cx: &mut E
             };
         }
         Edit::ConvertPdfA { level } => {
+            if *level == pdfcraft_preflight::Level::A1b {
+                return Err(EditError::Invalid("Save as PDF/A converts to PDF/A-2b or 3b; PDF/A-1b can be verified only".into()));
+            }
             pdfcraft_preflight::convert(doc, *level).map_err(|e| EditError::Invalid(e.to_string()))?;
         }
         Edit::RemoveStandardId { standard } => pdfcraft_organize::remove_standard_id(doc, *standard)?,
