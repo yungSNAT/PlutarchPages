@@ -4963,6 +4963,7 @@ dependencies = [
 name = "pdfcraft-a11y"
 version = "0.22.0"
 dependencies = [
+ "icu_properties",
  "pdfcraft-content",
  "pdfcraft-cos",
  "pdfcraft-fonts",

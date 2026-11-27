@@ -17,3 +17,5 @@ pdfcraft-model = { workspace = true }
 pdfcraft-content = { workspace = true }
 pdfcraft-fonts = { workspace = true }
 thiserror.workspace = true
+# Already in the graph (engine uses it in links.rs): the Unicode category of a currency sign.
+icu_properties = "2.3"
