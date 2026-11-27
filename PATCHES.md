@@ -79,7 +79,8 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   that steps by one a page runs as a page number whatever its size (`[500]`, `[501]`;
   `- 500 -`, `- 501 -`), as neither shape marks an amount
   (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes). The pair may
-  mix dash kinds (`– 500 -`), and a minus inside it is read as decoration (`- -3 -`).
+  mix `-`, `–` and `—` (`– 500 -`; a `−` keeps the number content), and a minus inside it is
+  read as decoration (`- -3 -`).
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in

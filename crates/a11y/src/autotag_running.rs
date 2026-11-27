@@ -188,7 +188,8 @@ fn folded(text: &str) -> String {
 fn is_page_number(key: &str) -> bool {
     let minus = |c: char| matches!(c, '-' | '\u{2212}' | '\u{2013}' | '\u{2014}');
     let inner = key.trim_matches(|c: char| matches!(c, '[' | ']' | ' '));
-    if key.contains(['(', ')']) || inner.starts_with(minus) != inner.ends_with(minus) {
+    let one_sided = |s: &str| s.starts_with(minus) != s.ends_with(minus);
+    if key.contains(['(', ')']) || one_sided(key) || one_sided(inner) {
         return false;
     }
     let bare = key.trim_matches(|c: char| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '[' | ']' | ' '));

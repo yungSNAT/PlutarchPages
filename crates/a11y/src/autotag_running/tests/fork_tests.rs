@@ -34,6 +34,8 @@ fn differing_amounts_at_the_same_height_stay_content() {
         ["\u{2013} 500", "\u{2013} 501", "\u{2013} 502"],
         ["[-500]", "[-501]", "[-502]"],
         ["[\u{2013}500]", "[\u{2013}501]", "[\u{2013}502]"],
+        ["[-500]-", "[-501]-", "[-502]-"],
+        ["-[500-]", "-[501-]", "-[502-]"],
     ] {
         let pages: Vec<Vec<Evidence>> = texts.iter().map(|t| vec![line(t, 60.0)]).collect();
         assert_eq!(run(&pages, Some(10.0)), [[None], [None], [None]], "{texts:?}");
