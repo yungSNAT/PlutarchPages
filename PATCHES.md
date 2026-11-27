@@ -72,15 +72,15 @@ Upstream's tests for these were changed to assert the fork's behaviour. Keep the
   (`Total 2000`) or signed another way (`[2026]`, `（2026）`, `–2026`, `- 2026`, `2026-`,
   `Balance 2000 CR`). A line whose numbers change runs only if it
   reads as a page number with no other label (`3`, `iv`, `Page 3`, `3 of 9`, `- 3 -`) and the
-  number steps by one a page (any start, unnumbered pages skipped). Round brackets and a minus on
-  one side only (`(3)`, `-3`, `3-`) mark an amount, so such a changing number stays content;
-  `[3]` and `- 3 -` run. Known limit: a bare number in square brackets or between paired dashes
+  number steps by one a page (any start, unnumbered pages skipped). Round brackets and a dash or
+  minus (`-`, `−`, `–` or `—`) on one side only, inside square brackets or not (`(3)`, `-3`,
+  `3-`, `–3`, `[-3]`), mark an amount, so such a changing number stays content; `[3]`, `- 3 -`
+  and `– 3 –` run. Known limit: a bare number in square brackets or between paired dashes
   that steps by one a page runs as a page number whatever its size (`[500]`, `[501]`;
   `- 500 -`, `- 501 -`), as neither shape marks an amount
-  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes). So do a
-  changing number with an en or em dash on one side only (`–5`, `5–`, `—5`, `– 5`) and one
-  with a `-` inside square brackets (`[-5]`), as only `-` and `−` count as a minus and
-  the one-sided check reads the bracket first.
+  (`page_numbers_that_step_with_the_page_are_still_artifacts` pins both shapes). The pair may
+  mix `-`, `–` and `—` (`– 500 -`; a `−` keeps the number content), and a minus inside it is
+  read as decoration (`- -3 -`).
   Upstream matches any digits, so `Total 1,234.56` and `Total 7,890.12`, or `Amount due` on every
   page, become footer artifacts that screen readers skip. A page number beside other words
   (`Annual report, page 3`) stays content here. Code `repeats` in
