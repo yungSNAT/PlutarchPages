@@ -1568,6 +1568,7 @@ fn default_ignorable(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod fork_tests;
 
     /// Where `tag` starts in an sfnt.
     fn table(bytes: &[u8], tag: &[u8; 4]) -> usize {
