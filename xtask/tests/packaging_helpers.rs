@@ -21,6 +21,9 @@ fn run_unit_tests(source: &str, name: &str) {
         .expect("run rustc");
     assert!(build.status.success(), "rustc --test {source} failed:\n{}", String::from_utf8_lossy(&build.stderr));
     let run = Command::new(&bin).current_dir(root).output().expect("run the helper's unit tests");
+    // Best effort (with the PDB rustc writes on Windows): a leftover only takes space.
+    let _ = std::fs::remove_file(&bin);
+    let _ = std::fs::remove_file(bin.with_extension("pdb"));
     assert!(run.status.success(), "{source} unit tests failed:\n{}\n{}", String::from_utf8_lossy(&run.stdout), String::from_utf8_lossy(&run.stderr));
 }
 
