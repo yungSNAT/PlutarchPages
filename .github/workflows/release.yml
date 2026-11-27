@@ -598,7 +598,9 @@ jobs:
               printf 'FreeBSD-ports: { url: "https://pkg.FreeBSD.org/${ABI}/quarterly" }\n' > /usr/local/etc/pkg/repos/FreeBSD.conf
               pkg update -f -q
             fi
-            pkg install -y bash git curl pkgconf cmake python3 libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader gtk3 fontconfig freetype2 alsa-lib
+            # cmake-core, not the cmake metaport: the metaport also needs cmake-doc and cmake-man, and a
+            # branch whose cmake-doc failed to build (amd64 quarterly, November 2026) has no cmake at all.
+            pkg install -y bash git curl pkgconf cmake-core python3 libxkbcommon wayland libX11 libXcursor libXrandr libXi libxcb mesa-libs vulkan-loader gtk3 fontconfig freetype2 alsa-lib
             # aarch64-unknown-freebsd is a tier-3 Rust target: rustup publishes no toolchain or standard
             # library for it, so use FreeBSD's lang/rust package.
             if [ "${{ matrix.arch }}" = aarch64 ]; then
