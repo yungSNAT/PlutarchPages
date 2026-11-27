@@ -66,20 +66,22 @@ file open); whilst the file is named the output folder briefly holds a second `.
 keeps the folder from being turned into a link. The file is named by path: if another process puts
 its own file at the temporary name just before that, its file can take the output name, and that
 output then fails and the file is left alone. Clean-up deletes only files and folders the batch
-made, each by its own handle. A process that may write to a folder on the way can make a folder
-the batch would make before it does; it then owns that folder, so on Windows it can read and
-change what the batch writes there (new files take their permissions from the folder). Between
-outputs, when no folder is held, it can rename, move or replace a folder it may write to, as with
-any folder. Network folders (UNC paths and drives mapped to a share) are not covered by these
-checks, nor is a process of the same user redefining a drive letter whilst the batch runs. These
-Windows checks are hardening: they close the link escapes the tests demonstrate, and they are not
-a guarantee by construction (that would need every relative open to refuse reparse points and a
-rename by handle). An empty output is refused on Windows, as an empty file could be turned into a
-link after it is checked. Once an output has its name, any process that may write to the output
-folder can still change, move, delete or replace it, as with any file, so the report can name a
-file the batch did not write. On macOS and other systems without
-`O_PATH` the output folder and every folder above it must also be readable, and a folder that has
-to be made needs a writable parent.
+made, each by its own handle. A process that may write to a folder on the way can make a folder the
+batch would make before it does, and the batch then uses that folder as it is (a test shows this).
+On Windows that process owns the folder and new files take their permissions from it, so it can read
+and change what the batch writes there: that is how Windows assigns owners and inherited
+permissions, and no test here checks it. Between outputs, when no folder is held, a process can
+rename, move or replace a folder it may write to, as with any folder; the tests show only that a
+held folder cannot be moved. Network folders (UNC paths and drives mapped to a share) are not
+covered by these checks, nor is a process of the same user redefining a drive letter whilst the
+batch runs. These Windows checks are hardening: they close the link escapes the tests demonstrate,
+and they are not a guarantee by construction (that would need every relative open to refuse reparse
+points and a rename by handle). An empty output is refused on Windows, as an empty file could be
+turned into a link after it is checked. Once an output has its name, any process that may write to
+the output folder can still change, move, delete or replace it, as with any file, so the report can
+name a file the batch did not write. On macOS and other systems without `O_PATH` the output folder
+and every folder above it must also be readable, and a folder that has to be made needs a writable
+parent.
 
 The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not have these checks yet.
 
