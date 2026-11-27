@@ -1172,6 +1172,27 @@ public static class InPlaceJunction {
         assert_eq!(published.unwrap(), out.join("a.pdf"));
     }
 
+    /// A folder held with delete access for the whole publish fails it after about a second,
+    /// instead of making it wait for ever.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_held_with_delete_access_fails_the_publish_in_bounded_time() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_ALL: u32 = 0x7;
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let held = std::fs::OpenOptions::new().access_mode(DELETE).share_mode(SHARE_ALL).custom_flags(Folder::BACKUP_SEMANTICS).open(&out).unwrap();
+        let started = std::time::Instant::now();
+        let error = publish(&out.join("a.pdf"), b"%PDF-1.7").unwrap_err().to_string();
+        let took = started.elapsed();
+        drop(held);
+        assert!(error.contains("os error 32"), "{error}");
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        assert!(!out.join("a.pdf").exists());
+    }
+
     /// A file changed between the write and the second handle (written over, cut short or grown)
     /// is refused before it is named.
     #[cfg(windows)]
