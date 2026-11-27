@@ -889,6 +889,22 @@ fn part_1_a_default_space_must_be_a_colour_space() {
     assert_not_reported(&a1b_no_intent(&coloured_page(&indexed, ""), &[&content("")]), Level::A1b, "6.2.3.3");
     let bare = "/CS0 [/Indexed /DeviceRGB 0 <000000>]";
     assert_reported(&a1b_no_intent(&coloured_page(bare, ""), &[&content("")]), Level::A1b, "6.2.3.3");
+    // So are the colour spaces of shadings written into its /Shading entries or into its shading
+    // patterns, whether the pattern is an object of its own or not.
+    let tint = "<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >>";
+    let shading = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0] /Function 7 0 R >>";
+    let shaded = |spaces: &str| coloured_page(spaces, &format!("/Shading << /Sh {shading} >>"));
+    let sh = content("/Sh sh");
+    assert_not_reported(&a1b_no_intent(&shaded(&format!("/DefaultRGB {CAL_RGB}")), &[&sh, tint]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&shaded(""), &[&sh, tint]), Level::A1b, "6.2.3.3");
+    let pattern = format!("<< /PatternType 2 /Shading {shading} >>");
+    let fill = content("/Pattern cs /P0 scn 0 0 1 1 re f");
+    assert_reported(&a1b_no_intent(&coloured_page("", &format!("/Pattern << /P0 {pattern} >>")), &[&fill, tint]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&coloured_page("", "/Pattern << /P0 8 0 R >>"), &[&fill, tint, &pattern]), Level::A1b, "6.2.3.3");
+    // A shading of its own object is judged where it is named, and a tiling pattern has none.
+    let named = coloured_page(&format!("/DefaultRGB {CAL_RGB}"), "/Shading << /Sh 8 0 R >> /Pattern << /T 9 0 R >>");
+    let tiling = "<< /PatternType 1 /PaintType 1 /TilingType 1 /BBox [0 0 1 1] /XStep 1 /YStep 1 /Resources << >> /Length 0 >>\nstream\n\nendstream";
+    assert_not_reported(&a1b_no_intent(&named, &[&sh, tint, shading, tiling]), Level::A1b, "6.2.3.3");
     // An image's colour space is used under each resource dictionary that names it.
     let image =
         "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n\0\0\0\nendstream";

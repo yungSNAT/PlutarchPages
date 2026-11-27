@@ -74,6 +74,41 @@ impl Holder {
     }
 }
 
+/// The colour spaces the resource dictionary `resources` uses, judged under its own Defaults: its
+/// `/ColorSpace` entries, and those of the shadings written straight into its `/Shading` entries
+/// or into the shading patterns of its `/Pattern` entries (a shading of its own object is judged
+/// as an object).
+fn resource_spaces(doc: &Document, resources: &Dict, out: &mut crate::DeviceColour) {
+    let mut used = crate::DeviceColour::default();
+    each(doc, resources, b"ColorSpace", |k, entry| {
+        if !matches!(k, b"DefaultGray" | b"DefaultRGB" | b"DefaultCMYK") {
+            crate::mark_cs_object(doc, entry, &mut used, 0);
+        }
+    });
+    let mut shading = |s: &Object| {
+        if let Object::Dict(s) = s
+            && let Some(cs) = s.get(b"ColorSpace")
+        {
+            crate::mark_cs_object(doc, cs, &mut used, 0);
+        }
+    };
+    each(doc, resources, b"Shading", |_, s| shading(s));
+    each(doc, resources, b"Pattern", |_, p| {
+        if let Some(s) = crate::dict_of(&doc.resolve(p)).and_then(|p| p.get(b"Shading")) {
+            shading(s);
+        }
+    });
+    Defaults::in_dict(doc, resources).uncover(used, out);
+}
+
+/// Calls `f` with each entry of the dictionary that `resources` holds under `key`.
+fn each(doc: &Document, resources: &Dict, key: &[u8], mut f: impl FnMut(&[u8], &Object)) {
+    let held = resources.get(key).map(|e| doc.resolve(e));
+    for (k, v) in held.as_deref().and_then(Object::as_dict).into_iter().flat_map(Dict::iter) {
+        f(k.as_slice(), v);
+    }
+}
+
 /// 6.2.3.3: the device colour that no Default colour space covers (ISO 32000-1 8.6.5.6), and
 /// whether some content could not be read. A content stream draws under its own resources: a
 /// page's (inherited ones included), or a form's, pattern's, appearance stream's or Type 3 font's
@@ -154,14 +189,8 @@ pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync
         let Some(d) = crate::dict_of(o) else { continue };
         if let Some(resources) = d.get(b"Resources").filter(|res| res.as_ref().is_none_or(|res| read.insert(res))).map(|res| doc.resolve(res))
             && let Some(resources) = resources.as_dict()
-            && let Some(spaces) = resources.get(b"ColorSpace").map(|c| doc.resolve(c))
-            && let Some(spaces) = spaces.as_dict()
         {
-            let mut used = crate::DeviceColour::default();
-            for (_, entry) in spaces.iter().filter(|(k, _)| !matches!(k.as_slice(), b"DefaultGray" | b"DefaultRGB" | b"DefaultCMYK")) {
-                crate::mark_cs_object(doc, entry, &mut used, 0);
-            }
-            Defaults::in_dict(doc, resources).uncover(used, &mut out);
+            resource_spaces(doc, resources, &mut out);
         }
         if let Some(cs) = d.get(b"ColorSpace")
             && !matches!(&*doc.resolve(cs), Object::Dict(_))
