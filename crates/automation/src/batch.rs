@@ -490,14 +490,27 @@ impl Folder {
     const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
     const READ_ATTRIBUTES: u32 = 0x80;
 
-    /// `path` opened as itself, by path, without `FILE_SHARE_DELETE`.
+    /// `path` opened as itself, by path, without `FILE_SHARE_DELETE`. A folder another batch has
+    /// just made is open with delete access until that batch has checked it, so a sharing
+    /// violation is tried again for about a second.
     fn hold_path(path: &Path) -> std::io::Result<File> {
         use std::os::windows::fs::OpenOptionsExt;
-        std::fs::OpenOptions::new()
-            .read(true)
-            .share_mode(Self::SHARE_READ_WRITE)
-            .custom_flags(Self::BACKUP_SEMANTICS | Self::OPEN_REPARSE_POINT)
-            .open(path)
+        const ERROR_SHARING_VIOLATION: i32 = 32;
+        let mut tries = 0;
+        loop {
+            match std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(Self::SHARE_READ_WRITE)
+                .custom_flags(Self::BACKUP_SEMANTICS | Self::OPEN_REPARSE_POINT)
+                .open(path)
+            {
+                Err(e) if e.raw_os_error() == Some(ERROR_SHARING_VIOLATION) && tries < 200 => {
+                    tries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                held => return held,
+            }
+        }
     }
 
     fn refused(e: std::io::Error) -> crate::ToolError {
@@ -1136,6 +1149,27 @@ public static class InPlaceJunction {
         assert!(folder.write_named(temp, b"ours", [std::ffi::OsString::from("a.pdf")].into_iter()).is_err());
         assert!(std::fs::symlink_metadata(out.join("a.pdf")).is_err(), "no output name was taken");
         drop(writer);
+    }
+
+    /// A batch that has just made the output folder holds it with delete access for a moment; a
+    /// concurrent publish into it waits for that instead of failing with a sharing violation.
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_another_writer_has_just_made_is_held_once_it_lets_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const DELETE: u32 = 0x0001_0000;
+        const SHARE_ALL: u32 = 0x7;
+        let (_dir, base, _) = sandbox();
+        let out = base.join("out");
+        std::fs::create_dir(&out).unwrap();
+        let making = std::fs::OpenOptions::new().access_mode(DELETE).share_mode(SHARE_ALL).custom_flags(Folder::BACKUP_SEMANTICS).open(&out).unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            drop(making);
+        });
+        let published = publish(&out.join("a.pdf"), b"%PDF-1.7");
+        release.join().unwrap();
+        assert_eq!(published.unwrap(), out.join("a.pdf"));
     }
 
     /// A file changed between the write and the second handle (written over, cut short or grown)
