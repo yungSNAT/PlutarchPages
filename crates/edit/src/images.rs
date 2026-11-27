@@ -2085,3 +2085,6 @@ mod allocation_tests {
         assert!(before.visually_differs(&tracker.current_state), "the same mask established under a different CTM is a different effective mask");
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

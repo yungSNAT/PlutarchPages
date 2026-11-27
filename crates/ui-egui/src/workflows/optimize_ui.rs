@@ -496,6 +496,7 @@ mod tests {
     use egui_kittest::kittest::Queryable;
 
     use super::*;
+    mod fork_tests;
 
     #[test]
     fn the_progress_card_shows_the_stage_and_cancels() {

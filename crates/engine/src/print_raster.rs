@@ -159,3 +159,6 @@ pub(crate) fn over_white(rgba: &mut [u8], grayscale: bool) {
         px[3] = 255;
     }
 }
+
+#[cfg(test)]
+mod fork_tests;

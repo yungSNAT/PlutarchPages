@@ -70,3 +70,7 @@ fn help_and_version_survive_an_unwritable_stdout() {
         assert!(out.status.success(), "{flag}: {:?} {}", out.status, String::from_utf8_lossy(&out.stderr));
     }
 }
+
+#[cfg(target_os = "linux")]
+#[path = "help/fork_tests.rs"]
+mod fork_tests;

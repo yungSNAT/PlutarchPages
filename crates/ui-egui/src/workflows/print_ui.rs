@@ -998,6 +998,8 @@ pub(crate) fn preview_rasters(d: &PrintDraft, sizes: &[(f64, f64)], labels: &[St
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_arch = "wasm32"))]
+    mod fork_tests;
 
     #[test]
     fn current_page_preview_uses_positions_and_selection_guards() {

@@ -383,3 +383,31 @@ fn two_paged_and_deferred_launch_options_preserve_cli_order_and_modal_safety() {
     assert_eq!(app_b.left, LeftPanel::Tool("organize"));
     assert!(!app_b.left_open, "--left closed after --tool organize stays closed");
 }
+
+#[test]
+#[allow(clippy::expect_used)]
+fn worker_shutdown_discards_queued_opens_and_finishes_the_active_one() {
+    let (gate, started, release, _finished) = open_worker::prepare_gate();
+    let queue = Arc::new((Mutex::new(open_worker::Queue { jobs: Default::default(), shutdown: false, repaint: None }), std::sync::Condvar::new()));
+    let worker = open_worker::OpenWorker { queue: queue.clone(), gate: Some(gate) };
+    let (stopped, stopped_rx) = std::sync::mpsc::channel();
+    let thread = std::thread::spawn(move || {
+        open_worker::run(queue);
+        let _ = stopped.send(());
+    });
+    let data = Arc::new(fixture(1));
+    let context = pdfcraft_engine::Session::new().open_context();
+    let first = worker.submit(1, context.clone(), "active.pdf".into(), None, None, open_worker::Input::Bytes(data.clone())).expect("submit first");
+    started.recv_timeout(Duration::from_secs(5)).expect("active open reached prepare barrier");
+    let second = worker.submit(2, context, "queued.pdf".into(), None, None, open_worker::Input::Bytes(data)).expect("queue second");
+    assert!(matches!(second.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
+
+    drop(worker);
+    assert!(matches!(second.try_recv(), Err(std::sync::mpsc::TryRecvError::Disconnected)));
+    release.send(()).expect("release active open");
+    let result = first.recv_timeout(Duration::from_secs(5)).expect("active open completed");
+    assert_eq!(result.token, 1);
+    assert!(matches!(result.kind, open_worker::ResultKind::Prepared { result, .. } if result.is_ok()));
+    stopped_rx.recv_timeout(Duration::from_secs(5)).expect("worker exited after pending opens were discarded");
+    thread.join().expect("worker did not panic");
+}

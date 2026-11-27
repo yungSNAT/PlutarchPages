@@ -2284,6 +2284,7 @@ fn refresh_view(app: &mut PdfCraftApp, doc: DocId) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    mod fork_tests;
     use pdfcraft_engine::Session;
 
     thread_local! {

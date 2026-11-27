@@ -96,3 +96,6 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, view: &mut DocView, pages: us
         view.go_to_match(i);
     }
 }
+
+#[cfg(test)]
+mod fork_tests;
