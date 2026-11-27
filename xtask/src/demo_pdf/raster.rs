@@ -102,4 +102,19 @@ mod tests {
             assert_eq!(super::base64(input.as_bytes()), expected);
         }
     }
+
+    #[test]
+    fn mandelbrot_png_and_colour_helpers_render_valid_png() {
+        assert!(super::escape(0.0, 0.0).is_none());
+        assert!(super::escape(2.0, 2.0).is_some());
+        assert_eq!(super::colour(None), [11.0, 18.0, 38.0]);
+        let low = super::colour(Some(1.0));
+        let mid = super::colour(Some(10.0));
+        let fallback = super::colour(Some(f64::INFINITY));
+        assert!(low[0] >= 0.0 && mid[0] >= 0.0);
+        assert_eq!(fallback, super::STOPS[super::STOPS.len() - 1].1);
+
+        let png = super::mandelbrot_png(8).unwrap();
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    }
 }

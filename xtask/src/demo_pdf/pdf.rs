@@ -474,4 +474,71 @@ mod tests {
         close(Font::Helv, "\u{2022}", 3.5);
         close(Font::Helv, "é", 5.56);
     }
+
+    #[test]
+    fn fonts_register_resources_and_measure_widths() {
+        let mut doc = Document::with_version("1.7");
+        let fonts = Fonts::add_to(&mut doc);
+        let dict = fonts.dict();
+        assert_eq!(dict.len(), Font::ALL.len());
+        assert!(fonts.resources().has(b"Font"));
+
+        for font in Font::ALL {
+            let id = fonts.id(font);
+            let fdict = doc.get_dictionary(id).unwrap();
+            assert_eq!(fdict.get(b"Subtype").unwrap().as_name().unwrap(), b"Type1");
+            assert_eq!(fdict.has(b"Encoding"), font != Font::ZapfDingbats);
+            assert!(!font.res().is_empty());
+            assert!(font.width("Az \u{2014}\u{2013}\u{2022}\u{00e9}", 10.0) > 0.0);
+        }
+        assert!((Font::Courier.width("ab", 10.0) - 12.0).abs() < 1e-4);
+        assert!(Font::HelvBold.width("M", 10.0) > Font::Helv.width("i", 10.0));
+        assert!(Font::Times.width("Hello", 10.0) < Font::Helv.width("Hello", 10.0));
+        assert!((Font::Times.width("Hi", 10.0) - Font::TimesItalic.width("Hi", 10.0)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn content_stream_and_form_xobject_emit_expected_operators() {
+        assert_eq!(num(-0.0001), "0");
+        assert_eq!(num(2.5), "2.5");
+        assert_eq!(num(10.0), "10");
+
+        let mut c = Content::new();
+        c.save()
+            .gs("G1")
+            .fill_color(colors::INK)
+            .stroke_color(colors::ACCENT)
+            .line_width(1.5)
+            .dash(4.0, 2.0)
+            .round_caps()
+            .cm(1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+            .rect(0.0, 0.0, 10.0, 10.0)
+            .clip()
+            .move_to(0.0, 0.0)
+            .line_to(5.0, 5.0)
+            .curve_to(1.0, 2.0, 3.0, 4.0, 5.0, 6.0)
+            .close()
+            .fill()
+            .stroke()
+            .fill_stroke()
+            .rounded_rect(1.0, 1.0, 20.0, 10.0, 3.0)
+            .ellipse(10.0, 10.0, 5.0, 4.0)
+            .text(Font::Helv, 10.0, 2.0, 3.0, "Hello")
+            .tracked_text(Font::HelvBold, 8.0, 2.0, 12.0, 1.2, "TITLE")
+            .restore();
+        let bytes = c.into_bytes();
+        let s = String::from_utf8(bytes).unwrap();
+        for token in ["q\n", "/G1 gs\n", "[4 2] 0 d\n", "1 J 1 j\n", "W n\n", "Tj ET\n", "Tc ", "Q\n"] {
+            assert!(s.contains(token), "missing {token:?} in:\n{s}");
+        }
+
+        let mut doc = Document::with_version("1.7");
+        let fonts = Fonts::add_to(&mut doc);
+        let mut ap = Content::new();
+        ap.rect(0.0, 0.0, 30.0, 15.0).fill();
+        let xo = form_xobject(&mut doc, 30.0, 15.0, ap, fonts.resources());
+        let stream = doc.get_object(xo).unwrap().as_stream().unwrap();
+        assert_eq!(stream.dict.get(b"Subtype").unwrap().as_name().unwrap(), b"Form");
+        assert_eq!(stream.dict.get(b"FormType").unwrap().as_i64().unwrap(), 1);
+    }
 }

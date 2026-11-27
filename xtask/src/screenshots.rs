@@ -124,3 +124,40 @@ fn update_attribution(root: &Path) -> Result<()> {
     std::fs::write(&path, out)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::update_attribution;
+
+    #[test]
+    fn update_attribution_replaces_screenshot_blocks_and_handles_all_scene_kinds() {
+        let dir = crate::gates::PrivateDir::new("screenshots-attr").unwrap();
+        let initial = concat!(
+            "# Header\n",
+            "\n[[asset]]\npath = \"docs/images/stale.png\"\ntitle = \"Old\"\n",
+            "\n[[asset]]\npath = \"assets/icons/keep.svg\"\ntitle = \"Keep\""
+        );
+        std::fs::write(dir.path().join("ATTRIBUTION.toml"), initial).unwrap();
+        let images = dir.path().join("docs/images");
+        std::fs::create_dir_all(&images).unwrap();
+        std::fs::write(images.join("pdfcraft-viewer.png"), b"viewer-bytes").unwrap();
+        std::fs::write(images.join("pdfcraft-ocr-verify.png"), b"ocr-bytes").unwrap();
+        std::fs::write(images.join("custom-extra.png"), b"extra-bytes").unwrap();
+        std::fs::write(images.join("ignore.txt"), b"not-a-png").unwrap();
+
+        update_attribution(dir.path()).unwrap();
+
+        let updated = std::fs::read_to_string(dir.path().join("ATTRIBUTION.toml")).unwrap();
+        assert!(!updated.contains("docs/images/stale.png"), "{updated}");
+        assert!(updated.contains("assets/icons/keep.svg"), "{updated}");
+        assert!(!updated.contains("ignore.txt"), "{updated}");
+        assert!(updated.contains("title = \"PdfCraft screenshot: Viewer with comments\""), "{updated}");
+        assert!(updated.contains("built from the [[fetched]] OFL fonts"), "{updated}");
+        assert!(updated.contains("title = \"PdfCraft screenshot: OCR Verify screen\""), "{updated}");
+        assert!(updated.contains("loaded into the Verify screen"), "{updated}");
+        assert!(updated.contains("title = \"PdfCraft screenshot: PdfCraft screenshot\""), "{updated}");
+        assert!(updated.contains(&crate::assets::sha256_hex(b"viewer-bytes")));
+        assert!(updated.contains(&crate::assets::sha256_hex(b"ocr-bytes")));
+        assert!(updated.contains(&crate::assets::sha256_hex(b"extra-bytes")));
+    }
+}

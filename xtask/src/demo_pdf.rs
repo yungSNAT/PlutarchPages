@@ -205,4 +205,51 @@ mod tests {
         assert!(!url.contains("//?/"), "{url}");
         assert!(url.starts_with("file:///"), "{url}");
     }
+
+    #[test]
+    fn run_handles_help_and_argument_errors() {
+        assert!(run(&["--help".into()]).is_ok());
+        assert!(run(&["-h".into()]).is_ok());
+        assert!(run(&["--chrome".into()]).is_err());
+        assert!(run(&["--out".into()]).is_err());
+        let err = run(&["--unknown".into()]).unwrap_err();
+        assert!(err.to_string().contains("unexpected argument"));
+    }
+
+    #[test]
+    fn repo_root_and_file_url_encoding_work() {
+        let root = repo_root();
+        assert!(root.join("Cargo.toml").is_file());
+
+        let encoded = file_url(Path::new("//?/C:/demo dir/file #1.html"));
+        assert_eq!(encoded, "file:///C:/demo%20dir/file%20%231.html");
+    }
+
+    #[test]
+    fn foreign_fonts_classifies_standard_embedded_type0_and_type3_fonts() {
+        use lopdf::{Document, Object, dictionary};
+
+        let mut doc = Document::with_version("1.7");
+        doc.add_object(Object::Integer(7));
+        doc.add_object(dictionary! { "Type" => "Page" });
+        // Type0 skipped (checked via descendant CIDFont).
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type0", "BaseFont" => "ForeignType0" });
+        // Allowed non-embedded Standard-14 and disallowed non-embedded font.
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" });
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "ComicSans" });
+        // Allowed and disallowed embedded fonts (with 6-letter subset prefix).
+        let stream = doc.add_object(lopdf::Stream::new(lopdf::Dictionary::new(), b"font".to_vec()));
+        let fd = doc.add_object(dictionary! { "Type" => "FontDescriptor", "FontFile2" => stream });
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "ABCDEF+Inter-Regular", "FontDescriptor" => fd });
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "TrueType", "BaseFont" => "ABCDEF+ArialMT", "FontDescriptor" => fd });
+        // Type3 fonts: unnamed allowed, allowed prefix allowed, foreign prefix flagged.
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type3" });
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type3", "BaseFont" => "NotoColorEmoji" });
+        doc.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type3", "BaseFont" => "UnknownEmoji" });
+
+        assert_eq!(
+            foreign_fonts(&doc),
+            vec!["ArialMT (embedded)".to_string(), "ComicSans (referenced)".to_string(), "UnknownEmoji (referenced)".to_string()]
+        );
+    }
 }
