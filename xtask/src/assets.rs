@@ -754,4 +754,152 @@ mod tests {
     fn spdx_expressions_split() {
         assert_eq!(licence_ids("(MIT OR Apache-2.0) AND OFL-1.1").collect::<Vec<_>>(), ["MIT", "Apache-2.0", "OFL-1.1"]);
     }
+
+    #[test]
+    fn check_covers_duplicate_missing_hash_and_fetched_validation_rules() {
+        let mut missing_hash = asset("Cargo.toml", "Author", "data", "MIT");
+        missing_hash.sha256 = None;
+        let dup = asset("Cargo.toml", "Author", "data", "MIT");
+
+        let mut bad_bundled = bundled("k", "p.dat", "Author", "data", false);
+        bad_bundled.sha256 = "short".into();
+
+        let bad_fetched = Fetched {
+            file: "../bad.png".into(),
+            url: "http://example.org/a".into(),
+            mirror_url: Some("http://example.org/a".into()),
+            title: "Adobe Icon".into(),
+            author: "Adobe".into(),
+            source: "https://example.org".into(),
+            licence: "MIT".into(),
+            licence_url: "http://example.org/lic".into(),
+            licence_sha256: "short".into(),
+            kind: "icon".into(),
+            usage: "u".into(),
+            sha256: "short".into(),
+        };
+        let dup_mirror = Fetched {
+            file: "ok.dat".into(),
+            url: "https://example.org/same".into(),
+            mirror_url: Some("https://example.org/same".into()),
+            title: "Ok".into(),
+            author: "Author".into(),
+            source: "https://example.org".into(),
+            licence: "MIT".into(),
+            licence_url: "https://example.org/lic".into(),
+            licence_sha256: "a".repeat(64),
+            kind: "data".into(),
+            usage: "u".into(),
+            sha256: "b".repeat(64),
+        };
+        let bad_input = BuildInput {
+            name: "adobe-icons".into(),
+            option: "OPT".into(),
+            title: "Icons".into(),
+            author: "Adobe".into(),
+            source: "https://example.org".into(),
+            licence: "MIT".into(),
+            attribution: "https://example.org/attr".into(),
+            kind: "icon".into(),
+            usage: "u".into(),
+        };
+        let m = Manifest {
+            asset: vec![missing_hash, dup],
+            bundled: vec![bad_bundled],
+            fetched: vec![bad_fetched, dup_mirror],
+            build_input: vec![bad_input],
+        };
+        let problems = check(&root(), &m, &[], &lock(&[("k", "1.0.0")])).join("\n");
+        for needle in [
+            "listed twice",
+            "sha256 is missing",
+            "sha256 must be 64 hex digits",
+            "invalid fetched asset filename",
+            "icon from Adobe is forbidden",
+            "sha256 and licence_sha256 must be 64 hex digits",
+            "URLs must be https",
+            "mirror_url must be a distinct HTTPS URL",
+        ] {
+            assert!(problems.contains(needle), "missing {needle:?} in:\n{problems}");
+        }
+        // A mirror that repeats its own URL is refused on its own count, not only through the http mirror.
+        assert!(problems.contains("ok.dat: mirror_url must be a distinct HTTPS URL"), "{problems}");
+    }
+
+    #[test]
+    fn fetch_all_uses_verified_cache_and_rejects_bad_filenames() {
+        let dir = crate::gates::PrivateDir::new("assets-fetch-all").unwrap();
+        let payload = b"cached-model-bytes";
+        let lic = b"MIT licence text";
+        std::fs::write(dir.path().join("cached.rten"), payload).unwrap();
+        std::fs::write(dir.path().join("cached.rten.LICENCE.txt"), lic).unwrap();
+        let m = Manifest {
+            fetched: vec![Fetched {
+                file: "cached.rten".into(),
+                url: "https://example.invalid/model".into(),
+                mirror_url: None,
+                title: "Model".into(),
+                author: "Author".into(),
+                source: "https://example.invalid".into(),
+                licence: "MIT".into(),
+                licence_url: "https://example.invalid/lic".into(),
+                licence_sha256: sha256_hex(lic),
+                kind: "model".into(),
+                usage: "ocr".into(),
+                sha256: sha256_hex(payload),
+            }],
+            ..Default::default()
+        };
+        let paths = fetch_all(&m, dir.path(), "model").unwrap();
+        assert_eq!(paths, vec![dir.path().join("cached.rten")]);
+
+        let mut bad_entry = m.fetched.into_iter().next().unwrap();
+        bad_entry.file = "../escape.rten".into();
+        let bad = Manifest { fetched: vec![bad_entry], ..Default::default() };
+        assert!(fetch_all(&bad, dir.path(), "model").unwrap_err().to_string().contains("invalid fetched asset filename"));
+    }
+
+    #[test]
+    fn render_markdown_and_read_only_run_succeed() {
+        let mut a = asset("Cargo.toml", "A|B", "data", "MIT");
+        a.title = "T|1".into();
+        let m = Manifest {
+            asset: vec![a],
+            bundled: vec![bundled("hayro-cmap", "assets/cmaps.brotli", "Adobe", "data", true), bundled("other", "f.ttf", "Author", "font", false)],
+            fetched: vec![Fetched {
+                file: "m.rten".into(),
+                url: "https://example.org/m".into(),
+                mirror_url: None,
+                title: "M|title".into(),
+                author: "Auth".into(),
+                source: "https://example.org".into(),
+                licence: "MIT".into(),
+                licence_url: "https://example.org/l".into(),
+                licence_sha256: "a".repeat(64),
+                kind: "model".into(),
+                usage: "ocr".into(),
+                sha256: "b".repeat(64),
+            }],
+            build_input: vec![BuildInput {
+                name: "fonts".into(),
+                option: "CRAFT_FONTS_DIR".into(),
+                title: "Fonts|Set".into(),
+                author: "Authors".into(),
+                source: "https://example.org/s".into(),
+                licence: "OFL-1.1".into(),
+                attribution: "https://example.org/a".into(),
+                kind: "font".into(),
+                usage: "pdf".into(),
+            }],
+        };
+        let md = render_markdown(&m);
+        assert!(md.contains("T\\|1") && md.contains("A\\|B") && md.contains("M\\|title") && md.contains("Fonts\\|Set"));
+        assert!(md.contains("(non-visual data, AGENTS.md §1.1)"));
+        assert!(md.contains("## In this repository (1)"));
+        assert!(md.contains("## Compiled in through dependencies (2)"));
+        assert!(md.contains("## Downloaded at build time (1)"));
+        assert!(md.contains("## Optional build inputs (1)"));
+
+        run(&[]).unwrap();
+    }
 }

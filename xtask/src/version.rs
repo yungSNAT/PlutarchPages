@@ -191,4 +191,18 @@ mod tests {
         let ui = std::fs::read_to_string(root.join("crates/ui-egui/Cargo.toml")).unwrap();
         assert!(minor_of_rust_version(&workspace) >= minor_of_rust_version(&ui));
     }
+
+    #[test]
+    fn read_replace_and_run_cover_empty_version_no_eol_and_cli_paths() {
+        assert!(read("[workspace.package]\nversion = \"\"\n").unwrap_err().contains("empty"));
+        let no_eol = "[workspace.package]\nversion = \"0.1.0\"";
+        assert_eq!(replace(no_eol, "0.2.0").unwrap(), "[workspace.package]\nversion = \"0.2.0\"");
+
+        let dir = crate::gates::PrivateDir::new("version-run").unwrap();
+        std::fs::write(dir.path().join("Cargo.toml"), MANIFEST).unwrap();
+        assert!(run(dir.path(), &[]).is_ok());
+        assert!(run(dir.path(), &["bogus"]).unwrap_err().contains("usage:"));
+        assert!(run(dir.path(), &["set", "bad-ver"]).is_err());
+        assert!(run(&dir.path().join("missing"), &[]).unwrap_err().contains("read "));
+    }
 }

@@ -362,4 +362,63 @@ mod tests {
             assert!(check(&[c(app, &[("egui", Normal, false), ("pdfcraft-ui-egui", Normal, true)])]).is_empty());
         }
     }
+
+    #[test]
+    fn display_describe_and_edge_cases_cover_all_variants() {
+        assert_eq!(describe(Some(Class::Layer(2))), "L2");
+        assert_eq!(describe(Some(Class::Standalone(0))), "L0 standalone");
+        assert_eq!(describe(Some(Class::Testkit)), "test support");
+        assert_eq!(describe(Some(Class::Exempt)), "exempt");
+        assert_eq!(describe(None), "UNREGISTERED");
+
+        let samples = [
+            Violation::Unregistered { krate: "x".into() }.to_string(),
+            Violation::Upward { krate: "a".into(), dep: "b".into(), from: 2, to: 6, kind: Normal }.to_string(),
+            Violation::StandaloneHasWorkspaceDep { krate: "cos".into(), dep: "model".into() }.to_string(),
+            Violation::TestkitAsNormalDep { krate: "render".into(), dep: "oracle".into() }.to_string(),
+            Violation::UiBelowL7 { krate: "engine".into(), dep: "egui".into(), layer: 6 }.to_string(),
+        ];
+        assert!(samples[0].contains("unknown workspace crate"));
+        assert!(samples[1].contains("may only depend on lower layers"));
+        assert!(samples[2].contains("standalone crate"));
+        assert!(samples[3].contains("dev-dependency"));
+        assert!(samples[4].contains("UI toolkits"));
+
+        // Self-dependency is ignored, unregistered workspace dep is ignored, Testkit/Exempt layers resolve.
+        assert!(check(&[c("pdfcraft-engine", &[("pdfcraft-engine", Dev, true), ("pdfcraft-unregistered-dep", Normal, true)])]).is_empty());
+        assert!(check(&[c("pdfcraft-testkit", &[("pdfcraft-geom", Normal, true)])]).is_empty());
+        let v = check(&[c("pdfcraft-engine", &[("pdfcraft-cli", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 6, to: 8, .. }]));
+    }
+
+    #[test]
+    fn from_metadata_parses_workspace_kinds_and_rejects_malformed_json() {
+        let meta = serde_json::json!({
+            "packages": [
+                {
+                    "name": "pdfcraft-render",
+                    "dependencies": [
+                        { "name": "pdfcraft-geom", "kind": null },
+                        { "name": "pdfcraft-testkit", "kind": "dev" },
+                        { "name": "cc", "kind": "build" }
+                    ]
+                },
+                { "name": "pdfcraft-geom", "dependencies": [] },
+                { "name": "pdfcraft-testkit", "dependencies": [] }
+            ]
+        });
+        let crates = from_metadata(&meta).unwrap();
+        assert_eq!(crates.iter().map(|k| k.name.as_str()).collect::<Vec<_>>(), ["pdfcraft-geom", "pdfcraft-render", "pdfcraft-testkit"]);
+        let render = &crates[1];
+        assert_eq!(render.deps.len(), 3);
+        assert_eq!(render.deps[0].kind, Normal);
+        assert!(render.deps[0].workspace);
+        assert_eq!(render.deps[1].kind, Dev);
+        assert!(render.deps[1].workspace);
+        assert_eq!(render.deps[2].kind, Build);
+        assert!(!render.deps[2].workspace);
+
+        assert!(from_metadata(&serde_json::json!({})).is_err());
+        assert!(from_metadata(&serde_json::json!({ "packages": [{}] })).is_err());
+    }
 }
