@@ -824,7 +824,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple"))]
     #[test]
     fn publish_needs_only_search_permission_above_the_output_folder() {
         use std::os::unix::fs::PermissionsExt;
