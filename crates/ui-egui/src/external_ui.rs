@@ -15,6 +15,9 @@ use pdfcraft_engine::external::READ_PAGES;
 
 use crate::{PdfCraftApp, theme};
 
+#[cfg(test)]
+mod fork_tests;
+
 /// A conversion running on its own thread.
 pub(crate) struct Job {
     name: String,
