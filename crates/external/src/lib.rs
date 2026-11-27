@@ -100,15 +100,31 @@ pub fn html_extension(name: &str) -> Option<&'static str> {
 // ── finding the programs ──────────────────────────────────────────────────────────────────────
 
 /// A configured program must be an absolute path to a native executable (on Windows an `.exe`
-/// or `.com`, never a script or shortcut, which `cmd.exe` would interpret).
+/// or `.com`, never a script or shortcut, which `cmd.exe` would interpret; on Unix a file with an
+/// execute bit set).
 fn usable(path: &Path) -> bool {
-    if !path.is_absolute() || !path.is_file() {
+    if !path.is_absolute() {
         return false;
     }
-    if cfg!(windows) {
-        return path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("com"));
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
     }
-    true
+    #[cfg(windows)]
+    {
+        path.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("exe") || e.eq_ignore_ascii_case("com"))
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        true
+    }
 }
 
 fn on_path(names: &[&str]) -> Option<PathBuf> {
@@ -613,6 +629,9 @@ pub fn office_to_pdf(soffice: &Path, name: &str, bytes: &[u8], limits: &Limits, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    mod fork_tests;
 
     #[test]
     fn extensions_are_allowlisted() {
