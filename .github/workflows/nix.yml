@@ -20,4 +20,4 @@ concurrency:
 jobs:
   nix:
     # Pinned: a mutable reference to another repository can change what CI runs. Move it deliberately.
-    uses: storytold/craft-common-actions/.github/workflows/nix.yml@88148a57ef09ef407d73c0f385e04cc7f4c2720a # main, 25 November 2026
+    uses: storytold/craft-common-actions/.github/workflows/nix.yml@3fe7aa009c15e57932497b5e6d00bf20f781e5ec # main, 25 November 2026
