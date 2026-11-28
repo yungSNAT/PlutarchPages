@@ -3,14 +3,15 @@
 //!
 //! The checks share their predicates with parts 2 and 3 but not their clause numbers or their
 //! choice of rules: each call here names its own clause, so a change to the part 2 checks cannot
-//! move a part 1 citation. Where ISO 19005-1 differs, this file follows it: actions and annotations
-//! are allow-lists (PDF 1.4's types less the forbidden ones), transparency is not allowed at all,
-//! only widgets need appearances, and page additional actions are not a rule.
+//! move a part 1 citation. Where ISO 19005-1 differs, this file follows it: annotations are an
+//! allow-list, named action types are filtered to PDF 1.4's non-forbidden ones (6.6.1 is a
+//! deny-list, so an action without a name `/S` is not flagged), transparency is not allowed at
+//! all, only widgets need appearances, and page additional actions are not a rule.
 //!
 //! Checked: 6.1.2 the header; 6.1.3 a file identifier and no encryption; 6.1.7 no external
 //! streams; 6.1.10 no LZW streams; 6.1.11 no embedded files; 6.1.12 the integer, real, string, name
 //! and CID limits of PDF 1.4; 6.1.13 no optional content; 6.2.2 the output intent profiles;
-//! 6.2.3.3 device colour against the output intent; 6.2.4 images and form OPI;
+//! 6.2.3.3 device colour against the output intent; 6.2.4 images (inline included) and form OPI;
 //! 6.2.5 to 6.2.7 PostScript, reference and PostScript XObjects; 6.2.8 and 6.2.9 graphics states and
 //! rendering intents; 6.3.4 fonts embedded; 6.4 transparency; 6.5.2 and 6.5.3 annotations; 6.6.1
 //! and 6.6.2 actions; 6.7.2 metadata; 6.7.3 the title; 6.7.8 and 6.7.9 XMP extension schemas and
@@ -205,7 +206,13 @@ fn check_colour(
     {
         part1_issue("6.2.2", "The output intent's profile isn't an ICC version 2 printer or display profile in grey, RGB or CMYK", None, None);
     }
-    let used = colour::uncovered_device_colour(doc, objs);
+    let (used, inline) = colour::uncovered_device_colour(doc, objs);
+    if inline.interpolate {
+        part1_issue("6.2.4", "An inline image asks to be interpolated", None, None);
+    }
+    if inline.bits {
+        part1_issue("6.2.4", "An inline image has a BitsPerComponent other than 1, 2, 4 or 8 (1 for a mask)", None, None);
+    }
     if used.incomplete {
         part1_issue("6.2.3.3", "Some content could not be read for device colour", None, None);
     }
@@ -224,7 +231,9 @@ fn check_colour(
         }
         None => {}
     }
-    let gs = gstate::check(doc);
+    // 6.4 for every graphics state the document reaches, a shading pattern's and those of a Type 3
+    // font written straight into a resource dictionary included; the object walk adds the rest.
+    let gs = gstate::check_with(doc, |state| check_graphics_state(doc, state, part1_issue));
     if gs.transfer {
         part1_issue("6.2.8", "A graphics state has a transfer function (TR)", None, None);
     }

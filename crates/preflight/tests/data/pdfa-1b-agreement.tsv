@@ -112,7 +112,7 @@ pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t0
 pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-k.pdf
 pass	6.2 Graphics/6.2.3.4 Separation and DeviceN colour spaces/veraPDF test suite 6-2-3-4-t01-pass-a.pdf
 pass	6.2 Graphics/6.2.3.4 Separation and DeviceN colour spaces/veraPDF test suite 6-2-3-4-t01-pass-b.pdf
-none	6.2 Graphics/6.2.4 Images/veraPDF test suite 6-2-4-t03-fail-a.pdf
+clause	6.2 Graphics/6.2.4 Images/veraPDF test suite 6-2-4-t03-fail-a.pdf
 pass	6.2 Graphics/6.2.4 Images/veraPDF test suite 6-2-4-t03-pass-a.pdf
 clause	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t02-fail-a.pdf
 none	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t02-pass-a.pdf

@@ -1059,3 +1059,130 @@ fn part_1_reaches_every_case_of_its_rules() {
     );
     assert_reported(&a1b(PAGE, "", &[&xmp_object(xmp)]), Level::A1b, "6.7.8");
 }
+
+#[test]
+fn part_1_checks_shading_pattern_graphics_states() {
+    // 6.4: a shading pattern's graphics state, direct or an indirect pattern with an untyped state.
+    let tint = "<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >>";
+    let shading = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0] /Function 7 0 R >>";
+    let fill = content("/Pattern cs /P0 scn 0 0 1 1 re f");
+    let patterned = |state: &str| drawing(&format!("/Pattern << /P0 << /PatternType 2 /Shading {shading} /ExtGState {state} >> >>"));
+    a1b_case("6.4", (&patterned("<< /CA 1 >>"), "", &[&fill, tint]), (&patterned("<< /CA 0.5 >>"), "", &[&fill, tint]));
+    let indirect_pattern = format!("<< /PatternType 2 /Shading {shading} /ExtGState 9 0 R >>");
+    let indirect_page = drawing("/Pattern << /P0 8 0 R >>");
+    a1b_case(
+        "6.4",
+        (&indirect_page, "", &[&fill, tint, &indirect_pattern, "<< /BM /Normal >>", &form("")]),
+        (&indirect_page, "", &[&fill, tint, &indirect_pattern, "<< /BM /Multiply /SMask << /S /Luminosity /G 10 0 R >> >>", &form("")]),
+    );
+}
+
+#[test]
+fn part_1_reads_direct_type3_font_resources() {
+    // 6.4 and 6.2.3.3: a Type 3 font written straight into a page's resources has resources of its own.
+    let text = content("BT /T3 1 Tf (a) Tj ET");
+    let font_page = |resources: &str| {
+        let font = format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1 1] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 7 0 R >> /Encoding << /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] /Resources << {resources} >> >>"
+        );
+        drawing(&format!("/Font << /T3 {font} >>"))
+    };
+    let glyph = content("1000 0 d0 /G gs 0 0 1 1 re f");
+    a1b_case(
+        "6.4",
+        (&font_page("/ExtGState << /G << /CA 1 >> >>"), "", &[&text, &glyph]),
+        (&font_page("/ExtGState << /G << /CA 0.5 >> >>"), "", &[&text, &glyph]),
+    );
+    let named = content("1000 0 d0 /CS0 cs 1 0 0 sc 0 0 1 1 re f");
+    let spaces = |more: &str| font_page(&format!("/ColorSpace << /CS0 /DeviceRGB {more} >>"));
+    assert_not_reported(&a1b_no_intent(&spaces(&format!("/DefaultRGB {CAL_RGB}")), &[&text, &named]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&spaces(""), &[&text, &named]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_follows_aliased_page_contents() {
+    // 6.2.3.3: page content reached through an alias object (single stream or array).
+    let aliased = |spaces: &str| coloured_page(spaces, "");
+    assert_not_reported(&a1b_no_intent(&aliased(&format!("/DefaultRGB {CAL_RGB}")), &["7 0 R", &content(RED)]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&aliased(""), &["7 0 R", &content(RED)]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&aliased(&format!("/DefaultRGB {CAL_RGB}")), &["7 0 R", "[8 0 R]", &content(RED)]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&aliased(""), &["7 0 R", "[8 0 R]", &content(RED)]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_checks_inline_images() {
+    // 6.2.4: inline images, not interpolated, with 1, 2, 4 or 8 bits (1 for a mask).
+    let inline = |dict: &str| content(&format!("BI /W 1 /H 1 {dict} ID \0 EI"));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I false")]), (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I true")]));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 4")]), (&drawing(""), "", &[&inline("/CS /G /BPC 16")]));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/IM true /BPC 1")]), (&drawing(""), "", &[&inline("/IM true /BPC 2")]));
+}
+
+#[test]
+fn part_1_reads_appearance_streams_without_bbox() {
+    // 6.2.3.3: an appearance stream without /BBox or /Subtype is still read under its own /Resources.
+    let ap_page = "<< /Type /Page /Parent 2 0 R /Annots [6 0 R] >>";
+    let square = "<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /AP << /N 7 0 R >> >>";
+    assert_reported(&a1b_no_intent(ap_page, &[square, &content(RED)]), Level::A1b, "6.2.3.3");
+    let bare_covered = format!("<< /Resources << /ColorSpace << /DefaultRGB {CAL_RGB} >> >> /Length {} >>\nstream\n{RED}\nendstream", RED.len());
+    assert_not_reported(&a1b_no_intent(ap_page, &[square, &bare_covered]), Level::A1b, "6.2.3.3");
+    let button = "<< /Type /Annot /Subtype /Widget /FT /Btn /Rect [0 0 10 10] /F 4 /AP << /N << /On 7 0 R >> >> >>";
+    assert_reported(&a1b_no_intent(ap_page, &[button, &content(RED)]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_judges_direct_page_shadings_under_fallback() {
+    // 6.2.3.3: a direct shading in a page's /Shading is judged under fallback content too.
+    let tint = "<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >>";
+    let shading = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0] /Function 7 0 R >>";
+    let default_rgb = format!("/DefaultRGB {CAL_RGB}");
+    let fallback_page = coloured_page(&default_rgb, &format!("/Shading << /Sh0 {shading} >> /XObject << /Fm 8 0 R >>"));
+    let draw_fm = content("/Fm Do");
+    assert_reported(&a1b_no_intent(&fallback_page, &[&draw_fm, tint, &drawing_form("/Resources << >>", "/Sh0 sh")]), Level::A1b, "6.2.3.3");
+    let covered_form = drawing_form(&format!("/Resources << /ColorSpace << {default_rgb} >> >>"), "/Sh0 sh");
+    assert_not_reported(&a1b_no_intent(&fallback_page, &[&draw_fm, tint, &covered_form]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_shares_indirect_resource_maps_across_pages() {
+    // Shared indirect /Resources and shared indirect /XObject, /Shading, /Pattern, /ColorSpace and
+    // /Font maps are walked once, whilst keeping every page's Defaults intersection exact.
+    let packet = xmp(1, "B", None);
+    let metadata = xmp_object(&packet);
+    let catalog = "<< /Type /Catalog /Pages 2 0 R /Metadata 3 0 R >>";
+    let pages = "<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 /MediaBox [0 0 200 200] >>";
+    let default_rgb = format!("/DefaultRGB {CAL_RGB}");
+    let image =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Length 3 >>\nstream\n\0\0\0\nendstream";
+    let tint = "<< /FunctionType 2 /Domain [0 1] /C0 [0 0 0] /C1 [1 1 1] /N 1 >>";
+    let shading = "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [0 0 1 0] /Function 9 0 R >>";
+    let pattern = format!("<< /PatternType 2 /Shading {shading} >>");
+    // Two pages and a form sharing one indirect /Resources dictionary.
+    let shared_res = format!("<< /ColorSpace << {default_rgb} >> /XObject << /Im 7 0 R /Fm 9 0 R >> /Font << /F1 8 0 R >> >>");
+    let page_shared = "<< /Type /Page /Parent 2 0 R /Resources 6 0 R >>";
+    let form_shared = drawing_form("/Resources 6 0 R", RED);
+    let doc_shared =
+        build(&[catalog, pages, &metadata, page_shared, page_shared, &shared_res, image, "<< /Type /Font /Subtype /Type1 >>", &form_shared], "");
+    assert_not_reported(&doc_shared, Level::A1b, "6.2.3.3");
+    // Two pages with direct /Resources sharing indirect sub-maps: one page has DefaultRGB, the
+    // other does not, so the shared /XObject, /Shading, /Pattern and /ColorSpace maps must still
+    // report uncovered DeviceRGB.
+    let with_default = |sub: &str| format!("<< /Type /Page /Parent 2 0 R /Resources << /ColorSpace << {default_rgb} >> {sub} >> >>");
+    let without_default = |sub: &str| format!("<< /Type /Page /Parent 2 0 R /Resources << {sub} >> >>");
+    let xobj_doc =
+        build(&[catalog, pages, &metadata, &with_default("/XObject 6 0 R"), &without_default("/XObject 6 0 R"), "<< /Im 7 0 R >>", image], "");
+    assert_reported(&xobj_doc, Level::A1b, "6.2.3.3");
+    let xobj_ok = build(&[catalog, pages, &metadata, &with_default("/XObject 6 0 R"), &with_default("/XObject 6 0 R"), "<< /Im 7 0 R >>", image], "");
+    assert_not_reported(&xobj_ok, Level::A1b, "6.2.3.3");
+    let sub_maps = "/Shading 6 0 R /Pattern 7 0 R /Font 8 0 R";
+    let sh_dict = format!("<< /Sh0 {shading} >>");
+    let pat_dict = format!("<< /P0 {pattern} >>");
+    let font_dict = "<< /F1 << /Type /Font /Subtype /Type1 >> >>";
+    let map_fail = build(&[catalog, pages, &metadata, &with_default(sub_maps), &without_default(sub_maps), &sh_dict, &pat_dict, font_dict, tint], "");
+    assert_reported(&map_fail, Level::A1b, "6.2.3.3");
+    let map_ok = build(&[catalog, pages, &metadata, &with_default(sub_maps), &with_default(sub_maps), &sh_dict, &pat_dict, font_dict, tint], "");
+    assert_not_reported(&map_ok, Level::A1b, "6.2.3.3");
+    let cs_page = "<< /Type /Page /Parent 2 0 R /Resources << /ColorSpace 6 0 R >> >>";
+    let cs_fail = build(&[catalog, pages, &metadata, cs_page, cs_page, "<< /CS0 /DeviceRGB >>"], "");
+    assert_reported(&cs_fail, Level::A1b, "6.2.3.3");
+}

@@ -247,6 +247,8 @@ pub const WORDINGS: &[&str] = &[
     "The output intents name different profiles",
     "An image has BitsPerComponent {}, not 1, 2, 4 or 8",
     "An image mask has BitsPerComponent {}, not 1",
+    "An inline image asks to be interpolated",
+    "An inline image has a BitsPerComponent other than 1, 2, 4 or 8 (1 for a mask)",
     "A form XObject holds PostScript (PS or Subtype2 PS)",
     "Reference XObjects aren't allowed",
     "A graphics state has a soft mask (SMask)",
@@ -534,10 +536,17 @@ fn referenced_content(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)])
 /// its own `/Resources`.
 fn drawing_fonts(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> std::collections::HashSet<ObjRef> {
     let mut out = std::collections::HashSet::new();
+    let (mut seen_res, mut seen_fonts) = (std::collections::HashSet::new(), std::collections::HashSet::new());
     for (_, o) in objs {
-        let Some(resources) = dict_of(o).and_then(|d| d.get(b"Resources")).map(|r| doc.resolve(r)) else { continue };
-        let Some(fonts) = resources.as_dict().and_then(|r| r.get(b"Font")).map(|f| doc.resolve(f)) else { continue };
-        if let Some(fonts) = fonts.as_dict() {
+        let Some(res) = dict_of(o).and_then(|d| d.get(b"Resources")).filter(|r| r.as_ref().is_none_or(|r| seen_res.insert(r))) else {
+            continue;
+        };
+        let Some(fonts) =
+            doc.resolve(res).as_dict().and_then(|r| r.get(b"Font").cloned()).filter(|f| f.as_ref().is_none_or(|r| seen_fonts.insert(r)))
+        else {
+            continue;
+        };
+        if let Some(fonts) = doc.resolve(&fonts).as_dict() {
             out.extend(fonts.iter().filter_map(|(_, f)| f.as_ref()).map(|r| font_object(doc, r)));
         }
     }
