@@ -1,6 +1,9 @@
 use super::draft::{ACTION_KINDS, ActionDraft, FieldDraft};
 use super::{CalcOp, Calculate, DATE_PRESETS, Format, TIME_PRESETS, Validate, format_value, theme, widgets};
 
+#[cfg(test)]
+mod fork_tests;
+
 /// The categories of the Format tab.
 #[derive(Clone, Copy, PartialEq)]
 enum Category {

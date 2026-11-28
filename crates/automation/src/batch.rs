@@ -308,7 +308,7 @@ pub(crate) fn publish(target: &Path, bytes: &[u8]) -> Result<PathBuf> {
 #[cfg(any(unix, windows))]
 const LINKED_FOLDER: &str = "the output folder is a link, passes through one or is not a folder; nothing was written";
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "freebsd"))))]
-const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be read or written; on macOS and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
+const UNREADABLE_FOLDER: &str = "a folder on the way to the output folder can't be searched, read or written; on macOS 12 and earlier and other systems without O_PATH the output folder and every folder above it must be readable, and a folder that has to be made needs a writable parent: fix the permissions or choose another output folder; nothing was written";
 
 /// The output folder, held open from the file system root down.
 ///
@@ -336,14 +336,19 @@ impl Folder {
         use rustix::fs::{Mode, OFlags, mkdirat, openat};
         use rustix::io::Errno;
         use std::path::Component;
-        // `O_PATH` (Linux, Android, FreeBSD 14) needs only search permission on the folders above,
-        // as writing by path did. macOS has no `O_PATH`, and rustix offers it no `O_SEARCH`, so
-        // there the output folder and each folder above it must also be readable: a known limit,
-        // refused with a message saying what to do rather than written by path. A link met with `O_NOFOLLOW` fails with
-        // ELOOP (EMLINK on FreeBSD, ENOTDIR with `O_PATH`).
+        // `O_PATH` (Linux, Android, FreeBSD 14) and `O_SEARCH` (macOS 13 and later) need only search
+        // permission on each folder, as writing by path did. rustix names no `O_SEARCH`, so it is
+        // built from `O_EXEC` (0x40000000 in `<sys/fcntl.h>` and the libc crate) and `O_DIRECTORY`;
+        // macOS 12 and earlier ignore that bit and open for reading. There, and on the other systems,
+        // which open each folder for reading, the output folder and each folder above it must also be
+        // readable: a known limit, refused with a message saying what to do rather than written by
+        // path. A link met with `O_NOFOLLOW` fails with ELOOP (EMLINK on FreeBSD, ENOTDIR
+        // with `O_PATH`).
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         let flags = OFlags::PATH | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
+        #[cfg(target_vendor = "apple")]
+        let flags = OFlags::from_bits_retain(0x4000_0000) | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple")))]
         let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
         let refused = |e: Errno| match e {
             Errno::LOOP | Errno::NOTDIR | Errno::MLINK => failed(LINKED_FOLDER),
@@ -824,7 +829,7 @@ mod tests {
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd", target_vendor = "apple"))]
     #[test]
     fn publish_needs_only_search_permission_above_the_output_folder() {
         use std::os::unix::fs::PermissionsExt;
@@ -840,6 +845,17 @@ mod tests {
         };
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         if let Some(result) = result {
+            // macOS 12 and earlier (Darwin 21 and earlier) ignore `O_EXEC` and open for reading, so
+            // there the folder is refused with the message that says so.
+            #[cfg(target_vendor = "apple")]
+            {
+                let release = std::process::Command::new("uname").arg("-r").output().unwrap().stdout;
+                let darwin = String::from_utf8_lossy(&release).split('.').next().and_then(|major| major.trim().parse::<u32>().ok()).unwrap();
+                if darwin < 22 {
+                    assert!(result.unwrap_err().to_string().contains("macOS 12 and earlier"));
+                    return;
+                }
+            }
             assert_eq!(result.unwrap(), out.join("a.pdf"));
         }
     }

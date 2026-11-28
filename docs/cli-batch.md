@@ -80,8 +80,9 @@ guarantee by construction (that would need every relative open to refuse reparse
 by handle). An empty output is refused on Windows, as an empty file could be turned into a link
 after it is checked. Once an output has its name, any process that may write to the output folder
 can still change, move, delete or replace it, as with any file, so the report can name a file the
-batch did not write. On macOS and other systems without `O_PATH` the output folder and every folder
-above it must also be readable, and a folder that has to be made needs a writable parent.
+batch did not write. On macOS 12 and earlier and other systems without `O_PATH` (macOS 13 and later
+open folders with `O_SEARCH`) the output folder and every folder above it must also be readable,
+and a folder that has to be made needs a writable parent.
 
 The Action Wizard (`action_run`) and folder OCR (`ocr_recognize_files`) do not have these checks yet.
 
