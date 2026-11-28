@@ -194,20 +194,7 @@ fn check_colour(
     pages: &[Page],
     part1_issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>),
 ) {
-    let intents = super::catalog(doc).get(b"OutputIntents").map(|o| doc.resolve(o)).and_then(|o| o.as_array().cloned()).unwrap_or_default();
-    // 6.2.2: every intent that names a profile names the same object.
-    let profiles: Vec<Object> =
-        intents.iter().filter_map(|oi| doc.resolve(oi).as_dict().and_then(|d| d.get(b"DestOutputProfile").cloned())).collect();
-    if profiles.len() > 1 && (profiles.iter().any(|p| p.as_ref().is_none()) || profiles.windows(2).any(|w| w[0] != w[1])) {
-        part1_issue("6.2.2", "The output intents name different profiles", None, None);
-    }
-    let pdfa = intents.iter().find_map(|oi| doc.resolve(oi).as_dict().filter(|d| d.name(b"S") == Some(b"GTS_PDFA1")).cloned());
-    if let Some(intent) = pdfa
-        && let Some(profile) = intent.get(b"DestOutputProfile").map(|p| doc.resolve(p))
-        && !icc_output_profile(doc, &profile)
-    {
-        part1_issue("6.2.2", "The output intent's profile isn't an ICC version 2 printer or display profile in grey, RGB or CMYK", None, None);
-    }
+    check_output_intents(doc, part1_issue);
     let (used, inline) = colour::uncovered_device_colour(doc, objs, pages);
     if inline.interpolate {
         part1_issue("6.2.4", "An inline image asks to be interpolated", None, None);
@@ -250,6 +237,23 @@ fn check_colour(
     }
 }
 
+/// 6.2.2: every intent names one profile, and the PDF/A intent carries a valid ICC v2 profile.
+fn check_output_intents(doc: &Document, part1_issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>)) {
+    let intents = super::catalog(doc).get(b"OutputIntents").map(|o| doc.resolve(o)).and_then(|o| o.as_array().cloned()).unwrap_or_default();
+    let profiles: Vec<Object> =
+        intents.iter().filter_map(|oi| doc.resolve(oi).as_dict().and_then(|d| d.get(b"DestOutputProfile").cloned())).collect();
+    if profiles.len() > 1 && (profiles.iter().any(|p| p.as_ref().is_none()) || profiles.windows(2).any(|w| w[0] != w[1])) {
+        part1_issue("6.2.2", "The output intents name different profiles", None, None);
+    }
+    let pdfa = intents.iter().find_map(|oi| doc.resolve(oi).as_dict().filter(|d| d.name(b"S") == Some(b"GTS_PDFA1")).cloned());
+    if let Some(intent) = pdfa
+        && let Some(profile) = intent.get(b"DestOutputProfile").map(|p| doc.resolve(p))
+        && !icc_output_profile(doc, &profile)
+    {
+        part1_issue("6.2.2", "The output intent's profile isn't an ICC version 2 printer or display profile in grey, RGB or CMYK", None, None);
+    }
+}
+
 /// Whether `profile` is a stream holding a valid ICC version 2 (or earlier) printer or display
 /// profile in grey, RGB or CMYK, with matching `/N` and PCS-to-device conversion data (`BToA` for
 /// printer RGB/CMYK, `BToA` or matrix/TRC for display RGB, `BToA` or `kTRC` for grey).
@@ -260,7 +264,7 @@ fn icc_output_profile(doc: &Document, profile: &Object) -> bool {
     let Ok(parsed) = Profile::parse(&data) else { return false };
     let ok_class = matches!(parsed.class, ProfileClass::Output | ProfileClass::Display);
     let ok_space = matches!(parsed.color_space, ColorSpace::Gray | ColorSpace::Rgb | ColorSpace::Cmyk);
-    let ok_n = s.dict.get(b"N").map(|n| doc.resolve(n)).and_then(|n| n.as_int()) == Some(parsed.channels() as i64);
+    let ok_n = s.dict.get(b"N").map(|n| doc.resolve(n)).is_some_and(|n| matches!(*n, Object::Int(v) if v == parsed.channels() as i64));
     let ok_b2a = parsed.can_be_destination()
         && (parsed.class != ProfileClass::Output || parsed.color_space == ColorSpace::Gray || parsed.b2a.iter().any(Option::is_some));
     parsed.version.0 < 3 && ok_class && ok_space && ok_n && ok_b2a
@@ -423,12 +427,12 @@ fn check_image_stream(doc: &Document, d: &Dict, part1_issue: &mut impl FnMut(&'s
     }
     let mask = d.get(b"ImageMask").map(|m| doc.resolve(m)).is_some_and(|m| matches!(*m, Object::Bool(true)));
     if let Some(bpc) = d.get(b"BitsPerComponent").map(|b| doc.resolve(b)).filter(|b| !matches!(**b, Object::Null)) {
-        match bpc.as_int() {
-            Some(1) => {}
-            Some(2 | 4 | 8) if !mask => {}
-            Some(b) if mask => part1_issue("6.2.4", "An image mask has BitsPerComponent {}, not 1", Some(b.to_string()), None),
-            Some(b) => part1_issue("6.2.4", "An image has BitsPerComponent {}, not 1, 2, 4 or 8", Some(b.to_string()), None),
-            None => part1_issue("6.2.4", "An image's BitsPerComponent isn't an integer", None, None),
+        match *bpc {
+            Object::Int(1) => {}
+            Object::Int(2 | 4 | 8) if !mask => {}
+            Object::Int(b) if mask => part1_issue("6.2.4", "An image mask has BitsPerComponent {}, not 1", Some(b.to_string()), None),
+            Object::Int(b) => part1_issue("6.2.4", "An image has BitsPerComponent {}, not 1, 2, 4 or 8", Some(b.to_string()), None),
+            _ => part1_issue("6.2.4", "An image's BitsPerComponent isn't an integer", None, None),
         }
     }
 }
@@ -525,12 +529,12 @@ fn check_appearance(
     if ap.iter().any(|(k, _)| k.as_slice() != b"N") {
         part1_issue("6.5.3", "A {} annotation's appearance dictionary holds entries other than N", Some(name.to_owned()), page);
     }
-    let Some(normal) = ap.get(b"N") else {
+    let Some(normal) = ap.get(b"N").map(|n| doc.resolve(n)).filter(|n| !matches!(**n, Object::Null)) else {
         part1_issue("6.5.3", "A {} annotation's appearance dictionary has no normal appearance (N)", Some(name.to_owned()), page);
         return false;
     };
     let button = widget && field_type(doc, d).as_deref() == Some(b"Btn".as_slice());
-    let right = match &*doc.resolve(normal) {
+    let right = match &*normal {
         Object::Dict(states) => button && !states.is_empty() && states.iter().all(|(_, v)| matches!(&*doc.resolve(v), Object::Stream(_))),
         Object::Stream(_) => !button,
         _ => false,

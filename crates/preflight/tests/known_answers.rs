@@ -682,10 +682,12 @@ fn converting_to_part_1_refuses_and_changes_nothing() {
     let mut doc = a1b("<< /Type /Page /Parent 2 0 R /Group << /S /Transparency >> >>", "", &[]);
     let before = doc.bytes().to_vec();
     let err = convert(&mut doc, Level::A1b).unwrap_err();
-    assert!(matches!(err, ConvertError::UnsupportedLevel(Level::A1b)), "{err:?}");
+    assert!(matches!(err, ConvertError::UnsupportedLevel(Level::A1b)));
+    assert!(format!("{err:?}").contains("UnsupportedLevel"));
     assert!(err.to_string().contains("PDF/A-1b can be verified only"), "{err}");
-    assert_eq!(doc.bytes(), before.as_slice());
+    assert_eq!(doc.bytes().as_slice(), before.as_slice());
     let cos_err = ConvertError::from(CosError::NotPdf);
+    assert!(format!("{cos_err:?}").contains("Cos"));
     assert!(cos_err.to_string().contains("not a PDF"), "{cos_err}");
 }
 
@@ -809,7 +811,9 @@ fn part_1_graphics_states_and_xobjects() {
     a1b_case("6.4", (&gs("/CA 1.0000001 /ca 0.9999999"), "", &[&empty]), (&gs("/CA 0.99"), "", &[&empty]));
     let odd = a1b(&gs("/BM 3"), "", &[&empty]);
     assert_eq!(messages(&odd, "6.4"), ["A graphics state has a blend mode that isn't a name"]);
-    let repeated = a1b(&gs("/BM [/Multiply /Multiply /Screen]"), "", &[&empty]);
+    let array_bm = a1b(&gs("/BM [/Multiply /Multiply /Screen]"), "", &[&empty]);
+    assert_eq!(messages(&array_bm, "6.4"), ["A graphics state has a blend mode that isn't a name"]);
+    let repeated = a1b(&drawing("/ExtGState << /G1 << /BM /Multiply >> /G2 << /BM /Multiply >> /G3 << /BM /Screen >> >>"), "", &[&empty]);
     assert_eq!(messages(&repeated, "6.4").len(), 2, "{:#?}", messages(&repeated, "6.4"));
     a1b_case("6.4", (PAGE, "", &[&form("")]), (PAGE, "", &[&form("/Group << /S /Transparency >>")]));
     // 6.2.8 and 6.2.9: no transfer functions, standard rendering intents.
@@ -928,6 +932,8 @@ fn part_1_a_default_space_must_be_a_colour_space() {
         "99 0 R",
         "/DeviceRGB",
         "5",
+        "[]",
+        "[/CalRGB]",
         "[/DeviceRGB]",
         "[/Indexed /DeviceRGB 0 <000000>]",
         "[/Separation /X /DeviceRGB 7 0 R]",
@@ -1260,10 +1266,12 @@ fn part_1_default_colour_spaces_require_compatible_cie_spaces() {
     assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultCMYK {CAL_RGB}"), ""), &[&cmyk]), Level::A1b, "6.2.3.3");
     assert_reported(&a1b_no_intent(&coloured_page("/DefaultCMYK [/ICCBased 7 0 R]", ""), &[&cmyk, &rgb_prof]), Level::A1b, "6.2.3.3");
     assert_not_reported(&a1b_no_intent(&coloured_page("/DefaultCMYK [/ICCBased 7 0 R]", ""), &[&cmyk, &cmyk_prof]), Level::A1b, "6.2.3.3");
-    // DefaultRGB rejects Lab and 4-component ICCBased.
+    // DefaultRGB rejects Lab, 4-component ICCBased and non-integer /N.
     let lab = "[/Lab << /WhitePoint [0.9505 1 1.089] >>]";
+    let real_n_prof = hex_stream("/N 3.0", &icc::srgb());
     assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultRGB {lab}"), ""), &[&red]), Level::A1b, "6.2.3.3");
     assert_reported(&a1b_no_intent(&coloured_page("/DefaultRGB [/ICCBased 7 0 R]", ""), &[&red, &cmyk_prof]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&coloured_page("/DefaultRGB [/ICCBased 7 0 R]", ""), &[&red, &real_n_prof]), Level::A1b, "6.2.3.3");
     // DefaultGray accepts CalGray or 1-component ICCBased, not CalRGB.
     let cal_gray = "[/CalGray << /WhitePoint [0.9505 1 1.089] >>]";
     assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultGray {CAL_RGB}"), ""), &[&gray]), Level::A1b, "6.2.3.3");
@@ -1291,7 +1299,7 @@ fn part_1_direct_type3_glyphs_follow_the_fonts_own_resources() {
 fn part_1_validates_annotation_ap_structure_and_button_states() {
     let ap = form("");
     let widget = |ap_entry: &str| format!("<< /Type /Annot /Subtype /Widget /FT /Tx /T (f) /Rect [0 0 10 10] /F 4 /AP {ap_entry} >>");
-    for bad in ["<< >>", "5", "7 0 R"] {
+    for bad in ["<< >>", "<< /N null >>", "5", "7 0 R"] {
         let doc = a1b(ANNOTATED, "", &[&widget(bad), &ap]);
         assert_reported(&doc, Level::A1b, "6.5.3");
         assert_reported(&doc, Level::A1b, "6.9");
@@ -1317,7 +1325,13 @@ fn part_1_rejects_invalid_image_parameter_types() {
         format!("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray {extra} /Length 1 >>\nstream\n\0\nendstream")
     };
     a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8 /Interpolate false")]), (PAGE, "", &[&img("/BitsPerComponent 8 /Interpolate 0")]));
-    a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8")]), (PAGE, "", &[&img("/BitsPerComponent 16.0")]));
+    for real_bpc in ["/BitsPerComponent 8.0", "/BitsPerComponent 16.0"] {
+        let doc = a1b(PAGE, "", &[&img(real_bpc)]);
+        assert_eq!(messages(&doc, "6.2.4"), ["An image's BitsPerComponent isn't an integer"]);
+    }
+    let mask_real_bpc =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask true /BitsPerComponent 1.0 /Length 1 >>\nstream\n\0\nendstream";
+    assert_eq!(messages(&a1b(PAGE, "", &[mask_real_bpc]), "6.2.4"), ["An image's BitsPerComponent isn't an integer"]);
     let indirect_mask =
         "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask 7 0 R /BitsPerComponent 8 /Length 1 >>\nstream\n\0\nendstream";
     a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8")]), (PAGE, "", &[indirect_mask, "true"]));
@@ -1325,7 +1339,9 @@ fn part_1_rejects_invalid_image_parameter_types() {
     assert!(verify(&a1b(PAGE, "", &[mask_no_bpc]), Level::A1b).is_empty());
     let inline = |dict: &str| content(&format!("BI /W 1 /H 1 {dict} ID \0 EI"));
     a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I false")]), (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I 0")]));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8")]), (&drawing(""), "", &[&inline("/CS /G /BPC 8.0")]));
     a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8")]), (&drawing(""), "", &[&inline("/CS /G /BPC 16.0")]));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/IM true /BPC 1")]), (&drawing(""), "", &[&inline("/IM true /BPC 1.0")]));
 }
 
 #[test]
@@ -1336,8 +1352,9 @@ fn part_1_validates_output_intent_icc_profile_structure() {
     let mut header_only = cmyk_profile_header();
     header_only[12..16].copy_from_slice(b"prtr");
     assert_reported(&a1b_with(&hex_stream("/N 4", &header_only), PAGE, "", &[]), Level::A1b, "6.2.2");
-    // Mismatched or missing /N fails 6.2.2.
+    // Mismatched, non-integer or missing /N fails 6.2.2.
     assert_reported(&a1b_with(&hex_stream("/N 4", &icc::srgb()), PAGE, "", &[]), Level::A1b, "6.2.2");
+    assert_reported(&a1b_with(&hex_stream("/N 3.0", &icc::srgb()), PAGE, "", &[]), Level::A1b, "6.2.2");
     assert_reported(&a1b_with(&hex_stream("", &icc::srgb()), PAGE, "", &[]), Level::A1b, "6.2.2");
     // A printer RGB profile without BToA fails 6.2.2.
     let mut prtr_rgb = icc::srgb();
@@ -1365,6 +1382,8 @@ fn part_1_requires_xmp_x_default_title_when_info_has_title() {
     // Info /Title without dc:title fails 6.7.3 in 1b, whilst 2b behaviour stays unchanged.
     assert_reported(&with_xmp(&xmp(1, "B", None)), Level::A1b, "6.7.3");
     assert_not_reported(&with_xmp(&a2b_packet(None)), Level::A2b, "6.6.3");
+    // Malformed XMP fails 6.7.3 when Info /Title is set.
+    assert_reported(&with_xmp("<x:xmpmeta><bad"), Level::A1b, "6.7.3");
     // dc:title without xml:lang="x-default" fails 6.7.3; with both fr and x-default matching, passes.
     let no_default = xmp(1, "B", Some("Report")).replace("xml:lang=\"x-default\"", "xml:lang=\"en\"");
     assert_reported(&with_xmp(&no_default), Level::A1b, "6.7.3");

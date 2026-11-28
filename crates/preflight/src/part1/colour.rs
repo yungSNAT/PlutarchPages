@@ -29,10 +29,10 @@ impl Defaults {
             let Some(a) = s.as_array() else { return false };
             let Some(kind) = a.first().map(|k| doc.resolve(k)) else { return false };
             match kind.as_name() {
-                Some(k) if cal == Some(k) => true,
-                Some(b"ICCBased") => a.get(1).map(|p| doc.resolve(p)).is_some_and(
-                    |p| matches!(&*p, Object::Stream(s) if s.dict.get(b"N").map(|v| doc.resolve(v)).and_then(|v| v.as_int()) == Some(n)),
-                ),
+                Some(k) if cal == Some(k) => a.get(1).is_some_and(|p| matches!(&*doc.resolve(p), Object::Dict(_))),
+                Some(b"ICCBased") => a.get(1).map(|p| doc.resolve(p)).is_some_and(|p| {
+                    matches!(&*p, Object::Stream(s) if s.dict.get(b"N").map(|v| doc.resolve(v)).is_some_and(|v| matches!(*v, Object::Int(v) if v == n)))
+                }),
                 _ => false,
             }
         };
@@ -336,16 +336,13 @@ fn register_type3_glyphs(doc: &Document, font: &Dict, named: &mut Named, add: &m
     }
 }
 
-/// 6.2.3.3: the device colour that no Default colour space covers (ISO 32000-1 8.6.5.6), and
-/// whether some content could not be read; together with 6.2.4 inline image findings. A content
-/// stream draws under its own resources: a page's (inherited ones included), or a form's,
-/// pattern's, appearance stream's or Type 3 font's own, never those of the page that draws it. A
-/// colour space in a resource dictionary is used under that dictionary. An image or a shading
-/// (direct in a page's `/Shading` or its own object) is drawn under every resource dictionary that
-/// names it, and, when a page names it, under any other content that may fall back to the page's
-/// resources and draws something; one that nothing names (a soft mask, say) is judged under every
-/// resource dictionary content draws under.
-pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)], pages: &[Page]) -> (crate::DeviceColour, Inline) {
+/// Collects every content stream's covering Default colour spaces, named resource holders and
+/// page object numbers.
+fn collect_content_defaults(
+    doc: &Document,
+    objs: &[(ObjRef, std::sync::Arc<Object>)],
+    pages: &[Page],
+) -> (HashMap<ObjRef, (Defaults, bool)>, Named, HashSet<ObjRef>) {
     let mut under: HashMap<ObjRef, (Defaults, bool)> = HashMap::new();
     let mut named = Named::default();
     let mut appearances = HashSet::new();
@@ -386,6 +383,20 @@ pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync
     for r in crate::referenced_content(doc, objs) {
         under.entry(crate::font_object(doc, r)).or_insert((Defaults::NONE, true));
     }
+    (under, named, page_objs)
+}
+
+/// 6.2.3.3: the device colour that no Default colour space covers (ISO 32000-1 8.6.5.6), and
+/// whether some content could not be read; together with 6.2.4 inline image findings. A content
+/// stream draws under its own resources: a page's (inherited ones included), or a form's,
+/// pattern's, appearance stream's or Type 3 font's own, never those of the page that draws it. A
+/// colour space in a resource dictionary is used under that dictionary. An image or a shading
+/// (direct in a page's `/Shading` or its own object) is drawn under every resource dictionary that
+/// names it, and, when a page names it, under any other content that may fall back to the page's
+/// resources and draws something; one that nothing names (a soft mask, say) is judged under every
+/// resource dictionary content draws under.
+pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)], pages: &[Page]) -> (crate::DeviceColour, Inline) {
+    let (under, named, page_objs) = collect_content_defaults(doc, objs, pages);
     let (named, on_pages, page_resources) = named.finish(doc);
     let everywhere = under.values().map(|(d, _)| *d).reduce(Defaults::and).unwrap_or(Defaults::NONE);
     let (mut out, inline, fallback) = scan_content(objs, &under);
@@ -436,7 +447,7 @@ fn inline_images(data: &[u8], inline: &mut Inline) -> bool {
                 let mask = matches!(get(b"IM", b"ImageMask"), Some(Object::Bool(true)));
                 inline.bits |= get(b"BPC", b"BitsPerComponent")
                     .filter(|v| !matches!(v, Object::Null))
-                    .is_some_and(|v| !v.as_int().is_some_and(|b| if mask { b == 1 } else { matches!(b, 1 | 2 | 4 | 8) }));
+                    .is_some_and(|v| !matches!(*v, Object::Int(b) if if mask { b == 1 } else { matches!(b, 1 | 2 | 4 | 8) }));
             }
             _ => {}
         }
