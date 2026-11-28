@@ -179,6 +179,33 @@ fn xml_limits_ok(text: &str) -> bool {
     true
 }
 
+/// The `xml:lang="x-default"` value of `dc:title` in `xmp`, when present.
+pub(crate) fn title_x_default(xmp: &str) -> Option<String> {
+    const DC: &str = "http://purl.org/dc/elements/1.1/";
+    const RDF: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+    const XML: &str = "http://www.w3.org/XML/1998/namespace";
+    fn walk<'a>(el: &'a craft_xml::El, parent: &NsScope<'a>) -> Option<String> {
+        let scope = parent.child(el);
+        if scope.is(el, DC, "title") {
+            return el.elements().find_map(|alt| {
+                let alt_scope = scope.child(alt);
+                alt_scope
+                    .is(alt, RDF, "Alt")
+                    .then(|| {
+                        alt.elements().find_map(|li| {
+                            let li_scope = alt_scope.child(li);
+                            (li_scope.is(li, RDF, "li") && li_scope.attr(li, XML, "lang") == Some("x-default")).then(|| li.text().trim().to_owned())
+                        })
+                    })
+                    .flatten()
+            });
+        }
+        el.elements().find_map(|child| walk(child, &scope))
+    }
+    let root = parse(xmp)?;
+    walk(&root, &NsScope::root())
+}
+
 /// The value of a simple XMP property, written either as an attribute (`pdfaid:part="2"`) or
 /// as an element (`<pdfaid:part>2</pdfaid:part>`, or inside an `rdf:Alt`/`rdf:Seq`).
 pub fn value(xmp: &str, key: &str) -> Option<String> {

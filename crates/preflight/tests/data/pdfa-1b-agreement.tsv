@@ -1,0 +1,568 @@
+clause	6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-a.pdf
+clause	6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-b.pdf
+clause	6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-c.pdf
+clause	6.1 File structure/6.1.10 Filters/veraPDF test suite 6-1-10-t01-fail-d.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t01-fail-a.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-fail-c.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-fail-d.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-fail-e.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-fail-f.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-fail-l.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-g.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-h.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-i.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-j.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-k.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t02-pass-l.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-fail-a.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-fail-b.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-fail-c.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-fail-d.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-pass-a.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t03-pass-b.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t04-fail-a.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t04-pass-a.pdf
+verdict	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t06-fail-a.pdf
+none	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t08-fail-a.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t08-pass-a.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t08-pass-b.pdf
+pass	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t08-pass-c.pdf
+none	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t09-fail-a.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t10-fail-a.pdf
+clause	6.1 File structure/6.1.12 Implementation limits/veraPDF test suite 6-1-12-t10-fail-b.pdf
+clause	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t01-fail-a.pdf
+clause	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t01-fail-b.pdf
+pass	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t01-pass-a.pdf
+clause	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t02-fail-a.pdf
+clause	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t02-fail-b.pdf
+clause	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t02-fail-c.pdf
+pass	6.1 File structure/6.1.2 File header/veraPDF test suite 6-1-2-t02-pass-a.pdf
+clause	6.1 File structure/6.1.3 File trailer/veraPDF test suite 6-1-3-t01-fail-a.pdf
+pass	6.1 File structure/6.1.3 File trailer/veraPDF test suite 6-1-3-t01-pass-a.pdf
+clause	6.1 File structure/6.1.3 File trailer/veraPDF test suite 6-1-3-t02-fail-a.pdf
+pass	6.1 File structure/6.1.3 File trailer/veraPDF test suite 6-1-3-t02-pass-a.pdf
+none	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t01-fail-a.pdf
+none	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t01-fail-b.pdf
+none	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t02-fail-a.pdf
+none	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t02-fail-b.pdf
+none	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t03-fail-a.pdf
+pass	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t03-pass-a.pdf
+pass	6.1 File structure/6.1.4 Cross reference table/veraPDF test suite 6-1-4-t03-pass-b.pdf
+clause	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-a.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-b.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-c.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-d.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-e.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-f.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-g.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-h.pdf
+clause	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-i.pdf
+none	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t01-fail-j.pdf
+pass	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t02-pass-a.pdf
+pass	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t02-pass-b.pdf
+pass	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t02-pass-c.pdf
+pass	6.1 File structure/6.1.5 Document information dictionary/veraPDF test suite 6-1-5-t02-pass-d.pdf
+none	6.1 File structure/6.1.6 String objects/veraPDF test suite 6-1-6-t01-fail-a.pdf
+none	6.1 File structure/6.1.6 String objects/veraPDF test suite 6-1-6-t01-fail-b.pdf
+pass	6.1 File structure/6.1.6 String objects/veraPDF test suite 6-1-6-t01-pass-a.pdf
+none	6.1 File structure/6.1.8 Indirect objects/veraPDF test suite 6-1-8-t01-fail-a.pdf
+pass	6.2 Graphics/6.2.10 Content streams/veraPDF test suite 6-2-10-t02-pass-a.pdf
+pass	6.2 Graphics/6.2.2 Output intent/veraPDF test suite 6-2-2-t01-pass-a.pdf
+none	6.2 Graphics/6.2.2 Output intent/veraPDF test suite 6-2-2-t02-fail-a.pdf
+clause	6.2 Graphics/6.2.2 Output intent/veraPDF test suite 6-2-2-t03-fail-a.pdf
+clause	6.2 Graphics/6.2.2 Output intent/veraPDF test suite 6-2-2-t03-fail-b.pdf
+pass	6.2 Graphics/6.2.3.2 ICCBased colour spaces/veraPDF test suite 6-2-3-2-t01-pass-a.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-a.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-b.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-c.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-d.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-e.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-f.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-h.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-i.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-j.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-k.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-l.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-m.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-n.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-o.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-p.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-t.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-u.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-fail-v.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-pass-a.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-pass-b.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t01-pass-c.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-fail-a.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-fail-b.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-fail-c.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-pass-a.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t02-pass-b.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-fail-a.pdf
+clause	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-fail-b.pdf
+none	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-a.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-b.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-c.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-d.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-e.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-f.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-g.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-i.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-j.pdf
+pass	6.2 Graphics/6.2.3.3 Uncalibrated color space/veraPDF test suite 6-2-3-3-t03-pass-k.pdf
+pass	6.2 Graphics/6.2.3.4 Separation and DeviceN colour spaces/veraPDF test suite 6-2-3-4-t01-pass-a.pdf
+pass	6.2 Graphics/6.2.3.4 Separation and DeviceN colour spaces/veraPDF test suite 6-2-3-4-t01-pass-b.pdf
+clause	6.2 Graphics/6.2.4 Images/veraPDF test suite 6-2-4-t03-fail-a.pdf
+pass	6.2 Graphics/6.2.4 Images/veraPDF test suite 6-2-4-t03-pass-a.pdf
+clause	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t02-fail-a.pdf
+none	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t02-pass-a.pdf
+clause	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t03-fail-a.pdf
+none	6.2 Graphics/6.2.5 Form XObjects/veraPDF test suite 6-2-5-t03-pass-a.pdf
+pass	6.2 Graphics/6.2.8 Extended graphics state/veraPDF test suite 6-2-8-t02-pass-a.pdf
+clause	6.2 Graphics/6.2.8 Extended graphics state/veraPDF test suite 6-2-8-t03-fail-a.pdf
+pass	6.2 Graphics/6.2.8 Extended graphics state/veraPDF test suite 6-2-8-t03-pass-a.pdf
+none	6.2 Graphics/6.2.9 Rendering intents/veraPDF test suite 6-2-9-t01-fail-a.pdf
+pass	6.2 Graphics/6.2.9 Rendering intents/veraPDF test suite 6-2-9-t01-pass-a.pdf
+pass	6.2 Graphics/6.2.9 Rendering intents/veraPDF test suite 6-2-9-t01-pass-b.pdf
+none	6.3 Fonts/6.3.3.1 General/veraPDF test suite 6-3-3-1-t01-fail-a.pdf
+none	6.3 Fonts/6.3.3.1 General/veraPDF test suite 6-3-3-1-t01-fail-b.pdf
+pass	6.3 Fonts/6.3.3.1 General/veraPDF test suite 6-3-3-1-t01-pass-a.pdf
+pass	6.3 Fonts/6.3.3.2 CIDFonts/veraPDF test suite 6-3-3-2-t01-pass-a.pdf
+pass	6.3 Fonts/6.3.3.2 CIDFonts/veraPDF test suite 6-3-3-2-t01-pass-b.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t02-fail-a.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t02-fail-b.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t02-fail-c.pdf
+pass	6.3 Fonts/6.3.5 Font subsets/6-3-5-t02-pass-a.pdf
+pass	6.3 Fonts/6.3.5 Font subsets/6-3-5-t02-pass-b.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t03-fail-a.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t03-fail-b.pdf
+none	6.3 Fonts/6.3.5 Font subsets/6-3-5-t03-fail-c.pdf
+none	6.3 Fonts/6.3.6 Font metrics/veraPDF test suite 6-3-6-t01-fail-a.pdf
+pass	6.3 Fonts/6.3.6 Font metrics/veraPDF test suite 6-3-6-t01-pass-a.pdf
+pass	6.4 Transparency/veraPDF test suite 6-4-t01-pass-a.pdf
+clause	6.4 Transparency/veraPDF test suite 6-4-t02-fail-b.pdf
+pass	6.4 Transparency/veraPDF test suite 6-4-t03-pass-a.pdf
+pass	6.4 Transparency/veraPDF test suite 6-4-t03-pass-b.pdf
+clause	6.5 Annotations/6.5.3 Annotation dictionaries/veraPDF test suite 6-5-3-t01-fail-a.pdf
+pass	6.5 Annotations/6.5.3 Annotation dictionaries/veraPDF test suite 6-5-3-t01-pass-a.pdf
+clause	6.6 Actions/6.6.1 General/veraPDF test suite 6-6-1-t01-fail-a.pdf
+pass	6.6 Actions/6.6.1 General/veraPDF test suite 6-6-1-t02-pass-a.pdf
+clause	6.6 Actions/6.6.2 Trigger events/veraPDF test suite 6-6-2-t01-fail-a.pdf
+clause	6.7 Metadata/6.7.11 Version and conformance level identification/veraPDF test suite 6-7-11-t02-fail-a.pdf
+clause	6.7 Metadata/6.7.11 Version and conformance level identification/veraPDF test suite 6-7-11-t03-fail-a.pdf
+none	6.7 Metadata/6.7.11 Version and conformance level identification/veraPDF test suite 6-7-11-t04-fail-a.pdf
+none	6.7 Metadata/6.7.11 Version and conformance level identification/veraPDF test suite 6-7-11-t05-fail-a.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-a.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-b.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-c.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-d.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-e.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-f.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-g.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-h.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-i.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-j.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-k.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-l.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-m.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-n.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-o.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-p.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-q.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-r.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-s.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-t.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-u.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t03-fail-v.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t04-fail-a.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t04-fail-b.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t04-fail-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t05-pass-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-k.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-fail-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t06-pass-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-fail-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t07-pass-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-fail-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t08-pass-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-k.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-fail-q.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t09-pass-q.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t10-fail-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t10-pass-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-fail-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t11-pass-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-fail-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t12-pass-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-k.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-fail-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-k.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t13-pass-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-k.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-q.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-r.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-s.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-t.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-u.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-v.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-w.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-x.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-fail-y.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-q.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-r.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-s.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-t.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-u.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-v.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-w.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-x.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t14-pass-y.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-g.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-k.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-q.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-r.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-s.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-t.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-u.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-v.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-w.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-x.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-fail-y.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-q.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-r.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-s.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-t.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-u.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-v.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-w.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-x.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t15-pass-y.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-k.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-q.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-r.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-s.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-t.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-u.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-v.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-w.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-x.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-fail-y.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-q.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-r.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-s.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-t.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-u.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-v.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-w.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-x.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t16-pass-y.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-c.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-d.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-e.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-f.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-g.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-h.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-i.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-j.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-k.pdf
+none	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-l.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-m.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-n.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-o.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-p.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-q.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-r.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-s.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-t.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-u.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-v.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-w.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-x.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-y.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-fail-z.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-d.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-e.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-f.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-g.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-h.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-i.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-j.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-k.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-l.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-m.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-n.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-o.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-p.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-q.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-r.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-s.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-t.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-u.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-v.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-w.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-x.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-y.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t17-pass-z.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-fail-a.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-fail-b.pdf
+clause	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-fail-c.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-pass-a.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-pass-b.pdf
+pass	6.7 Metadata/6.7.2 Properties/veraPDF test suite 6-7-2-t18-pass-c.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t01-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t01-pass-a.pdf
+clause	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t02-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t02-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t03-fail-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t03-fail-b.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t03-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t04-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t04-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t05-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t05-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t06-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t06-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t07-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t07-pass-a.pdf
+none	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t08-fail-a.pdf
+pass	6.7 Metadata/6.7.3 Document information dictionary/veraPDF test suite 6-7-3-t08-pass-a.pdf
+clause	6.7 Metadata/6.7.8 Extension schemas/veraPDF test suite 6-7-8-t04-fail-a.pdf
+clause	6.7 Metadata/6.7.8 Extension schemas/veraPDF test suite 6-7-8-t05-fail-a.pdf
+clause	6.7 Metadata/6.7.8 Extension schemas/veraPDF test suite 6-7-8-t06-fail-a.pdf
+clause	6.7 Metadata/6.7.8 Extension schemas/veraPDF test suite 6-7-8-t07-fail-a.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t01-pass-a.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t02-pass-a.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-a.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-b.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-c.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-d.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-e.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-f.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-g.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-h.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-i.pdf
+pass	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-j.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-k.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-l.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-m.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-n.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-o.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-p.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-q.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-r.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-s.pdf
+none	6.7 Metadata/6.7.9 Validation/veraPDF test suite 6-7-9-t04-pass-t.pdf
+clause	6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-a.pdf
+clause	6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-b.pdf
+clause	6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-c.pdf
+clause	6.9 Interactive Forms/veraPDF test suite 6-9-t01-fail-d.pdf

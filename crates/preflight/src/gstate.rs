@@ -62,17 +62,22 @@ pub(crate) struct Findings {
 
 /// The 6.2.5 findings over what `doc` reaches from its trailer.
 pub(crate) fn check(doc: &Document) -> Findings {
-    scan(doc).findings
+    scan(doc, None).findings
+}
+
+/// [`check`], passing each graphics state dictionary it reads to `on_state`.
+pub(crate) fn check_with(doc: &Document, mut on_state: impl FnMut(&Dict)) -> Findings {
+    scan(doc, Some(&mut on_state)).findings
 }
 
 /// How many objects [`check`] reads.
 #[cfg(test)]
 pub(crate) fn reached(doc: &Document) -> usize {
-    scan(doc).reached.len()
+    scan(doc, None).reached.len()
 }
 
-fn scan(doc: &Document) -> Scan<'_> {
-    let mut scan = Scan { doc, read: HashSet::new(), reached: HashSet::new(), queue: VecDeque::new(), findings: Findings::default() };
+fn scan<'a, 'b>(doc: &'a Document, on_state: Option<&'b mut dyn FnMut(&Dict)>) -> Scan<'a, 'b> {
+    let mut scan = Scan { doc, read: HashSet::new(), reached: HashSet::new(), queue: VecDeque::new(), findings: Findings::default(), on_state };
     scan.walk(&Object::Dict(doc.trailer().clone()), 0);
     // References are followed from a queue, not by recursion: a chain of them can be as long as
     // the file.
@@ -83,7 +88,7 @@ fn scan(doc: &Document) -> Scan<'_> {
     scan
 }
 
-struct Scan<'a> {
+struct Scan<'a, 'b> {
     doc: &'a Document,
     /// Resource dictionaries, `/ExtGState` maps and graphics states read so far, by object number.
     read: HashSet<u32>,
@@ -92,9 +97,11 @@ struct Scan<'a> {
     reached: HashSet<u32>,
     queue: VecDeque<ObjRef>,
     findings: Findings,
+    /// Called with each graphics state dictionary read, when set.
+    on_state: Option<&'b mut dyn FnMut(&Dict)>,
 }
 
-impl Scan<'_> {
+impl Scan<'_, '_> {
     fn walk(&mut self, o: &Object, depth: u8) {
         if depth > MAX_DEPTH {
             return;
@@ -171,6 +178,9 @@ impl Scan<'_> {
     }
 
     fn gstate(&mut self, gs: &Dict) {
+        if let Some(on_state) = self.on_state.as_deref_mut() {
+            on_state(gs);
+        }
         if self.present(gs, b"TR").is_some() {
             self.findings.transfer = true;
         }

@@ -79,16 +79,24 @@ fn verify_reports_what_breaks_pdfa() {
 /// what this reads off the file; the sentences `convert` reports as fixed are not wordings.
 #[test]
 fn wordings_are_complete() {
-    let source = include_str!("lib.rs");
+    let source = concat!(include_str!("lib.rs"), include_str!("part1.rs"));
     let mut said = Vec::new();
     let mut rest = source;
     // `issue(` and `located_issue(`, written on one line or, when rustfmt breaks it, on several.
     while let Some(at) = rest.find("issue(") {
         rest = &rest[at + 6..];
-        let Some(clause) = rest.trim_start().strip_prefix('"') else { continue };
-        // Step over the clause, then take the wording that follows it.
-        let Some(end) = clause.find('"') else { break };
-        rest = &clause[end + 1..];
+        // Step over the clause (a literal, or `clause` and `clauses.0` where a helper is told the
+        // clause of the part being verified), then take the wording that follows it.
+        let call = rest.trim_start();
+        if let Some(clause) = call.strip_prefix('"') {
+            let Some(end) = clause.find('"') else { break };
+            rest = &clause[end + 1..];
+        } else if call.starts_with("clause") {
+            let Some(comma) = call.find(',') else { break };
+            rest = &call[comma..];
+        } else {
+            continue;
+        }
         let Some(text) = rest.strip_prefix(',').map(str::trim_start).and_then(|r| r.strip_prefix('"')) else { continue };
         let Some(end) = text.find('"') else { break };
         said.push(&text[..end]);
@@ -2366,4 +2374,11 @@ fn a_form_cut_short_on_one_page_is_read_again_on_the_next() {
     let objs: Vec<&str> = objs.iter().map(String::as_str).collect();
     let said: Vec<String> = verify(&build(&objs, ""), Level::A2b).into_iter().filter(|i| i.clause == "6.2.10").map(|i| i.message).collect();
     assert_eq!(said, ["Page 2 has transparency but no device-independent blending colour space or PDF/A output intent"]);
+}
+
+/// Each level names the ISO 19005 part its clause numbers come from.
+#[test]
+fn levels_name_their_standard() {
+    let named: Vec<&str> = [Level::A1b, Level::A2b, Level::A3b].into_iter().map(Level::standard).collect();
+    assert_eq!(named, ["ISO 19005-1:2005", "ISO 19005-2:2011", "ISO 19005-3:2012"]);
 }

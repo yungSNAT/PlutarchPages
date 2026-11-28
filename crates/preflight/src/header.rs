@@ -10,7 +10,8 @@ use pdfcraft_cos::Document;
 /// What the header of `doc`, as it will be saved, breaks of 6.1.2.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Header {
-    /// The first line isn't `%PDF-1.0` to `%PDF-1.7` at the start of the file.
+    /// The first line isn't `%PDF-` and a version the check allows (`1.0` to `1.7` for parts 2
+    /// and 3) at the start of the file.
     pub(crate) version: bool,
     /// The second line isn't a comment of at least four bytes above 127.
     pub(crate) comment: bool,
@@ -19,6 +20,11 @@ pub(crate) struct Header {
 /// What the header of `doc` breaks of 6.1.2: as stored, or, when the next save rewrites the
 /// file, as that save will write it.
 pub(crate) fn check(doc: &Document) -> Header {
+    check_with(doc, allowed)
+}
+
+/// [`check`] with `allowed` deciding which versions the header may name.
+pub(crate) fn check_with(doc: &Document, allowed: fn(&[u8]) -> bool) -> Header {
     if doc.full_save_required() || doc.encryption_changed() {
         let written = doc.version().get(..3).unwrap_or_default();
         return Header { version: !allowed(written.as_bytes()), comment: false };
@@ -35,6 +41,11 @@ pub(crate) fn check(doc: &Document) -> Header {
 /// Whether a version is `1.0` to `1.7`.
 fn allowed(version: &[u8]) -> bool {
     matches!(version, [b'1', b'.', b'0'..=b'7'])
+}
+
+/// Whether a version is any `d.d`: ISO 19005-1 6.1.2 asks for `%PDF-` and a version, not which.
+pub(crate) fn any_version(version: &[u8]) -> bool {
+    matches!(version, [b'0'..=b'9', b'.', b'0'..=b'9'])
 }
 
 /// What follows an end-of-line marker (CR, LF or CR LF) at the start of `data`.

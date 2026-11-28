@@ -27,6 +27,7 @@ mod gstate;
 mod header;
 pub mod icc;
 mod limits;
+mod part1;
 mod spot;
 mod trailer;
 mod transparency;
@@ -39,6 +40,9 @@ use pdfcraft_cos::{Dict, Document, ObjRef, Object, PdfString, Stream};
 /// The PDF/A part and conformance level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Level {
+    /// ISO 19005-1:2005 level B: verified only (see [`convert`]), against the clauses `part1.rs`
+    /// lists.
+    A1b,
     A2b,
     A3b,
 }
@@ -46,6 +50,7 @@ pub enum Level {
 impl Level {
     pub fn part(self) -> u8 {
         match self {
+            Level::A1b => 1,
             Level::A2b => 2,
             Level::A3b => 3,
         }
@@ -53,13 +58,24 @@ impl Level {
 
     pub fn label(self) -> &'static str {
         match self {
+            Level::A1b => "PDF/A-1b",
             Level::A2b => "PDF/A-2b",
             Level::A3b => "PDF/A-3b",
         }
     }
 
+    /// The part of ISO 19005 whose clauses [`Issue::clause`] names.
+    pub fn standard(self) -> &'static str {
+        match self {
+            Level::A1b => "ISO 19005-1:2005",
+            Level::A2b => "ISO 19005-2:2011",
+            Level::A3b => "ISO 19005-3:2012",
+        }
+    }
+
     pub fn from_id(id: &str) -> Option<Level> {
         match id.to_ascii_lowercase().replace(['/', '-', ' '], "").as_str() {
+            "pdfa1b" | "a1b" | "1b" => Some(Level::A1b),
             "pdfa2b" | "a2b" | "2b" => Some(Level::A2b),
             "pdfa3b" | "a3b" | "3b" => Some(Level::A3b),
             _ => None,
@@ -78,7 +94,8 @@ impl Level {
 /// [`Issue::said`] does that.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Issue {
-    /// The ISO 19005-2 clause.
+    /// The clause of the part of ISO 19005 being verified ([`Level::standard`]): ISO 19005-1 for
+    /// PDF/A-1b, ISO 19005-2 for 2b and 3b.
     pub clause: &'static str,
     pub message: String,
     /// The problem as it is worded here, with `{}` or a named hole where the document's own name goes.
@@ -222,6 +239,38 @@ pub const WORDINGS: &[&str] = &[
     "PostScript XObjects aren't allowed",
     "Embedded files must be PDF/A files themselves (use PDF/A-3 for others)",
     "An embedded file has no AFRelationship",
+    // PDF/A-1b only.
+    "The metadata stream is compressed (Filter)",
+    "The document has optional content (OCProperties)",
+    "Embedded files aren't allowed",
+    "The output intent's profile isn't an ICC version 2 printer or display profile in grey, RGB or CMYK",
+    "The output intents name different profiles",
+    "An image has BitsPerComponent {}, not 1, 2, 4 or 8",
+    "An image mask has BitsPerComponent {}, not 1",
+    "An image's Interpolate entry isn't false",
+    "An image's BitsPerComponent isn't an integer",
+    "An inline image asks to be interpolated",
+    "An inline image has a BitsPerComponent other than 1, 2, 4 or 8 (1 for a mask)",
+    "A form XObject holds PostScript (PS or Subtype2 PS)",
+    "Reference XObjects aren't allowed",
+    "A graphics state has a soft mask (SMask)",
+    "A graphics state has the blend mode {}: only Normal and Compatible are allowed",
+    "A graphics state has a blend mode that isn't a name",
+    "A graphics state has a constant alpha (CA or ca) other than 1",
+    "The file doesn't start with a %PDF-n.n header line",
+    "A form XObject has OPI information",
+    "The metadata stream isn't marked as XML metadata (Type Metadata, Subtype XML)",
+    "An annotation has no type (Subtype)",
+    "An XObject has a soft mask (SMask)",
+    "A transparency group is used",
+    "A {} annotation has a constant alpha (CA) other than 1",
+    "A {} annotation has a colour (C or IC), but the output intent isn't RGB",
+    "A {} annotation's appearance dictionary holds entries other than N",
+    "A {} annotation's appearance dictionary has no normal appearance (N)",
+    "A {} annotation's normal appearance is the wrong kind of object",
+    "A form field performs an action (A)",
+    "A real number is outside ±32767",
+    "A string is longer than 65535 bytes",
 ];
 
 /// What a document declares (the Standards panel).
@@ -453,20 +502,25 @@ fn type3_procs_within(
     }
 }
 
+/// The content streams of the page `page`.
+fn page_contents(doc: &Document, page: &Dict) -> Vec<ObjRef> {
+    let contents = match page.get(b"Contents") {
+        Some(Object::Ref(r)) => match &*doc.get(*r) {
+            Object::Array(a) => a.clone(),
+            _ => vec![Object::Ref(*r)],
+        },
+        Some(Object::Array(a)) => a.clone(),
+        _ => Vec::new(),
+    };
+    contents.iter().filter_map(Object::as_ref).collect()
+}
+
 /// The content streams that only a reference identifies, their dictionaries saying nothing: the
 /// pages' `/Contents` and Type 3 glyph procedures.
 fn referenced_content(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> std::collections::HashSet<ObjRef> {
     let mut out = std::collections::HashSet::new();
     for p in pdfcraft_model::pages(doc) {
-        let contents = match p.dict.get(b"Contents") {
-            Some(Object::Ref(r)) => match &*doc.get(*r) {
-                Object::Array(a) => a.clone(),
-                _ => vec![Object::Ref(*r)],
-            },
-            Some(Object::Array(a)) => a.clone(),
-            _ => Vec::new(),
-        };
-        out.extend(contents.iter().filter_map(Object::as_ref));
+        out.extend(page_contents(doc, &p.dict));
     }
     let mut read = std::collections::HashSet::new();
     for (_, o) in objs {
@@ -485,10 +539,21 @@ fn referenced_content(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)])
 /// its own `/Resources`.
 fn drawing_fonts(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> std::collections::HashSet<ObjRef> {
     let mut out = std::collections::HashSet::new();
+    let (mut seen_res, mut seen_fonts) = (std::collections::HashSet::new(), std::collections::HashSet::new());
     for (_, o) in objs {
-        let Some(resources) = dict_of(o).and_then(|d| d.get(b"Resources")).map(|r| doc.resolve(r)) else { continue };
-        let Some(fonts) = resources.as_dict().and_then(|r| r.get(b"Font")).map(|f| doc.resolve(f)) else { continue };
-        if let Some(fonts) = fonts.as_dict() {
+        let Some(res) = dict_of(o).and_then(|d| d.get(b"Resources")).filter(|r| r.as_ref().is_none_or(|r| seen_res.insert(font_object(doc, r))))
+        else {
+            continue;
+        };
+        let Some(fonts) = doc
+            .resolve(res)
+            .as_dict()
+            .and_then(|r| r.get(b"Font").cloned())
+            .filter(|f| f.as_ref().is_none_or(|r| seen_fonts.insert(font_object(doc, r))))
+        else {
+            continue;
+        };
+        if let Some(fonts) = doc.resolve(&fonts).as_dict() {
             out.extend(fonts.iter().filter_map(|(_, f)| f.as_ref()).map(|r| font_object(doc, r)));
         }
     }
@@ -604,8 +669,8 @@ fn uses_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)])
         let Some(d) = dict_of(o) else { continue };
         // A resource dictionary's /ColorSpace, whether it is this object or the page's inline
         // /Resources.
-        let resources = d.get(b"Resources").map(|r| doc.resolve(r)).and_then(|r| r.as_dict().cloned());
-        for holder in [Some(d), resources.as_ref()].into_iter().flatten() {
+        let resources = d.get(b"Resources").map(|r| doc.resolve(r));
+        for holder in [Some(d), resources.as_deref().and_then(Object::as_dict)].into_iter().flatten() {
             if let Some(spaces) = holder.get(b"ColorSpace").map(|c| doc.resolve(c))
                 && let Some(spaces) = spaces.as_dict()
             {
@@ -666,9 +731,13 @@ pub fn verify(doc: &Document, level: Level) -> Vec<Issue> {
         let message = fill(pattern, None, &values);
         push(Issue { clause, message, pattern, value: None, values, page: None, object: Some(object), fixable });
     };
+    if level == Level::A1b {
+        part1::check(doc, &mut issue, &located_issue);
+        return deduplicated(out.into_inner());
+    }
     check_identification(doc, level, &mut issue);
     let objs = objects(doc);
-    check_xmp_packets(&objs, &located_issue);
+    check_xmp_packets(&objs, ("6.6.2.3.1", "6.6.2.3.3"), &located_issue);
     check_output_intent(doc, &objs, &mut issue);
     check_catalog_actions(doc, &mut issue);
     // Pages: annotations and page actions.
@@ -698,31 +767,58 @@ pub fn verify(doc: &Document, level: Level) -> Vec<Issue> {
     check_limits(doc, &objs, &pages, &mut issue);
     check_spots(doc, &objs, &mut issue);
     check_graphics_states(doc, &mut issue);
-    // One message per kind of problem is enough for repeated ones (as preflight summaries do).
-    let mut out = out.into_inner();
+    deduplicated(out.into_inner())
+}
+
+/// One message per kind of problem is enough for repeated ones (as preflight summaries do).
+fn deduplicated(mut out: Vec<Issue>) -> Vec<Issue> {
     let mut seen = std::collections::HashSet::new();
     out.retain(|i| seen.insert((i.clause, i.message.clone(), i.page)));
     out
+}
+
+/// What the XMP metadata says about the file's identification (every part).
+struct Identification {
+    /// The catalog has no metadata stream.
+    missing: bool,
+    /// `pdfaid:part` isn't the level's part, or `pdfaid:conformance` isn't B.
+    unidentified: bool,
+    /// The information dictionary's title differs from `dc:title`.
+    title_differs: bool,
+}
+
+fn identification(doc: &Document, level: Level) -> Identification {
+    let Some(x) = metadata(doc) else { return Identification { missing: true, unidentified: false, title_differs: false } };
+    let part = xmp::identifier(&x, xmp::PDFA_ID, "part");
+    let conf = xmp::identifier(&x, xmp::PDFA_ID, "conformance");
+    Identification {
+        missing: false,
+        // Part 1 names its conformance exactly, A or B (a level A file is also a level B one).
+        unidentified: part.as_deref() != Some(&level.part().to_string())
+            || match level {
+                Level::A1b => !matches!(conf.as_deref(), Some("A" | "B")),
+                _ => conf.as_deref().map(str::to_uppercase).as_deref() != Some("B"),
+            },
+        title_differs: info(doc, "Title").is_some_and(|title| match level {
+            Level::A1b => xmp::title_x_default(&x).as_deref() != Some(title.as_str()),
+            _ => xmp::value(&x, "dc:title").is_some_and(|t| t != title),
+        }),
+    }
 }
 
 /// 6.1.2, 6.1.3 and 6.6: identification and metadata, the file header, the file identifier and
 /// encryption.
 fn check_identification(doc: &Document, level: Level, issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>, bool)) {
     // 6.1.3 / 6.6: identification and metadata.
-    match metadata(doc) {
-        None => issue("6.6.2.1", "The document has no XMP metadata", None, None, true),
-        Some(x) => {
-            let part = xmp::identifier(&x, xmp::PDFA_ID, "part");
-            let conf = xmp::identifier(&x, xmp::PDFA_ID, "conformance");
-            if part.as_deref() != Some(&level.part().to_string()) || conf.as_deref().map(str::to_uppercase).as_deref() != Some("B") {
-                issue("6.6.4", "The metadata doesn't identify the file as {}", Some(level.label().to_owned()), None, true);
-            }
-            if let Some(title) = info(doc, "Title")
-                && xmp::value(&x, "dc:title").is_some_and(|t| t != title)
-            {
-                issue("6.6.3", "The title in the metadata and the document information differ", None, None, true);
-            }
-        }
+    let id = identification(doc, level);
+    if id.missing {
+        issue("6.6.2.1", "The document has no XMP metadata", None, None, true);
+    }
+    if id.unidentified {
+        issue("6.6.4", "The metadata doesn't identify the file as {}", Some(level.label().to_owned()), None, true);
+    }
+    if id.title_differs {
+        issue("6.6.3", "The title in the metadata and the document information differ", None, None, true);
     }
     // 6.1.2: the file header.
     let header = header::check(doc);
@@ -747,8 +843,11 @@ fn check_identification(doc: &Document, level: Level, issue: &mut impl FnMut(&'s
 
 /// 6.6.2.3.1 and 6.6.2.3.3: predefined XMP value types and extension schema descriptions, in
 /// every metadata stream.
+/// `clauses` are those of the part being verified: the value types', then the extension
+/// schemas'.
 fn check_xmp_packets(
     objs: &[(ObjRef, std::sync::Arc<Object>)],
+    clauses: (&'static str, &'static str),
     located_issue: &impl Fn(&'static str, &'static str, Vec<(&'static str, String)>, ObjRef, bool),
 ) {
     let (mut mistyped, mut extension) = (Vec::new(), xmp_extension::Findings::default());
@@ -760,7 +859,7 @@ fn check_xmp_packets(
         let mut values = vec![("{property}", name.clone()), ("{object}", object.to_string()), ("{type}", ty)];
         if written == name {
             located_issue(
-                "6.6.2.3.1",
+                clauses.0,
                 "The XMP property {property} in metadata stream {object} should have the value type {type}",
                 values,
                 object,
@@ -769,7 +868,7 @@ fn check_xmp_packets(
         } else {
             values.push(("{written}", written));
             located_issue(
-                "6.6.2.3.1",
+                clauses.0,
                 "The XMP property {property} in metadata stream {object}, written {written}, should have the value type {type}",
                 values,
                 object,
@@ -777,26 +876,23 @@ fn check_xmp_packets(
             );
         }
     }
-    report_xmp_extension(extension, located_issue);
+    report_xmp_extension(extension, clauses.1, located_issue);
 }
 
 /// 6.6.2.3.3: what the extension schema descriptions of the metadata streams lack.
 fn report_xmp_extension(
     extension: xmp_extension::Findings,
+    clause: &'static str,
     located_issue: &impl Fn(&'static str, &'static str, Vec<(&'static str, String)>, ObjRef, bool),
 ) {
     for m in extension.missing {
         let mut values = vec![("{schema}", m.schema), ("{object}", m.object.to_string()), ("{entry}", m.entry)];
         match (m.item, m.empty) {
-            (None, false) => located_issue(
-                "6.6.2.3.3",
-                "The XMP extension schema {schema} in metadata stream {object} has no {entry} entry",
-                values,
-                m.object,
-                false,
-            ),
+            (None, false) => {
+                located_issue(clause, "The XMP extension schema {schema} in metadata stream {object} has no {entry} entry", values, m.object, false)
+            }
             (None, true) => located_issue(
-                "6.6.2.3.3",
+                clause,
                 "The XMP extension schema {schema} in metadata stream {object} has an empty {entry} entry",
                 values,
                 m.object,
@@ -805,7 +901,7 @@ fn report_xmp_extension(
             (Some(item), false) => {
                 values.push(("{item}", item));
                 located_issue(
-                    "6.6.2.3.3",
+                    clause,
                     "The XMP extension schema {schema} in metadata stream {object} describes {item} without a {entry} entry",
                     values,
                     m.object,
@@ -815,7 +911,7 @@ fn report_xmp_extension(
             (Some(item), true) => {
                 values.push(("{item}", item));
                 located_issue(
-                    "6.6.2.3.3",
+                    clause,
                     "The XMP extension schema {schema} in metadata stream {object} describes {item} with an empty {entry} entry",
                     values,
                     m.object,
@@ -828,7 +924,7 @@ fn report_xmp_extension(
         let object = c.object;
         if c.found.is_empty() {
             located_issue(
-                "6.6.2.3.3",
+                clause,
                 "The XMP extension schema container in metadata stream {object} holds no rdf:Bag",
                 vec![("{object}", object.to_string())],
                 object,
@@ -837,7 +933,7 @@ fn report_xmp_extension(
         } else {
             let values = vec![("{object}", object.to_string()), ("{found}", c.found)];
             located_issue(
-                "6.6.2.3.3",
+                clause,
                 "The XMP extension schema container in metadata stream {object} holds {found}, not one rdf:Bag",
                 values,
                 object,
@@ -849,7 +945,7 @@ fn report_xmp_extension(
         let mut values = vec![("{object}", p.object.to_string()), ("{namespace}", p.namespace.to_owned()), ("{prefix}", p.own.to_owned())];
         if p.written.is_empty() {
             located_issue(
-                "6.6.2.3.3",
+                clause,
                 "Metadata stream {object} writes the namespace {namespace} without a prefix, not with {prefix}",
                 values,
                 p.object,
@@ -858,7 +954,7 @@ fn report_xmp_extension(
         } else {
             values.push(("{written}", p.written));
             located_issue(
-                "6.6.2.3.3",
+                clause,
                 "Metadata stream {object} writes the namespace {namespace} with the prefix {written}, not {prefix}",
                 values,
                 p.object,
@@ -961,7 +1057,7 @@ fn check_limits(
     issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>, bool),
 ) {
     // 6.1.13: the implementation limits of ISO 32000-1 Annex C.
-    let over = limits::exceeded(doc, objs, &referenced_content(doc, objs));
+    let over = limits::exceeded(doc, objs, &referenced_content(doc, objs), limits::PDF_1_7);
     if over.int {
         issue("6.1.13", "An integer is outside the 32-bit range", None, None, false);
     }
@@ -1166,15 +1262,7 @@ fn check_stream(
     subtype: Option<&[u8]>,
     issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>, bool),
 ) {
-    let filters: Vec<Vec<u8>> = match stream.dict.get(b"Filter").map(|filter| doc.resolve(filter)) {
-        Some(filter) => match &*filter {
-            Object::Name(name) => vec![name.clone()],
-            Object::Array(filters) => filters.iter().filter_map(|filter| doc.resolve(filter).as_name().map(<[u8]>::to_vec)).collect(),
-            _ => Vec::new(),
-        },
-        None => Vec::new(),
-    };
-    if filters.iter().any(|filter| filter == b"LZWDecode" || filter == b"LZW") {
+    if uses_lzw(doc, stream) {
         issue("6.1.7.2", "A stream uses LZW compression", None, None, false);
     }
     if stream.dict.get(b"F").is_some() || stream.dict.get(b"FFilter").is_some() {
@@ -1193,13 +1281,27 @@ fn check_stream(
     }
 }
 
+/// Whether one of `stream`'s filters is LZW.
+fn uses_lzw(doc: &Document, stream: &pdfcraft_cos::Stream) -> bool {
+    let filters: Vec<Vec<u8>> = match stream.dict.get(b"Filter").map(|filter| doc.resolve(filter)) {
+        Some(filter) => match &*filter {
+            Object::Name(name) => vec![name.clone()],
+            Object::Array(filters) => filters.iter().filter_map(|filter| doc.resolve(filter).as_name().map(<[u8]>::to_vec)).collect(),
+            _ => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+    filters.iter().any(|filter| filter == b"LZWDecode" || filter == b"LZW")
+}
+
 fn check_embedded_file(level: Level, dict: &Dict, issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>, bool)) {
     match level {
         Level::A2b => issue("6.8", "Embedded files must be PDF/A files themselves (use PDF/A-3 for others)", None, None, false),
         Level::A3b if dict.get(b"AFRelationship").is_none() => {
             issue("6.8", "An embedded file has no AFRelationship", None, None, true);
         }
-        Level::A3b => {}
+        // `part1` reports embedded files under its own clause; this walk is for parts 2 and 3.
+        Level::A3b | Level::A1b => {}
     }
 }
 
@@ -1209,7 +1311,19 @@ fn check_font(doc: &Document, d: &Dict, issue: &mut impl FnMut(&'static str, &'s
         return;
     }
     let name = d.name(b"BaseFont").map(|n| String::from_utf8_lossy(n).into_owned());
-    let descriptor = if sub == Some(b"Type0") {
+    if !font_embedded(doc, d) {
+        // A font the document doesn't name gets a sentence of its own, rather than the word for
+        // "a font" put where a name goes, which read badly even in English.
+        match name {
+            Some(n) => issue("6.2.11.4", "The font {} isn't embedded", Some(n), None, false),
+            None => issue("6.2.11.4", "A font isn't embedded", None, None, false),
+        }
+    }
+}
+
+/// Whether the font `d` (a Type 0 font through its descendant) has its program embedded.
+fn font_embedded(doc: &Document, d: &Dict) -> bool {
+    let descriptor = if d.name(b"Subtype") == Some(b"Type0") {
         d.get(b"DescendantFonts")
             .map(|x| doc.resolve(x))
             .and_then(|a| a.as_array().and_then(|a| a.first().cloned()))
@@ -1218,18 +1332,10 @@ fn check_font(doc: &Document, d: &Dict, issue: &mut impl FnMut(&'static str, &'s
     } else {
         d.get(b"FontDescriptor").cloned()
     };
-    let embedded = descriptor
+    descriptor
         .map(|fd| doc.resolve(&fd))
         .and_then(|fd| fd.as_dict().cloned())
-        .is_some_and(|fd| fd.get(b"FontFile").is_some() || fd.get(b"FontFile2").is_some() || fd.get(b"FontFile3").is_some());
-    if !embedded {
-        // A font the document doesn't name gets a sentence of its own, rather than the word for
-        // "a font" put where a name goes, which read badly even in English.
-        match name {
-            Some(n) => issue("6.2.11.4", "The font {} isn't embedded", Some(n), None, false),
-            None => issue("6.2.11.4", "A font isn't embedded", None, None, false),
-        }
-    }
+        .is_some_and(|fd| fd.get(b"FontFile").is_some() || fd.get(b"FontFile2").is_some() || fd.get(b"FontFile3").is_some())
 }
 
 fn info(doc: &Document, key: &str) -> Option<String> {
@@ -1243,6 +1349,32 @@ pub struct Report {
     pub fixed: Vec<String>,
     /// Problems left (the document isn't conforming while any remain).
     pub remaining: Vec<Issue>,
+}
+
+/// Why [`convert`] could not convert a document.
+#[derive(Debug)]
+pub enum ConvertError {
+    /// The requested conformance level is verified only (for example [`Level::A1b`]).
+    UnsupportedLevel(Level),
+    /// Reading or updating the PDF object graph failed.
+    Cos(pdfcraft_cos::CosError),
+}
+
+impl std::fmt::Display for ConvertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedLevel(level) => write!(f, "Save as PDF/A converts to PDF/A-2b or 3b; {} can be verified only", level.label()),
+            Self::Cos(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ConvertError {}
+
+impl From<pdfcraft_cos::CosError> for ConvertError {
+    fn from(e: pdfcraft_cos::CosError) -> Self {
+        Self::Cos(e)
+    }
 }
 
 /// Whether a dictionary with an `/S` entry is an action (not a structure element or the like).
@@ -1261,12 +1393,22 @@ const MAX_ACTION_CHAIN: usize = 1024;
 /// `/Next` (ISO 32000-2 12.6.2: a dictionary or an array of them, which may be an object of its
 /// own). An action `/Next` refers to is an object of its own, checked and removed as one.
 fn chain_forbidden(doc: &Document, a: &Dict) -> Option<String> {
+    chain_forbidden_by(doc, a, part2_forbidden)
+}
+
+/// The action types parts 2 and 3 forbid.
+fn part2_forbidden(s: &[u8]) -> bool {
+    FORBIDDEN_ACTIONS.contains(&s)
+}
+
+/// [`chain_forbidden`] with `forbidden` deciding which action types are not allowed.
+fn chain_forbidden_by(doc: &Document, a: &Dict, forbidden: fn(&[u8]) -> bool) -> Option<String> {
     let mut read = 0;
     let mut seen = std::collections::HashSet::new();
     // Objects `/Next` refers to (an action, or an array of them), each read once and borrowed:
     // one array shared by many chains is not copied per chain.
     let mut held: Vec<std::sync::Arc<Object>> = Vec::new();
-    if let Some(s) = walk_chain(doc, a, &mut read, &mut seen, &mut held) {
+    if let Some(s) = walk_chain(doc, a, forbidden, &mut read, &mut seen, &mut held) {
         return Some(s);
     }
     while let Some(o) = held.pop() {
@@ -1286,7 +1428,7 @@ fn chain_forbidden(doc: &Document, a: &Dict) -> Option<String> {
             _ => continue,
         };
         for d in dicts {
-            if let Some(s) = walk_chain(doc, d, &mut read, &mut seen, &mut held) {
+            if let Some(s) = walk_chain(doc, d, forbidden, &mut read, &mut seen, &mut held) {
                 return Some(s);
             }
         }
@@ -1309,6 +1451,7 @@ fn hold_referenced(doc: &Document, list: &[Object], seen: &mut std::collections:
 fn walk_chain(
     doc: &Document,
     a: &Dict,
+    forbidden: fn(&[u8]) -> bool,
     read: &mut usize,
     seen: &mut std::collections::HashSet<ObjRef>,
     held: &mut Vec<std::sync::Arc<Object>>,
@@ -1319,7 +1462,7 @@ fn walk_chain(
         if *read > MAX_ACTION_CHAIN {
             return Some("too deeply chained".into());
         }
-        if let Some(s) = action_forbidden(doc, d) {
+        if let Some(s) = action_forbidden(doc, d, forbidden) {
             return Some(s);
         }
         match d.get(b"Next") {
@@ -1343,10 +1486,10 @@ fn walk_chain(
 /// The forbidden kind of the action `d` itself, if it is one: a forbidden type, or a Named
 /// action for anything but the four of [`NAMED_ACTIONS`]. The type and the name may each be given
 /// directly or by reference.
-fn action_forbidden(doc: &Document, d: &Dict) -> Option<String> {
+fn action_forbidden(doc: &Document, d: &Dict, forbidden: fn(&[u8]) -> bool) -> Option<String> {
     let s = doc.resolve(d.get(b"S")?);
     let s = s.as_name()?;
-    if FORBIDDEN_ACTIONS.contains(&s) {
+    if forbidden(s) {
         return Some(String::from_utf8_lossy(s).into_owned());
     }
     let n = d.get(b"N").map(|n| doc.resolve(n));
@@ -1464,7 +1607,14 @@ fn convert_direct_page_annots(
 }
 
 /// Make `doc` conform to `level` as far as possible, then re-check it.
-pub fn convert(doc: &mut Document, level: Level) -> Result<Report, pdfcraft_cos::CosError> {
+///
+/// PDF/A-1b is verified only: making a file conform to it means taking out transparency and optional
+/// content, which changes how pages look, so [`Level::A1b`] returns
+/// [`ConvertError::UnsupportedLevel`] without modifying `doc`.
+pub fn convert(doc: &mut Document, level: Level) -> Result<Report, ConvertError> {
+    if level == Level::A1b {
+        return Err(ConvertError::UnsupportedLevel(level));
+    }
     let mut fixed = Vec::new();
     if doc.trailer().get(b"Encrypt").is_some() {
         doc.remove_encryption();

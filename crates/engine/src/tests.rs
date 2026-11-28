@@ -15589,6 +15589,18 @@ fn save_as_pdfa_saves_a_compliant_file_header() {
     }
 }
 
+/// Save as PDF/A refuses PDF/A-1b, which can be verified but not converted to, and leaves the
+/// document as it was.
+#[test]
+fn save_as_pdfa_refuses_part_1() {
+    let mut s = Session::new();
+    let id = s.open("x.pdf", None, Arc::new(fixture(1)), None).unwrap();
+    let before = s.save_bytes(id).unwrap();
+    let refused = s.apply(id, Edit::ConvertPdfA { level: pdfcraft_preflight::Level::A1b });
+    assert!(format!("{refused:?}").contains("PDF/A-1b can be verified only"), "{refused:?}");
+    assert_eq!(s.save_bytes(id).unwrap(), before);
+}
+
 /// ISO 32000-2 §7.6.6, Table 25: a document whose only encryption is for its embedded files,
 /// authorised when one is opened (`/AuthEvent /EFOpen`), opens without a password, lists its
 /// attachment, and saves with the attachment still encrypted.
