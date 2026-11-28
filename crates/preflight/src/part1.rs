@@ -25,9 +25,10 @@
 //! (6.3.4), and XMP packets in UTF-16 (6.7.11 reads them as UTF-8). Like parts 2 and 3, the object
 //! walk reads every object in the file, including ones no page reaches.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use pdfcraft_cos::{Dict, Document, ObjRef, Object, Stream};
+use pdfcraft_model::Page;
 
 use super::{Level, gstate, header, limits, trailer};
 
@@ -77,12 +78,12 @@ pub(super) fn check(doc: &Document, issue: &mut IssueSink<'_>, located_issue: &L
     check_structure(doc, &mut part1_issue);
     check_catalog(doc, &mut part1_issue);
     let objs = super::objects(doc);
-    check_colour(doc, &objs, &mut part1_issue);
+    let pages = pdfcraft_model::pages(doc);
+    check_colour(doc, &objs, &pages, &mut part1_issue);
     check_limits(doc, &objs, &mut part1_issue);
     super::check_xmp_packets(&objs, ("6.7.9", "6.7.8"), &located_issue);
     let rgb_intent = super::pdfa_intent_profile(doc) == Some(Some(3));
     let drawing = super::drawing_fonts(doc, &objs);
-    let pages = pdfcraft_model::pages(doc);
     // Each annotation's page: the first page that lists it.
     let mut annot_pages: HashMap<ObjRef, usize> = HashMap::new();
     for (i, p) in pages.iter().enumerate() {
@@ -180,7 +181,7 @@ fn check_catalog(doc: &Document, part1_issue: &mut impl FnMut(&'static str, &'st
         }
     }
     if let Some(af) = cat.get(b"AcroForm").map(|a| doc.resolve(a))
-        && af.as_dict().is_some_and(|a| matches!(a.get(b"NeedAppearances"), Some(Object::Bool(true))))
+        && af.as_dict().is_some_and(|a| a.get(b"NeedAppearances").map(|v| doc.resolve(v)).is_some_and(|v| matches!(*v, Object::Bool(true))))
     {
         part1_issue("6.9", "The form asks viewers to make appearances (NeedAppearances)", None, None);
     }
@@ -190,6 +191,7 @@ fn check_catalog(doc: &Document, part1_issue: &mut impl FnMut(&'static str, &'st
 fn check_colour(
     doc: &Document,
     objs: &[(ObjRef, std::sync::Arc<Object>)],
+    pages: &[Page],
     part1_issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>),
 ) {
     let intents = super::catalog(doc).get(b"OutputIntents").map(|o| doc.resolve(o)).and_then(|o| o.as_array().cloned()).unwrap_or_default();
@@ -202,11 +204,11 @@ fn check_colour(
     let pdfa = intents.iter().find_map(|oi| doc.resolve(oi).as_dict().filter(|d| d.name(b"S") == Some(b"GTS_PDFA1")).cloned());
     if let Some(intent) = pdfa
         && let Some(profile) = intent.get(b"DestOutputProfile").map(|p| doc.resolve(p))
-        && !icc_output_profile(&profile)
+        && !icc_output_profile(doc, &profile)
     {
         part1_issue("6.2.2", "The output intent's profile isn't an ICC version 2 printer or display profile in grey, RGB or CMYK", None, None);
     }
-    let (used, inline) = colour::uncovered_device_colour(doc, objs);
+    let (used, inline) = colour::uncovered_device_colour(doc, objs, pages);
     if inline.interpolate {
         part1_issue("6.2.4", "An inline image asks to be interpolated", None, None);
     }
@@ -248,14 +250,20 @@ fn check_colour(
     }
 }
 
-/// Whether `profile` is a stream holding an ICC profile of a version below 3, for a printer or a
-/// display, in grey, RGB or CMYK (the ICC header: the major version at byte 8, the device class at
-/// bytes 12 to 15 and the data colour space at 16 to 19).
-fn icc_output_profile(profile: &Object) -> bool {
+/// Whether `profile` is a stream holding a valid ICC version 2 (or earlier) printer or display
+/// profile in grey, RGB or CMYK, with matching `/N` and PCS-to-device conversion data (`BToA` for
+/// printer RGB/CMYK, `BToA` or matrix/TRC for display RGB, `BToA` or `kTRC` for grey).
+fn icc_output_profile(doc: &Document, profile: &Object) -> bool {
+    use craft_cms_v2::{ColorSpace, Profile, ProfileClass};
     let Object::Stream(s) = profile else { return false };
     let Ok(data) = s.decoded_within(super::MAX_ICC_PROFILE) else { return false };
-    let (Some(version), Some(class), Some(space)) = (data.get(8), data.get(12..16), data.get(16..20)) else { return false };
-    *version < 3 && matches!(class, b"prtr" | b"mntr") && matches!(space, b"GRAY" | b"RGB " | b"CMYK")
+    let Ok(parsed) = Profile::parse(&data) else { return false };
+    let ok_class = matches!(parsed.class, ProfileClass::Output | ProfileClass::Display);
+    let ok_space = matches!(parsed.color_space, ColorSpace::Gray | ColorSpace::Rgb | ColorSpace::Cmyk);
+    let ok_n = s.dict.get(b"N").map(|n| doc.resolve(n)).and_then(|n| n.as_int()) == Some(parsed.channels() as i64);
+    let ok_b2a = parsed.can_be_destination()
+        && (parsed.class != ProfileClass::Output || parsed.color_space == ColorSpace::Gray || parsed.b2a.iter().any(Option::is_some));
+    parsed.version.0 < 3 && ok_class && ok_space && ok_n && ok_b2a
 }
 
 /// 6.1.12: the implementation limits of PDF 1.4.
@@ -380,27 +388,11 @@ fn check_stream(
     if [b"F".as_slice(), b"FFilter", b"FDecodeParms"].iter().any(|k| s.dict.get(k).is_some()) {
         part1_issue("6.1.7", "A stream refers to an external file", None, None);
     }
-    let bits = s.dict.get(b"BitsPerComponent").map(|b| doc.resolve(b)).and_then(|b| b.as_int());
+    if s.dict.get(b"SMask").is_some() && (s.dict.name(b"Type") == Some(b"XObject") || matches!(subtype, Some(b"Image" | b"Form" | b"PS"))) {
+        part1_issue("6.4", "An XObject has a soft mask (SMask)", None, None);
+    }
     match subtype {
-        Some(b"Image") => {
-            if s.dict.get(b"Interpolate").is_some_and(|i| matches!(*doc.resolve(i), Object::Bool(true))) {
-                part1_issue("6.2.4", "An image asks to be interpolated", None, None);
-            }
-            if s.dict.get(b"Alternates").is_some() || s.dict.get(b"OPI").is_some() {
-                part1_issue("6.2.4", "An image has alternates or OPI information", None, None);
-            }
-            let mask = matches!(s.dict.get(b"ImageMask"), Some(Object::Bool(true)));
-            match bits {
-                Some(b) if mask && b != 1 => part1_issue("6.2.4", "An image mask has BitsPerComponent {}, not 1", Some(b.to_string()), None),
-                Some(b) if !mask && ![1, 2, 4, 8].contains(&b) => {
-                    part1_issue("6.2.4", "An image has BitsPerComponent {}, not 1, 2, 4 or 8", Some(b.to_string()), None)
-                }
-                _ => {}
-            }
-            if s.dict.get(b"SMask").is_some() {
-                part1_issue("6.4", "An XObject has a soft mask (SMask)", None, None);
-            }
-        }
+        Some(b"Image") => check_image_stream(doc, &s.dict, part1_issue),
         Some(b"Form") => {
             if s.dict.name(b"Subtype2") == Some(b"PS") || s.dict.get(b"PS").is_some() {
                 part1_issue("6.2.5", "A form XObject holds PostScript (PS or Subtype2 PS)", None, None);
@@ -411,12 +403,33 @@ fn check_stream(
             if s.dict.get(b"OPI").is_some() {
                 part1_issue("6.2.4", "A form XObject has OPI information", None, None);
             }
-            if s.dict.get(b"SMask").is_some() {
-                part1_issue("6.4", "An XObject has a soft mask (SMask)", None, None);
-            }
         }
         Some(b"PS") => part1_issue("6.2.7", "PostScript XObjects aren't allowed", None, None),
         _ => {}
+    }
+}
+
+/// 6.2.4: one image XObject's interpolation, alternates/OPI and bits per component.
+fn check_image_stream(doc: &Document, d: &Dict, part1_issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>)) {
+    if let Some(interp) = d.get(b"Interpolate").map(|i| doc.resolve(i)).filter(|i| !matches!(**i, Object::Null)) {
+        match *interp {
+            Object::Bool(false) => {}
+            Object::Bool(true) => part1_issue("6.2.4", "An image asks to be interpolated", None, None),
+            _ => part1_issue("6.2.4", "An image's Interpolate entry isn't false", None, None),
+        }
+    }
+    if d.get(b"Alternates").is_some() || d.get(b"OPI").is_some() {
+        part1_issue("6.2.4", "An image has alternates or OPI information", None, None);
+    }
+    let mask = d.get(b"ImageMask").map(|m| doc.resolve(m)).is_some_and(|m| matches!(*m, Object::Bool(true)));
+    if let Some(bpc) = d.get(b"BitsPerComponent").map(|b| doc.resolve(b)).filter(|b| !matches!(**b, Object::Null)) {
+        match bpc.as_int() {
+            Some(1) => {}
+            Some(2 | 4 | 8) if !mask => {}
+            Some(b) if mask => part1_issue("6.2.4", "An image mask has BitsPerComponent {}, not 1", Some(b.to_string()), None),
+            Some(b) => part1_issue("6.2.4", "An image has BitsPerComponent {}, not 1, 2, 4 or 8", Some(b.to_string()), None),
+            None => part1_issue("6.2.4", "An image's BitsPerComponent isn't an integer", None, None),
+        }
     }
 }
 
@@ -427,28 +440,16 @@ fn check_graphics_state(doc: &Document, gs: &Dict, part1_issue: &mut impl FnMut(
     {
         part1_issue("6.4", "A graphics state has a soft mask (SMask)", None, None);
     }
-    if let Some(bm) = gs.get(b"BM").map(|b| doc.resolve(b)) {
-        let modes: Vec<Object> = match &*bm {
-            Object::Array(list) => list.iter().map(|m| (*doc.resolve(m)).clone()).collect(),
-            other => vec![other.clone()],
-        };
-        let mut named = BTreeSet::new();
-        for mode in &modes {
-            match mode.as_name() {
-                Some(b"Normal" | b"Compatible") => {}
-                Some(name) => {
-                    named.insert(name);
-                }
-                None => part1_issue("6.4", "A graphics state has a blend mode that isn't a name", None, None),
-            }
-        }
-        for name in named {
-            part1_issue(
+    if let Some(bm) = gs.get(b"BM").map(|b| doc.resolve(b)).filter(|b| !matches!(**b, Object::Null)) {
+        match bm.as_name() {
+            Some(b"Normal" | b"Compatible") => {}
+            Some(name) => part1_issue(
                 "6.4",
                 "A graphics state has the blend mode {}: only Normal and Compatible are allowed",
                 Some(String::from_utf8_lossy(name).into_owned()),
                 None,
-            );
+            ),
+            None => part1_issue("6.4", "A graphics state has a blend mode that isn't a name", None, None),
         }
     }
     let opaque = |key: &[u8]| gs.get(key).map(|a| doc.resolve(a)).is_none_or(|a| is_one(&a));
@@ -491,23 +492,7 @@ fn check_annotation(
         part1_issue("6.5.3", "A {} annotation has a colour (C or IC), but the output intent isn't RGB", Some(name.clone()), page);
     }
     let widget = subtype == b"Widget";
-    let appearance = d.get(b"AP").map(|a| doc.resolve(a));
-    if let Some(ap) = appearance.as_deref().and_then(Object::as_dict) {
-        if ap.iter().any(|(k, _)| k.as_slice() != b"N") {
-            part1_issue("6.5.3", "A {} annotation's appearance dictionary holds entries other than N", Some(name.clone()), page);
-        }
-        if let Some(normal) = ap.get(b"N") {
-            let button = widget && field_type(doc, d).as_deref() == Some(b"Btn".as_slice());
-            let right = match &*doc.resolve(normal) {
-                Object::Dict(states) => button && !states.is_empty(),
-                Object::Stream(_) => !button,
-                _ => false,
-            };
-            if !right {
-                part1_issue("6.5.3", "A {} annotation's normal appearance is the wrong kind of object", Some(name.clone()), page);
-            }
-        }
-    }
+    let has_normal = check_appearance(doc, d, &name, widget, page, part1_issue);
     if widget {
         if d.get(b"A").is_some() {
             part1_issue("6.6.1", "A form field performs an action (A)", None, page);
@@ -515,10 +500,45 @@ fn check_annotation(
         if d.get(b"AA").is_some() {
             part1_issue("6.6.2", "A {} annotation has additional actions", Some(name.clone()), page);
         }
-        if appearance.is_none() {
+        if !has_normal {
             part1_issue("6.9", "A {} annotation has no appearance stream", Some(name), page);
         }
     }
+}
+
+/// 6.5.3: one annotation's `/AP` dictionary, returning whether it carries a `/N` entry.
+fn check_appearance(
+    doc: &Document,
+    d: &Dict,
+    name: &str,
+    widget: bool,
+    page: Option<usize>,
+    part1_issue: &mut impl FnMut(&'static str, &'static str, Option<String>, Option<usize>),
+) -> bool {
+    let Some(ap) = d.get(b"AP").map(|a| doc.resolve(a)).filter(|a| !matches!(**a, Object::Null)) else {
+        return false;
+    };
+    let Object::Dict(ap) = &*ap else {
+        part1_issue("6.5.3", "A {} annotation's normal appearance is the wrong kind of object", Some(name.to_owned()), page);
+        return false;
+    };
+    if ap.iter().any(|(k, _)| k.as_slice() != b"N") {
+        part1_issue("6.5.3", "A {} annotation's appearance dictionary holds entries other than N", Some(name.to_owned()), page);
+    }
+    let Some(normal) = ap.get(b"N") else {
+        part1_issue("6.5.3", "A {} annotation's appearance dictionary has no normal appearance (N)", Some(name.to_owned()), page);
+        return false;
+    };
+    let button = widget && field_type(doc, d).as_deref() == Some(b"Btn".as_slice());
+    let right = match &*doc.resolve(normal) {
+        Object::Dict(states) => button && !states.is_empty() && states.iter().all(|(_, v)| matches!(&*doc.resolve(v), Object::Stream(_))),
+        Object::Stream(_) => !button,
+        _ => false,
+    };
+    if !right {
+        part1_issue("6.5.3", "A {} annotation's normal appearance is the wrong kind of object", Some(name.to_owned()), page);
+    }
+    true
 }
 
 /// A field's type (`/FT`), its own or the nearest one its `/Parent` fields give it.

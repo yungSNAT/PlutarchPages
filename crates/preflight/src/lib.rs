@@ -247,6 +247,8 @@ pub const WORDINGS: &[&str] = &[
     "The output intents name different profiles",
     "An image has BitsPerComponent {}, not 1, 2, 4 or 8",
     "An image mask has BitsPerComponent {}, not 1",
+    "An image's Interpolate entry isn't false",
+    "An image's BitsPerComponent isn't an integer",
     "An inline image asks to be interpolated",
     "An inline image has a BitsPerComponent other than 1, 2, 4 or 8 (1 for a mask)",
     "A form XObject holds PostScript (PS or Subtype2 PS)",
@@ -264,6 +266,7 @@ pub const WORDINGS: &[&str] = &[
     "A {} annotation has a constant alpha (CA) other than 1",
     "A {} annotation has a colour (C or IC), but the output intent isn't RGB",
     "A {} annotation's appearance dictionary holds entries other than N",
+    "A {} annotation's appearance dictionary has no normal appearance (N)",
     "A {} annotation's normal appearance is the wrong kind of object",
     "A form field performs an action (A)",
     "A real number is outside ±32767",
@@ -538,11 +541,15 @@ fn drawing_fonts(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> s
     let mut out = std::collections::HashSet::new();
     let (mut seen_res, mut seen_fonts) = (std::collections::HashSet::new(), std::collections::HashSet::new());
     for (_, o) in objs {
-        let Some(res) = dict_of(o).and_then(|d| d.get(b"Resources")).filter(|r| r.as_ref().is_none_or(|r| seen_res.insert(r))) else {
+        let Some(res) = dict_of(o).and_then(|d| d.get(b"Resources")).filter(|r| r.as_ref().is_none_or(|r| seen_res.insert(font_object(doc, r))))
+        else {
             continue;
         };
-        let Some(fonts) =
-            doc.resolve(res).as_dict().and_then(|r| r.get(b"Font").cloned()).filter(|f| f.as_ref().is_none_or(|r| seen_fonts.insert(r)))
+        let Some(fonts) = doc
+            .resolve(res)
+            .as_dict()
+            .and_then(|r| r.get(b"Font").cloned())
+            .filter(|f| f.as_ref().is_none_or(|r| seen_fonts.insert(font_object(doc, r))))
         else {
             continue;
         };
@@ -792,7 +799,10 @@ fn identification(doc: &Document, level: Level) -> Identification {
                 Level::A1b => !matches!(conf.as_deref(), Some("A" | "B")),
                 _ => conf.as_deref().map(str::to_uppercase).as_deref() != Some("B"),
             },
-        title_differs: info(doc, "Title").is_some_and(|title| xmp::value(&x, "dc:title").is_some_and(|t| t != title)),
+        title_differs: info(doc, "Title").is_some_and(|title| match level {
+            Level::A1b => xmp::title_x_default(&x).as_deref() != Some(title.as_str()),
+            _ => xmp::value(&x, "dc:title").is_some_and(|t| t != title),
+        }),
     }
 }
 
@@ -1341,6 +1351,32 @@ pub struct Report {
     pub remaining: Vec<Issue>,
 }
 
+/// Why [`convert`] could not convert a document.
+#[derive(Debug)]
+pub enum ConvertError {
+    /// The requested conformance level is verified only (for example [`Level::A1b`]).
+    UnsupportedLevel(Level),
+    /// Reading or updating the PDF object graph failed.
+    Cos(pdfcraft_cos::CosError),
+}
+
+impl std::fmt::Display for ConvertError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::UnsupportedLevel(level) => write!(f, "Save as PDF/A converts to PDF/A-2b or 3b; {} can be verified only", level.label()),
+            Self::Cos(e) => e.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for ConvertError {}
+
+impl From<pdfcraft_cos::CosError> for ConvertError {
+    fn from(e: pdfcraft_cos::CosError) -> Self {
+        Self::Cos(e)
+    }
+}
+
 /// Whether a dictionary with an `/S` entry is an action (not a structure element or the like).
 fn is_action(d: &Dict) -> bool {
     match d.name(b"Type") {
@@ -1573,11 +1609,11 @@ fn convert_direct_page_annots(
 /// Make `doc` conform to `level` as far as possible, then re-check it.
 ///
 /// PDF/A-1b is verified only: making a file conform to it means taking out transparency and optional
-/// content, which changes how pages look, so for [`Level::A1b`] the document is left as it is and
-/// the report lists everything that keeps it from conforming.
-pub fn convert(doc: &mut Document, level: Level) -> Result<Report, pdfcraft_cos::CosError> {
+/// content, which changes how pages look, so [`Level::A1b`] returns
+/// [`ConvertError::UnsupportedLevel`] without modifying `doc`.
+pub fn convert(doc: &mut Document, level: Level) -> Result<Report, ConvertError> {
     if level == Level::A1b {
-        return Ok(Report { fixed: Vec::new(), remaining: verify(doc, level) });
+        return Err(ConvertError::UnsupportedLevel(level));
     }
     let mut fixed = Vec::new();
     if doc.trailer().get(b"Encrypt").is_some() {

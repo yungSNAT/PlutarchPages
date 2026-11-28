@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use pdfcraft_cos::{Dict, Document, ObjRef, Object};
+use pdfcraft_model::Page;
 
 /// Which device spaces a resource dictionary gives a Default colour space.
 #[derive(Clone, Copy)]
@@ -16,22 +17,30 @@ impl Defaults {
     const NONE: Defaults = Defaults { gray: false, rgb: false, cmyk: false };
     const ALL: Defaults = Defaults { gray: true, rgb: true, cmyk: true };
 
-    /// The Default spaces of the resource dictionary `resources` itself. An entry counts only when
-    /// it is a device-independent colour space (CalGray, CalRGB, Lab or ICCBased): a null, a
-    /// dangling reference, a number, a device space, or an Indexed, Separation, DeviceN or Pattern
-    /// space (which draw in a device space of their own) changes nothing.
+    /// The Default spaces of the resource dictionary `resources` itself (PDF 1.4 §4.5.7). Each key
+    /// counts only when it is a compatible CIE-based space: `DefaultGray` accepts `CalGray` or
+    /// `ICCBased` (`/N 1`), `DefaultRGB` accepts `CalRGB` or `ICCBased` (`/N 3`), and
+    /// `DefaultCMYK` accepts `ICCBased` (`/N 4`).
     fn in_dict(doc: &Document, resources: &Dict) -> Defaults {
         let spaces = resources.get(b"ColorSpace").map(|c| doc.resolve(c));
         let Some(spaces) = spaces.as_deref().and_then(Object::as_dict) else { return Defaults::NONE };
-        let real = |key: &[u8]| {
-            spaces.get(key).map(|s| doc.resolve(s)).is_some_and(|s| {
-                s.as_array()
-                    .and_then(|a| a.first())
-                    .map(|k| doc.resolve(k))
-                    .is_some_and(|k| k.as_name().is_some_and(|k| matches!(k, b"CalGray" | b"CalRGB" | b"Lab" | b"ICCBased")))
-            })
+        let valid = |key: &[u8], cal: Option<&[u8]>, n: i64| {
+            let Some(s) = spaces.get(key).map(|s| doc.resolve(s)) else { return false };
+            let Some(a) = s.as_array() else { return false };
+            let Some(kind) = a.first().map(|k| doc.resolve(k)) else { return false };
+            match kind.as_name() {
+                Some(k) if cal == Some(k) => true,
+                Some(b"ICCBased") => a.get(1).map(|p| doc.resolve(p)).is_some_and(
+                    |p| matches!(&*p, Object::Stream(s) if s.dict.get(b"N").map(|v| doc.resolve(v)).and_then(|v| v.as_int()) == Some(n)),
+                ),
+                _ => false,
+            }
         };
-        Defaults { gray: real(b"DefaultGray"), rgb: real(b"DefaultRGB"), cmyk: real(b"DefaultCMYK") }
+        Defaults {
+            gray: valid(b"DefaultGray", Some(b"CalGray"), 1),
+            rgb: valid(b"DefaultRGB", Some(b"CalRGB"), 3),
+            cmyk: valid(b"DefaultCMYK", None, 4),
+        }
     }
 
     /// The spaces both cover.
@@ -290,6 +299,43 @@ fn scan_content(objs: &[(ObjRef, std::sync::Arc<Object>)], under: &HashMap<ObjRe
     (out, inline, fallback)
 }
 
+/// Registers the `/CharProcs` glyph streams of any direct Type 3 font inside `d`'s `/Resources`
+/// `/Font` map, walking shared indirect `/Resources` and `/Font` dictionaries once.
+fn register_inline_type3(
+    doc: &Document,
+    d: &Dict,
+    seen: &mut (HashSet<ObjRef>, HashSet<ObjRef>),
+    named: &mut Named,
+    add: &mut impl FnMut(&[ObjRef], (Defaults, bool)),
+) {
+    if let Some(res) = d.get(b"Resources").filter(|r| r.as_ref().is_none_or(|r| seen.0.insert(crate::font_object(doc, r))))
+        && let Some(fonts) = doc
+            .resolve(res)
+            .as_dict()
+            .and_then(|r| r.get(b"Font").cloned())
+            .filter(|f| f.as_ref().is_none_or(|r| seen.1.insert(crate::font_object(doc, r))))
+        && let Some(fonts) = doc.resolve(&fonts).as_dict()
+    {
+        for (_, f) in fonts.iter() {
+            if let Object::Dict(f) = f {
+                register_type3_glyphs(doc, f, named, add);
+            }
+        }
+    }
+}
+
+/// Registers the `/CharProcs` glyph streams of a Type 3 font dictionary under that font's own
+/// `/Resources` (both indirect Type 3 font objects and direct Type 3 fonts inside `/Font` maps).
+fn register_type3_glyphs(doc: &Document, font: &Dict, named: &mut Named, add: &mut impl FnMut(&[ObjRef], (Defaults, bool))) {
+    if font.name(b"Subtype") == Some(b"Type3")
+        && let Some(procs) = font.get(b"CharProcs").map(|c| doc.resolve(c))
+        && let Some(procs) = procs.as_dict()
+    {
+        let glyphs: Vec<ObjRef> = procs.iter().filter_map(|(_, p)| p.as_ref()).map(|p| crate::font_object(doc, p)).collect();
+        add(&glyphs, named.record(doc, font.get(b"Resources"), false));
+    }
+}
+
 /// 6.2.3.3: the device colour that no Default colour space covers (ISO 32000-1 8.6.5.6), and
 /// whether some content could not be read; together with 6.2.4 inline image findings. A content
 /// stream draws under its own resources: a page's (inherited ones included), or a form's,
@@ -299,7 +345,7 @@ fn scan_content(objs: &[(ObjRef, std::sync::Arc<Object>)], under: &HashMap<ObjRe
 /// names it, and, when a page names it, under any other content that may fall back to the page's
 /// resources and draws something; one that nothing names (a soft mask, say) is judged under every
 /// resource dictionary content draws under.
-pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)]) -> (crate::DeviceColour, Inline) {
+pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync::Arc<Object>)], pages: &[Page]) -> (crate::DeviceColour, Inline) {
     let mut under: HashMap<ObjRef, (Defaults, bool)> = HashMap::new();
     let mut named = Named::default();
     let mut appearances = HashSet::new();
@@ -310,7 +356,7 @@ pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync
         }
     };
     let mut page_objs = HashSet::new();
-    for p in pdfcraft_model::pages(doc) {
+    for p in pages {
         page_objs.insert(p.obj);
         let holder = named.record(doc, p.dict.get(b"Resources"), true);
         add(&page_streams(doc, &p.dict), holder);
@@ -327,21 +373,16 @@ pub(super) fn uncovered_device_colour(doc: &Document, objs: &[(ObjRef, std::sync
             appearance_streams(doc, d, &mut seen_ap, &mut appearances);
         }
     }
+    let mut seen_type3 = (HashSet::new(), HashSet::new());
     for (r, o) in objs {
         let Some(d) = crate::dict_of(o) else { continue };
         if matches!(&**o, Object::Stream(s) if crate::is_content(&s.dict) || appearances.contains(r)) {
             add(&[*r], named.record(doc, d.get(b"Resources"), false));
         }
-        if d.name(b"Subtype") == Some(b"Type3")
-            && let Some(procs) = d.get(b"CharProcs").map(|c| doc.resolve(c))
-            && let Some(procs) = procs.as_dict()
-        {
-            let glyphs: Vec<ObjRef> = procs.iter().filter_map(|(_, p)| p.as_ref()).map(|p| crate::font_object(doc, p)).collect();
-            add(&glyphs, named.record(doc, d.get(b"Resources"), false));
-        }
+        register_type3_glyphs(doc, d, &mut named, &mut add);
+        register_inline_type3(doc, d, &mut seen_type3, &mut named, &mut add);
     }
-    // Any other content (the glyphs of a Type 3 font written straight into a resource dictionary)
-    // has no Default space known to apply.
+    // Any other referenced content has no Default space known to apply.
     for r in crate::referenced_content(doc, objs) {
         under.entry(crate::font_object(doc, r)).or_insert((Defaults::NONE, true));
     }
@@ -391,10 +432,11 @@ fn inline_images(data: &[u8], inline: &mut Inline) -> bool {
             b"BI" => {
                 let Some((image, _)) = &op.inline else { continue };
                 let get = |short: &[u8], long: &[u8]| image.get(short).or_else(|| image.get(long));
-                inline.interpolate |= matches!(get(b"I", b"Interpolate"), Some(Object::Bool(true)));
+                inline.interpolate |= get(b"I", b"Interpolate").is_some_and(|v| !matches!(v, Object::Bool(false) | Object::Null));
                 let mask = matches!(get(b"IM", b"ImageMask"), Some(Object::Bool(true)));
-                let bits = get(b"BPC", b"BitsPerComponent").and_then(Object::as_int);
-                inline.bits |= bits.is_some_and(|b| if mask { b != 1 } else { ![1, 2, 4, 8].contains(&b) });
+                inline.bits |= get(b"BPC", b"BitsPerComponent")
+                    .filter(|v| !matches!(v, Object::Null))
+                    .is_some_and(|v| !v.as_int().is_some_and(|b| if mask { b == 1 } else { matches!(b, 1 | 2 | 4 | 8) }));
             }
             _ => {}
         }

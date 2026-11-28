@@ -16,8 +16,8 @@
 //! the verifier is known to disagree with the standard are left out on purpose and recorded as gaps
 //! where the change that adds them is reviewed. Nothing here is a conformance claim.
 
-use pdfcraft_cos::{Algorithm, Document, NewEncryption};
-use pdfcraft_preflight::{Level, convert, declared, icc, verify};
+use pdfcraft_cos::{Algorithm, CosError, Document, NewEncryption};
+use pdfcraft_preflight::{ConvertError, Level, convert, declared, icc, verify};
 
 /// A document from hand-written objects and extra trailer entries (copied from the crate's unit
 /// tests).
@@ -94,6 +94,58 @@ fn cmyk_profile_header() -> Vec<u8> {
     header[20..24].copy_from_slice(b"XYZ ");
     header[36..40].copy_from_slice(b"acsp");
     header
+}
+
+/// A minimal valid ICC v2.1 printer CMYK profile with a 3-to-4 `B2A0` `mft2` LUT (288 bytes).
+fn valid_v2_cmyk_profile() -> Vec<u8> {
+    let mut out = vec![0u8; 288];
+    out[0..4].copy_from_slice(&288u32.to_be_bytes());
+    out[8] = 2;
+    out[9] = 0x10;
+    out[12..16].copy_from_slice(b"prtr");
+    out[16..20].copy_from_slice(b"CMYK");
+    out[20..24].copy_from_slice(b"Lab ");
+    out[36..40].copy_from_slice(b"acsp");
+    out[128..132].copy_from_slice(&1u32.to_be_bytes());
+    out[132..136].copy_from_slice(b"B2A0");
+    out[136..140].copy_from_slice(&144u32.to_be_bytes());
+    out[140..144].copy_from_slice(&144u32.to_be_bytes());
+    let tag = &mut out[144..288];
+    tag[0..4].copy_from_slice(b"mft2");
+    tag[8..11].copy_from_slice(&[3, 4, 2]);
+    for off in [12, 28, 44] {
+        tag[off..off + 4].copy_from_slice(&0x0001_0000u32.to_be_bytes());
+    }
+    tag[48..50].copy_from_slice(&2u16.to_be_bytes());
+    tag[50..52].copy_from_slice(&2u16.to_be_bytes());
+    for i in 0..3 {
+        tag[52 + i * 4 + 2..52 + i * 4 + 4].copy_from_slice(&u16::MAX.to_be_bytes());
+    }
+    for i in 0..4 {
+        tag[128 + i * 4 + 2..128 + i * 4 + 4].copy_from_slice(&u16::MAX.to_be_bytes());
+    }
+    out
+}
+
+/// A minimal valid ICC v2.1 printer grey profile with a `kTRC` gamma 2.2 curve (160 bytes).
+fn valid_v2_gray_profile() -> Vec<u8> {
+    let mut out = vec![0u8; 160];
+    out[0..4].copy_from_slice(&160u32.to_be_bytes());
+    out[8] = 2;
+    out[9] = 0x10;
+    out[12..16].copy_from_slice(b"prtr");
+    out[16..20].copy_from_slice(b"GRAY");
+    out[20..24].copy_from_slice(b"XYZ ");
+    out[36..40].copy_from_slice(b"acsp");
+    out[128..132].copy_from_slice(&1u32.to_be_bytes());
+    out[132..136].copy_from_slice(b"kTRC");
+    out[136..140].copy_from_slice(&144u32.to_be_bytes());
+    out[140..144].copy_from_slice(&14u32.to_be_bytes());
+    let tag = &mut out[144..158];
+    tag[0..4].copy_from_slice(b"curv");
+    tag[8..12].copy_from_slice(&1u32.to_be_bytes());
+    tag[12..14].copy_from_slice(&0x0233u16.to_be_bytes());
+    out
 }
 
 /// The catalog's `/OutputIntents`: a `GTS_PDFA1` intent naming the profile in object `n`.
@@ -626,13 +678,15 @@ fn part_1_fonts_are_embedded() {
 }
 
 #[test]
-fn converting_to_part_1_changes_nothing() {
+fn converting_to_part_1_refuses_and_changes_nothing() {
     let mut doc = a1b("<< /Type /Page /Parent 2 0 R /Group << /S /Transparency >> >>", "", &[]);
-    let before = verify(&doc, Level::A1b);
-    let report = convert(&mut doc, Level::A1b).unwrap();
-    assert!(report.fixed.is_empty(), "{:?}", report.fixed);
-    assert_eq!(report.remaining, before);
-    assert!(!report.remaining.is_empty());
+    let before = doc.bytes().to_vec();
+    let err = convert(&mut doc, Level::A1b).unwrap_err();
+    assert!(matches!(err, ConvertError::UnsupportedLevel(Level::A1b)), "{err:?}");
+    assert!(err.to_string().contains("PDF/A-1b can be verified only"), "{err}");
+    assert_eq!(doc.bytes(), before.as_slice());
+    let cos_err = ConvertError::from(CosError::NotPdf);
+    assert!(cos_err.to_string().contains("not a PDF"), "{cos_err}");
 }
 
 /// `doc`'s bytes with `from` (at the start of the file) written as `to`, of the same length so
@@ -931,13 +985,14 @@ fn part_1_a_default_space_must_be_a_colour_space() {
     assert_reported(&a1b_no_intent(&outer, &[&content("/Fm Do"), image, &naming("")]), Level::A1b, "6.2.3.3");
     // One that nothing names is judged under every resource dictionary content draws under.
     assert_not_reported(&a1b_no_intent(&coloured_page(&default, ""), &[&content(""), image]), Level::A1b, "6.2.3.3");
-    // With an RGB intent, DeviceCMYK in a form needs the form's own DefaultCMYK.
+    // With an RGB intent, DeviceCMYK in a form needs the form's own valid four-component DefaultCMYK.
     let cmyk = "0 0 0 1 k 0 0 1 1 re f";
-    let cmyk_default = format!("/DefaultCMYK {CAL_RGB}");
-    let page = coloured_page(&cmyk_default, "/XObject << /Fm 7 0 R >>");
+    let cmyk_profile = hex_stream("/N 4", &valid_v2_cmyk_profile());
+    let cmyk_default = "/DefaultCMYK [/ICCBased 8 0 R]";
+    let page = coloured_page(cmyk_default, "/XObject << /Fm 7 0 R >>");
     let draw = content("/Fm Do");
     let own = drawing_form(&format!("/Resources << /ColorSpace << {cmyk_default} >> >>"), cmyk);
-    a1b_case("6.2.3.3", (&page, "", &[&draw, &own]), (&page, "", &[&draw, &drawing_form("/Resources << >>", cmyk)]));
+    a1b_case("6.2.3.3", (&page, "", &[&draw, &own, &cmyk_profile]), (&page, "", &[&draw, &drawing_form("/Resources << >>", cmyk), &cmyk_profile]));
     // Content that cannot be read (here, with a filter no reader has) may draw in any space.
     let broken = content(RED).replace("<<", "<< /Filter /NoSuchDecode");
     a1b_case("6.2.3.3", (&drawing(""), "", &[&content("")]), (&drawing(""), "", &[&broken]));
@@ -1004,7 +1059,13 @@ fn part_1_reaches_every_case_of_its_rules() {
     a1b_case("6.2.3.3", (listed, "", &[&content(RED), "[6 0 R]"]), (listed, "", &[&content("0 0 0 1 k"), "[6 0 R]"]));
     // 6.5.3: an appearance dictionary with no normal appearance.
     let only_d = a1b(ANNOTATED, "", &["<< /Type /Annot /Subtype /Square /Rect [0 0 10 10] /F 4 /AP << /D 7 0 R >> >>", &form("")]);
-    assert_eq!(messages(&only_d, "6.5.3"), ["A Square annotation's appearance dictionary holds entries other than N"]);
+    assert_eq!(
+        messages(&only_d, "6.5.3"),
+        [
+            "A Square annotation's appearance dictionary holds entries other than N",
+            "A Square annotation's appearance dictionary has no normal appearance (N)",
+        ]
+    );
     // Part 2 words a drawn font with no name of its own.
     let page = drawing("/Font << /F1 7 0 R >>");
     let profile = hex_stream("/N 3", &icc::srgb());
@@ -1185,4 +1246,131 @@ fn part_1_shares_indirect_resource_maps_across_pages() {
     let cs_page = "<< /Type /Page /Parent 2 0 R /Resources << /ColorSpace 6 0 R >> >>";
     let cs_fail = build(&[catalog, pages, &metadata, cs_page, cs_page, "<< /CS0 /DeviceRGB >>"], "");
     assert_reported(&cs_fail, Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_default_colour_spaces_require_compatible_cie_spaces() {
+    let cmyk = content("0 0 0 1 k 0 0 1 1 re f");
+    let gray = content("0.5 g 0 0 1 1 re f");
+    let red = content(RED);
+    let cmyk_prof = hex_stream("/N 4", &valid_v2_cmyk_profile());
+    let rgb_prof = hex_stream("/N 3", &icc::srgb());
+    let gray_prof = hex_stream("/N 1", &valid_v2_gray_profile());
+    // DefaultCMYK accepts only 4-component ICCBased, never CalRGB or 3-component ICCBased.
+    assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultCMYK {CAL_RGB}"), ""), &[&cmyk]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&coloured_page("/DefaultCMYK [/ICCBased 7 0 R]", ""), &[&cmyk, &rgb_prof]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&coloured_page("/DefaultCMYK [/ICCBased 7 0 R]", ""), &[&cmyk, &cmyk_prof]), Level::A1b, "6.2.3.3");
+    // DefaultRGB rejects Lab and 4-component ICCBased.
+    let lab = "[/Lab << /WhitePoint [0.9505 1 1.089] >>]";
+    assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultRGB {lab}"), ""), &[&red]), Level::A1b, "6.2.3.3");
+    assert_reported(&a1b_no_intent(&coloured_page("/DefaultRGB [/ICCBased 7 0 R]", ""), &[&red, &cmyk_prof]), Level::A1b, "6.2.3.3");
+    // DefaultGray accepts CalGray or 1-component ICCBased, not CalRGB.
+    let cal_gray = "[/CalGray << /WhitePoint [0.9505 1 1.089] >>]";
+    assert_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultGray {CAL_RGB}"), ""), &[&gray]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&coloured_page(&format!("/DefaultGray {cal_gray}"), ""), &[&gray]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&coloured_page("/DefaultGray [/ICCBased 7 0 R]", ""), &[&gray, &gray_prof]), Level::A1b, "6.2.3.3");
+}
+
+#[test]
+fn part_1_direct_type3_glyphs_follow_the_fonts_own_resources() {
+    let text = content("BT /T3 1 Tf (a) Tj ET");
+    let font_page = |resources: &str| {
+        let font = format!(
+            "<< /Type /Font /Subtype /Type3 /FontBBox [0 0 1 1] /FontMatrix [0.001 0 0 0.001 0 0] /CharProcs << /a 7 0 R >> /Encoding << /Differences [97 /a] >> /FirstChar 97 /LastChar 97 /Widths [1000] /Resources << {resources} >> >>"
+        );
+        drawing(&format!("/Font << /T3 {font} >>"))
+    };
+    let glyph_red = content("1000 0 d0 1 0 0 rg 0 0 1 1 re f");
+    assert_reported(&a1b_no_intent(&font_page(""), &[&text, &glyph_red]), Level::A1b, "6.2.3.3");
+    assert_not_reported(&a1b_no_intent(&font_page(&format!("/ColorSpace << /DefaultRGB {CAL_RGB} >>")), &[&text, &glyph_red]), Level::A1b, "6.2.3.3");
+    let glyph_inline = content("1000 0 d0 BI /W 1 /H 1 /CS /G /BPC 8 /I true ID \0 EI");
+    assert_reported(&a1b(&font_page(""), "", &[&text, &glyph_inline]), Level::A1b, "6.2.4");
+}
+
+#[test]
+fn part_1_validates_annotation_ap_structure_and_button_states() {
+    let ap = form("");
+    let widget = |ap_entry: &str| format!("<< /Type /Annot /Subtype /Widget /FT /Tx /T (f) /Rect [0 0 10 10] /F 4 /AP {ap_entry} >>");
+    for bad in ["<< >>", "5", "7 0 R"] {
+        let doc = a1b(ANNOTATED, "", &[&widget(bad), &ap]);
+        assert_reported(&doc, Level::A1b, "6.5.3");
+        assert_reported(&doc, Level::A1b, "6.9");
+    }
+    let btn = |states: &str| format!("<< /Type /Annot /Subtype /Widget /FT /Btn /T (b) /Rect [0 0 10 10] /F 4 /AP << /N << {states} >> >> >>");
+    a1b_case("6.5.3", (ANNOTATED, "", &[&btn("/On 7 0 R /Off 8 0 R"), &ap, &ap]), (ANNOTATED, "", &[&btn("/On 7 0 R /Off 5"), &ap, &ap]));
+}
+
+#[test]
+fn part_1_forbids_blend_mode_arrays_and_ps_xobject_smasks() {
+    let gs = |bm: &str| drawing(&format!("/ExtGState << /G << /BM {bm} >> >>"));
+    let empty = content("");
+    a1b_case("6.4", (&gs("/Normal"), "", &[&empty]), (&gs("[/Normal]"), "", &[&empty]));
+    let ps_smask = "<< /Type /XObject /Subtype /PS /SMask 7 0 R /Length 0 >>\nstream\n\nendstream";
+    let doc = a1b(PAGE, "", &[ps_smask, &form("")]);
+    assert_reported(&doc, Level::A1b, "6.2.7");
+    assert_reported(&doc, Level::A1b, "6.4");
+}
+
+#[test]
+fn part_1_rejects_invalid_image_parameter_types() {
+    let img = |extra: &str| {
+        format!("<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceGray {extra} /Length 1 >>\nstream\n\0\nendstream")
+    };
+    a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8 /Interpolate false")]), (PAGE, "", &[&img("/BitsPerComponent 8 /Interpolate 0")]));
+    a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8")]), (PAGE, "", &[&img("/BitsPerComponent 16.0")]));
+    let indirect_mask =
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask 7 0 R /BitsPerComponent 8 /Length 1 >>\nstream\n\0\nendstream";
+    a1b_case("6.2.4", (PAGE, "", &[&img("/BitsPerComponent 8")]), (PAGE, "", &[indirect_mask, "true"]));
+    let mask_no_bpc = "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ImageMask true /Length 1 >>\nstream\n\0\nendstream";
+    assert!(verify(&a1b(PAGE, "", &[mask_no_bpc]), Level::A1b).is_empty());
+    let inline = |dict: &str| content(&format!("BI /W 1 /H 1 {dict} ID \0 EI"));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I false")]), (&drawing(""), "", &[&inline("/CS /G /BPC 8 /I 0")]));
+    a1b_case("6.2.4", (&drawing(""), "", &[&inline("/CS /G /BPC 8")]), (&drawing(""), "", &[&inline("/CS /G /BPC 16.0")]));
+}
+
+#[test]
+fn part_1_validates_output_intent_icc_profile_structure() {
+    // A 20-byte header-only stream and a 128-byte header without tags/BToA must both fail 6.2.2.
+    let short = icc::srgb()[..20].to_vec();
+    assert_reported(&a1b_with(&hex_stream("/N 3", &short), PAGE, "", &[]), Level::A1b, "6.2.2");
+    let mut header_only = cmyk_profile_header();
+    header_only[12..16].copy_from_slice(b"prtr");
+    assert_reported(&a1b_with(&hex_stream("/N 4", &header_only), PAGE, "", &[]), Level::A1b, "6.2.2");
+    // Mismatched or missing /N fails 6.2.2.
+    assert_reported(&a1b_with(&hex_stream("/N 4", &icc::srgb()), PAGE, "", &[]), Level::A1b, "6.2.2");
+    assert_reported(&a1b_with(&hex_stream("", &icc::srgb()), PAGE, "", &[]), Level::A1b, "6.2.2");
+    // A printer RGB profile without BToA fails 6.2.2.
+    let mut prtr_rgb = icc::srgb();
+    prtr_rgb[12..16].copy_from_slice(b"prtr");
+    assert_reported(&a1b_with(&hex_stream("/N 3", &prtr_rgb), PAGE, "", &[]), Level::A1b, "6.2.2");
+    // Valid v2 printer CMYK (with B2A0) and printer grey (with kTRC) pass.
+    assert!(verify(&a1b_with(&hex_stream("/N 4", &valid_v2_cmyk_profile()), PAGE, "", &[]), Level::A1b).is_empty());
+    assert!(verify(&a1b_with(&hex_stream("/N 1", &valid_v2_gray_profile()), PAGE, "", &[]), Level::A1b).is_empty());
+}
+
+#[test]
+fn part_1_resolves_indirect_need_appearances() {
+    a1b_case(
+        "6.9",
+        (PAGE, "/AcroForm << /Fields [] /NeedAppearances 6 0 R >>", &["false"]),
+        (PAGE, "/AcroForm << /Fields [] /NeedAppearances 6 0 R >>", &["true"]),
+    );
+}
+
+#[test]
+fn part_1_requires_xmp_x_default_title_when_info_has_title() {
+    let profile = hex_stream("/N 3", &icc::srgb());
+    let info = "<< /Title (Report) >>";
+    let with_xmp = |packet: &str| page_document(PAGE, Some(packet), &output_intent(5), &[&profile, info], "/Info 6 0 R");
+    // Info /Title without dc:title fails 6.7.3 in 1b, whilst 2b behaviour stays unchanged.
+    assert_reported(&with_xmp(&xmp(1, "B", None)), Level::A1b, "6.7.3");
+    assert_not_reported(&with_xmp(&a2b_packet(None)), Level::A2b, "6.6.3");
+    // dc:title without xml:lang="x-default" fails 6.7.3; with both fr and x-default matching, passes.
+    let no_default = xmp(1, "B", Some("Report")).replace("xml:lang=\"x-default\"", "xml:lang=\"en\"");
+    assert_reported(&with_xmp(&no_default), Level::A1b, "6.7.3");
+    let multi_lang = xmp(1, "B", Some("Report")).replace(
+        "<rdf:li xml:lang=\"x-default\">Report</rdf:li>",
+        "<rdf:li xml:lang=\"fr\">Rapport</rdf:li><rdf:li xml:lang=\"x-default\">Report</rdf:li>",
+    );
+    assert!(verify(&with_xmp(&multi_lang), Level::A1b).is_empty());
 }
